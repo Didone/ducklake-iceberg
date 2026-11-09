@@ -14,7 +14,6 @@ from typing import Any
 
 import pytest
 from jsonschema import validate
-from rich.console import Console
 
 from ducklake_iceberg.doctor import rules as real_rules
 from ducklake_iceberg.doctor.model import (
@@ -30,7 +29,6 @@ from ducklake_iceberg.doctor.plan import (
     PlanError,
     execution_plan,
 )
-from ducklake_iceberg.doctor.render import render
 from ducklake_iceberg.doctor.runner import run
 
 _SCHEMA = json.loads((Path(__file__).parent / "schema" / "doctor-v1.json").read_text())
@@ -320,23 +318,6 @@ def test_select_plan_pulls_gate() -> None:
     plan = select_plan(["partial-files"])
     ids = [r.id for r in plan]
     assert ids == ["inlined-data", "partial-files"]
-
-
-# 19 - rich output with a skipped rule has a paragraph and no skipped rule in green
-def test_rich_skip_paragraph(
-    ctx: DoctorContext, capsys: pytest.CaptureFixture[str]
-) -> None:
-    graph = _gate_graph(gate_emits=[_finding("inlined-data", Severity.BLOCKER)])
-    report = run(ctx, graph)
-    console = Console(force_terminal=False, no_color=True, width=100)
-    render(report, console=console)
-    out = capsys.readouterr().out
-    assert "were not evaluated" in out
-    assert "ducklake-iceberg checkpoint" in out
-    # no skipped rule line contains the OK (green) marker
-    for line in out.splitlines():
-        if "SKIPPED" in line:
-            assert "OK" not in line
 
 
 # 22 - synthetic revalidation: a gate that always blocks -> revalidation_required

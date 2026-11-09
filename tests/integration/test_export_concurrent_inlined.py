@@ -1,11 +1,10 @@
 """Export with inlined commits that arrive after the flush.
 
 A concurrent writer (e.g. a consumer that commits every minute) leaves pending
-inlined rows between the checkpoint flush and the export. The target becomes
+inlined rows between the flush and the export. The target becomes
 the most recent snapshot without pending rows (``detect.clean_snapshot``):
-nothing is lost, and the new rows go into the next export. The checkpoint
-revalidation follows the same rule (test_checkpoint_revalidation.py); without
-a flush, export still blocks (test_export.py).
+nothing is lost, and the new rows go into the next export. Without a
+flush, export still blocks (test_export.py).
 """
 
 from __future__ import annotations

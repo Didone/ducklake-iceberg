@@ -20,41 +20,35 @@ example: "envelope v1: optional key `timings`".
 
 ## [Unreleased]
 
-### Fixed
-
-- `checkpoint` no longer warns about other tables' inlined-data tables when
-  detecting inlined rows (the introspection is catalog-wide).
-
 ## [0.1.0] - 2026-11-09
 
 First public release.
 
 ### Added
 
-- Commands: `doctor`, `checkpoint`, `export`, `register`, `sync`, `status`,
-  `validate` and `clean`.
-- Zero-copy publication of DuckLake tables as Apache Iceberg v2 tables in the
-  AWS Glue Data Catalog: Iceberg manifests reference the Parquet files DuckLake
-  already wrote.
-- Incremental sync with one Iceberg snapshot per DuckLake table checkpoint;
-  exit code 4 when there is nothing to do and exit code 3 when the Iceberg
-  table was modified outside of ducklake-iceberg.
+- `ducklake-iceberg sync --table schema.table`: publishes a DuckLake table as an
+  Apache Iceberg v2 table in the AWS Glue Data Catalog, without copying data.
+  Designed to run from cron: it is idempotent, takes a per-table lock and
+  exits with code 4 when there is nothing to do.
+- Stages: Iceberg v2 compatibility pre-flight, flush of inlined data (the only
+  write to DuckLake), incremental export of manifests and `vN.metadata.json`,
+  and Glue registration with optimistic locking.
+- Exit codes: 0 published, 1 error, 2 blocked by the pre-flight, 3 diverged
+  (the Iceberg table was modified outside of ducklake-iceberg), 4 nothing to do.
 - DuckLake `DELETE`, `UPDATE` and `MERGE` exported as Iceberg v2 position
-  delete files, and `--materialize-deletes` to rewrite data files instead.
+  delete files.
 - Iceberg field IDs equal to DuckLake `column_id`s, including nested types,
   renames and dropped columns.
-- Iceberg v2 compatibility pre-flight (`doctor`) with a rule registry.
-- `--json` envelope v1 with a published JSON schema, `--json-version`, and a
+- `--dry-run`, `--json` envelope v1 with a published JSON schema, and a
   structured log on stderr with credential redaction.
-- `--metrics` per-phase timings and counters; `DUCKLAKE_ICEBERG_TIMINGS=1` adds a
-  `timings` key to the envelope.
-- Concurrency controls: `max_table_workers`, `max_footer_workers`,
-  `max_io_workers` and `max_total_workers`.
-- Glue column statistics publication (`sync --glue-stats on`).
-- `duckdb_extension_directory` setting (`DUCKLAKE_ICEBERG_DUCKDB_EXTENSION_DIRECTORY`)
-  to run with a read-only `HOME`.
+- Per-phase timings and counters in each result; `DUCKLAKE_ICEBERG_TIMINGS=1`
+  adds a `timings` key to the envelope.
+- Concurrency limits (`max_footer_workers`, `max_io_workers`,
+  `max_total_workers`), `snapshot_retention_hours` to expire old Iceberg
+  snapshots, and `duckdb_extension_directory` to run with a read-only `HOME`.
 - Multi-stage Docker image with the DuckDB extensions embedded, and a
-  `python -m ducklake_iceberg.deps` check of the pinned dependency and extension builds.
+  `python -m ducklake_iceberg.deps` check of the pinned dependency and
+  extension builds.
 - Typed package (`py.typed`).
 
 [Unreleased]: https://github.com/Didone/ducklake-iceberg/compare/v0.1.0...HEAD

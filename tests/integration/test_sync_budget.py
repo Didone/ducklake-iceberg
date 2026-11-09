@@ -3,8 +3,8 @@
 Each DuckDB connection used to cost ~0.7 s (extensions + SSO credential +
 ATTACH) and each new ``boto3.Session`` cost an SSO call. These tests pin the
 ceiling: one READ_ONLY connection per sync with no pending inlined data, no
-write connection when there is no work, compaction only with ``--compact``,
-and a single Session.
+write connection when there is no work, a flush (and nothing else) when
+inlined data is pending, and a single Session.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from typer.testing import CliRunner
 
 from ducklake_iceberg import timing
 from ducklake_iceberg.catalog.connection import DuckLakeConnection
+from ducklake_iceberg.checkpoint.model import TableRef
 from ducklake_iceberg.cli import app
 
 from .conftest import CatalogHarness
@@ -72,17 +73,17 @@ def opened(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
 
 @pytest.fixture
 def maintenance_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """SQL of the DuckLake maintenance functions called by the checkpoint."""
-    from ducklake_iceberg.checkpoint import command
+    """Tables flushed (``ducklake_flush_inlined_data``) by the checkpoint stage."""
+    from ducklake_iceberg.checkpoint import flush
 
     calls: list[str] = []
-    real_call = command._call
+    real_call = flush._flush_call
 
-    def spy(con: DuckLakeConnection, sql: str) -> list[dict[str, Any]]:
-        calls.append(sql)
-        return real_call(con, sql)
+    def spy(con: DuckLakeConnection, table: TableRef) -> int:
+        calls.append(table.qualified)
+        return real_call(con, table)
 
-    monkeypatch.setattr(command, "_call", spy)
+    monkeypatch.setattr(flush, "_flush_call", spy)
     return calls
 
 
@@ -151,33 +152,10 @@ def test_sync_with_inlined_only_flushes(
 
     code, doc = _sync(config)
     assert code == 0, doc["problems"]
-    assert len(maintenance_calls) == 1
-    assert "ducklake_flush_inlined_data" in maintenance_calls[0]
+    assert maintenance_calls == ["main.t"]
     assert False in opened  # the flush write
     # the flush changed the snapshot: post-checkpoint revalidation
     assert _steps(doc) == ["doctor", "checkpoint", "doctor", "export", "register"]
-
-
-def test_sync_compact_runs_full_checkpoint(
-    catalog: CatalogHarness,
-    tmp_path: Path,
-    glue_env: None,
-    maintenance_calls: list[str],
-) -> None:
-    config = _config(catalog, tmp_path, inlining=0)
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t SELECT * FROM range(10)")
-
-    code, doc = _sync(config, "--compact")
-    assert code == 0, doc["problems"]
-    called = " ".join(maintenance_calls)
-    for fn in (
-        "ducklake_flush_inlined_data",
-        "ducklake_expire_snapshots",
-        "ducklake_merge_adjacent_files",
-        "ducklake_rewrite_data_files",
-    ):
-        assert fn in called
 
 
 def _forbid(monkeypatch: pytest.MonkeyPatch, *targets: str) -> None:

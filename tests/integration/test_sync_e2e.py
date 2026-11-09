@@ -27,6 +27,8 @@ from pyiceberg.catalog.glue import GlueCatalog
 from typer.testing import CliRunner
 
 from ducklake_iceberg.cli import app
+from ducklake_iceberg.config import load_settings
+from ducklake_iceberg.export import run_export
 
 from .conftest import CatalogHarness
 
@@ -144,36 +146,23 @@ def test_sync_emits_versioned_metrics_and_json_logs(
     assert isinstance(sync_event["bytes_referenced"], int)
     assert envelope["results"][0]["ducklake_snapshot_id"] == sync_event["snapshot_id"]
 
-    no_metrics = runner.invoke(
-        app,
-        [
-            "sync",
-            "--table",
-            "main.t",
-            "--config",
-            str(config),
-            "--json",
-            "--no-metrics",
-        ],
-    )
-    assert no_metrics.exit_code == 4
-    assert "metrics" not in json.loads(no_metrics.stdout)["results"][0]
 
-
-def test_sync_materialize_deletes_removes_delete_files(
+def test_sync_publishes_delete_files(
     catalog: CatalogHarness, config: Path, glue_env: None
 ) -> None:
+    """Deletes are published as Iceberg delete files, never materialized."""
     catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
     catalog.write("INSERT INTO lake.main.t SELECT * FROM range(50)")
     catalog.write("DELETE FROM lake.main.t WHERE id < 3")
-    code, doc = _sync(config, "--materialize-deletes")
+    code, doc = _sync(config)
     assert code == 0, doc["problems"]
-    assert _steps(doc)["materialize"]["result"]["files_processed"] >= 1
+    assert "materialize" not in _steps(doc)
+    assert doc["results"][0]["delete_files_added"] >= 1
     table = GlueCatalog("t", **{"glue.region": REGION}).load_table(("analytics", "t"))
     snapshot = table.current_snapshot()
     assert snapshot is not None
     assert snapshot.summary is not None
-    assert snapshot.summary.additional_properties["total-delete-files"] == "0"
+    assert int(snapshot.summary.additional_properties["total-delete-files"]) >= 1
     assert table.scan().to_arrow().num_rows == 47
 
 
@@ -183,10 +172,8 @@ def test_sync_retries_pending_register(
     """Export written and register failed: the next sync only publishes."""
     catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
     catalog.write("INSERT INTO lake.main.t VALUES (1)")
-    export = runner.invoke(
-        app, ["export", "--table", "main.t", "--config", str(config), "--json"]
-    )
-    assert export.exit_code == 0, export.stdout
+    exported = run_export(load_settings(config_file=config), "main", "t")
+    assert exported.exit_code == 0
     code, doc = _sync(config)
     assert code == 0, doc["problems"]
     steps = _steps(doc)

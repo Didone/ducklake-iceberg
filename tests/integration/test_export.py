@@ -1,4 +1,4 @@
-"""Integration tests for `export` against a real DuckLake catalog (SQLite).
+"""Integration tests for the export stage against a real DuckLake catalog (SQLite).
 
 Uses `flushed_catalog` (table `main.pedidos` already with a data file) and a
 local metadata prefix, exercising the whole export pipeline with local FileIO
@@ -96,7 +96,7 @@ def test_export_inlined_pending_blocks(
 # -- CLI (CliRunner): command envelope and exit codes -----------------------
 
 
-def test_cli_export_json(flushed_catalog: CatalogHarness, tmp_path: Path) -> None:
+def test_cli_sync_dry_run_json(flushed_catalog: CatalogHarness, tmp_path: Path) -> None:
     import json
 
     from typer.testing import CliRunner
@@ -112,16 +112,17 @@ def test_cli_export_json(flushed_catalog: CatalogHarness, tmp_path: Path) -> Non
     }
     runner = CliRunner()
     result = runner.invoke(
-        app, ["export", "--table", "main.pedidos", "--json"], env=env
+        app, ["sync", "--table", "main.pedidos", "--dry-run", "--json"], env=env
     )
     assert result.exit_code == 0, result.stdout
     payload = json.loads(result.stdout)
-    assert payload["command"] == "export"
-    assert payload["results"][0]["data_files"] == 1
-    assert payload["results"][0]["total_records"] == 2
+    assert payload["command"] == "sync"
+    export = next(s for s in payload["results"][0]["steps"] if s["step"] == "export")
+    assert export["data_files"] == 1
+    assert export["total_records"] == 2
 
 
-def test_cli_export_dry_run_writes_nothing(
+def test_cli_sync_dry_run_writes_nothing(
     flushed_catalog: CatalogHarness, tmp_path: Path
 ) -> None:
     from typer.testing import CliRunner
@@ -137,13 +138,13 @@ def test_cli_export_dry_run_writes_nothing(
     }
     runner = CliRunner()
     result = runner.invoke(
-        app, ["export", "--table", "main.pedidos", "--dry-run", "--json"], env=env
+        app, ["sync", "--table", "main.pedidos", "--dry-run", "--json"], env=env
     )
     assert result.exit_code == 0, result.stdout
     assert [p for p in prefix.rglob("*") if p.is_file()] == []
 
 
-def test_cli_export_requires_qualified_table(
+def test_cli_sync_requires_qualified_table(
     flushed_catalog: CatalogHarness, tmp_path: Path
 ) -> None:
     from typer.testing import CliRunner
@@ -156,5 +157,5 @@ def test_cli_export_requires_qualified_table(
         "DUCKLAKE_ICEBERG_ICEBERG_METADATA_PREFIX": str(tmp_path / "iceberg"),
     }
     runner = CliRunner()
-    result = runner.invoke(app, ["export", "--table", "pedidos", "--json"], env=env)
+    result = runner.invoke(app, ["sync", "--table", "pedidos", "--json"], env=env)
     assert result.exit_code == 1

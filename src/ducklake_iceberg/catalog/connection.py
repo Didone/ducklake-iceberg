@@ -83,7 +83,7 @@ def _translate(exc: duckdb.Error, sql: str) -> CatalogError | AwsError:
     if "read-only mode" in lowered:
         return CatalogError(
             "connection opened as READ_ONLY",
-            hint="use 'ducklake-iceberg checkpoint' for DuckLake write operations",
+            hint="the catalog is read-only except for the flush of inlined data",
         )
     if 'provider "credential_chain"' in lowered or (
         "credential_chain" in lowered and "aws extension" in lowered

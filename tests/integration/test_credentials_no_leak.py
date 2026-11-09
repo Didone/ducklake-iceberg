@@ -1,7 +1,7 @@
 """A credential injected as ``s3.*`` never leaks.
 
 With ``aws_profile``, the profile credential is passed explicitly to the
-PyIceberg FileIO. This test runs ``sync``/``register``/``status``/``export``
+PyIceberg FileIO. This test runs ``sync``
 through the CLI (``--json``, ``log_level: DEBUG``, with all loggers at DEBUG)
 using a fake profile with marked keys, and checks that the access key, secret
 and token appear nowhere: not in stdout, stderr, logs, error messages, the
@@ -138,12 +138,8 @@ def test_profile_credentials_never_leak(
         catalog.write("DELETE FROM lake.main.t WHERE id < 5")
         catalog.write("INSERT INTO lake.main.t VALUES (100, 'x')")
         assert cli("sync", "--table", "main.t") == 0
-        assert cli("register", "--table", "main.t") == 4  # already published
-        cli("status", "--table", "main.t")
-        # error path: nonexistent metadata.json
-        missing = str(tmp_path / "iceberg" / "does" / "not-exist.metadata.json")
-        assert cli("register", "--table", "main.t", "--metadata-location", missing)
-        assert cli("export", "--table", "main.t") == 4
+        assert cli("sync", "--table", "main.t") == 4  # already published
+        assert cli("sync", "--table", "main.t", "--dry-run") == 4
 
     # without the credential in the FileIO the test would prove nothing
     assert any(p.get(S3_SECRET_ACCESS_KEY) == SECRET for p in injected)

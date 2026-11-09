@@ -17,7 +17,7 @@ from ducklake_iceberg.sync.lock import (
     LockError,
     LockHeld,
     _lock_dir,
-    _lock_key,
+    lock_key,
     table_lock,
 )
 
@@ -29,11 +29,11 @@ def state_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def test_lock_key_is_stable_and_scoped() -> None:
-    a = _lock_key(profile=None, glue_database="db", glue_table="t")
-    assert a == _lock_key(profile="default", glue_database="db", glue_table="t")
+    a = lock_key(profile=None, glue_database="db", glue_table="t")
+    assert a == lock_key(profile="default", glue_database="db", glue_table="t")
     assert len(a) == 16
-    assert a != _lock_key(profile="prod", glue_database="db", glue_table="t")
-    assert a != _lock_key(profile=None, glue_database="db", glue_table="u")
+    assert a != lock_key(profile="prod", glue_database="db", glue_table="t")
+    assert a != lock_key(profile=None, glue_database="db", glue_table="u")
 
 
 def test_lock_dir_resolution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

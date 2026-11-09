@@ -1,4 +1,4 @@
-"""``export``/``sync`` surface the partition degradation.
+"""``sync`` surfaces the partition degradation.
 
 A DuckLake spec with a calendar transform (``year``) has no Iceberg
 equivalent: the table is published without the partition key (spec 0), exit 0,
@@ -59,8 +59,17 @@ def _insert(catalog: CatalogHarness) -> None:
 
 
 def _cli(config: Path, *args: str) -> tuple[int, dict[str, Any]]:
-    result = runner.invoke(app, [*args, "--config", str(config), "--json"])
+    with mock_aws(), mock.patch("ducklake_iceberg.glue._validate_metadata_location"):
+        result = runner.invoke(app, [*args, "--config", str(config), "--json"])
     return result.exit_code, json.loads(result.stdout)
+
+
+def _export_step(config: Path) -> dict[str, Any]:
+    code, doc = _cli(config, "sync", "--table", "main.t_part")
+    assert code == 0, doc["problems"]
+    assert doc["problems"] == []
+    steps = {s["step"]: s for s in doc["results"][0]["steps"]}
+    return dict(steps["export"])
 
 
 def _assert_year_warning(warnings: list[dict[str, Any]]) -> None:
@@ -71,17 +80,14 @@ def _assert_year_warning(warnings: list[dict[str, Any]]) -> None:
     assert "epoch_year(data)" in w["remediation"]
 
 
-def test_export_json_reports_degraded_partition(
+def test_sync_json_reports_export_degraded_partition(
     catalog: CatalogHarness, config: Path
 ) -> None:
     catalog.write(
         "ALTER TABLE lake.main.t_part SET PARTITIONED BY (category, year(data))"
     )
     _insert(catalog)
-    code, doc = _cli(config, "export", "--table", "main.t_part")
-    assert code == 0
-    assert doc["problems"] == []
-    result = doc["results"][0]
+    result = _export_step(config)
     _assert_year_warning(result["warnings"])
     # what gets published does not change: spec 0 (no partition key)
     location = result["metadata_location"]
@@ -92,14 +98,13 @@ def test_export_json_reports_degraded_partition(
     assert table.scan().to_arrow().num_rows == 2
 
 
-def test_export_text_mode_warns_on_stderr(
-    catalog: CatalogHarness, config: Path
-) -> None:
+def test_sync_text_mode_warns_on_stderr(catalog: CatalogHarness, config: Path) -> None:
     catalog.write("ALTER TABLE lake.main.t_part SET PARTITIONED BY (year(data))")
     _insert(catalog)
-    result = runner.invoke(
-        app, ["export", "--table", "main.t_part", "--config", str(config)]
-    )
+    with mock_aws(), mock.patch("ducklake_iceberg.glue._validate_metadata_location"):
+        result = runner.invoke(
+            app, ["sync", "--table", "main.t_part", "--config", str(config)]
+        )
     assert result.exit_code == 0
     assert "WARNING" in result.stderr
     assert "transform 'year' on column data" in result.stderr
@@ -127,9 +132,7 @@ def test_epoch_partition_has_no_warning(catalog: CatalogHarness, config: Path) -
         "ALTER TABLE lake.main.t_part SET PARTITIONED BY (category, epoch_year(data))"
     )
     _insert(catalog)
-    code, doc = _cli(config, "export", "--table", "main.t_part")
-    assert code == 0
-    assert doc["results"][0]["warnings"] == []
+    assert _export_step(config)["warnings"] == []
 
 
 def test_historical_degraded_spec_without_files_has_no_warning(
@@ -139,6 +142,4 @@ def test_historical_degraded_spec_without_files_has_no_warning(
     catalog.write("ALTER TABLE lake.main.t_part SET PARTITIONED BY (year(data))")
     catalog.write("ALTER TABLE lake.main.t_part SET PARTITIONED BY (epoch_year(data))")
     _insert(catalog)
-    code, doc = _cli(config, "export", "--table", "main.t_part")
-    assert code == 0
-    assert doc["results"][0]["warnings"] == []
+    assert _export_step(config)["warnings"] == []

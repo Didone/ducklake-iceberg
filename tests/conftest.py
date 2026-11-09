@@ -6,7 +6,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from ducklake_iceberg import aws, concurrency, register, retention, timing
+from ducklake_iceberg import aws, concurrency, register, timing
 from ducklake_iceberg.obs.logging import reset_logging
 from ducklake_iceberg.obs.redaction import reset_redaction_failures
 
@@ -22,7 +22,6 @@ def _fresh_aws_process_state() -> Iterator[None]:
     register.clear_file_io_cache()
     timing.reset()
     concurrency.reset_limits()
-    retention._SIMULATIONS.clear()
     # log handler, library log levels and the redaction failure counter
     reset_logging()
     reset_redaction_failures()
@@ -30,6 +29,5 @@ def _fresh_aws_process_state() -> Iterator[None]:
     aws.clear_cache()
     register.clear_file_io_cache()
     concurrency.reset_limits()
-    retention._SIMULATIONS.clear()
     reset_logging()
     reset_redaction_failures()

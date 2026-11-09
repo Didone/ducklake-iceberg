@@ -1,7 +1,7 @@
 """Partition field names follow the Iceberg convention, end to end.
 
 Real DuckLake -> ``ducklake-iceberg sync`` -> moto Glue, metadata under a local prefix
-(same setup as ``test_validate``). Checks the name published in the
+(moto Glue). Checks the name published in the
 ``metadata.json`` and that the names of already published specs are preserved.
 """
 
@@ -76,9 +76,9 @@ def _names(spec_id: int | None = None) -> list[str]:
     return [field.name for field in spec.fields]
 
 
-def _validate_ok(config: Path) -> None:
-    code, doc = _invoke(config, "validate", "--table", "main.t", "--only", "data")
-    assert code == 0, (doc["problems"], doc["results"])
+def _data_ok(expected_rows: int) -> None:
+    """The published table reads back with every row written to DuckLake."""
+    assert _table().scan().to_arrow().num_rows == expected_rows
 
 
 def test_epoch_day_identity_and_bucket_use_standard_names(
@@ -96,7 +96,7 @@ def test_epoch_day_identity_and_bucket_use_standard_names(
     _sync(config)
 
     assert _names() == ["created_at_day", "uf", "id_bucket_16"]
-    _validate_ok(config)
+    _data_ok(40)
 
 
 def test_published_spec_keeps_its_name_in_incremental_export(
@@ -119,7 +119,7 @@ def test_published_spec_keeps_its_name_in_incremental_export(
     _sync(config)
 
     assert _names() == [legacy]
-    _validate_ok(config)
+    _data_ok(2)
 
 
 def test_new_spec_gets_standard_name_and_old_spec_is_kept(
@@ -144,7 +144,7 @@ def test_new_spec_gets_standard_name_and_old_spec_is_kept(
 
     assert _names() == ["id_bucket_4"]
     assert _names(old_spec_id) == ["created_at_day"]
-    _validate_ok(config)
+    _data_ok(3)
 
 
 def test_first_export_after_rename_uses_name_at_spec_creation(
@@ -157,4 +157,4 @@ def test_first_export_after_rename_uses_name_at_spec_creation(
     _sync(config)
 
     assert _names() == ["created_at_day"]
-    _validate_ok(config)
+    _data_ok(1)

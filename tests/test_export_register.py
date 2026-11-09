@@ -1,6 +1,6 @@
 """Tests for the export/register/sync commands.
 
-The pure logic (aggregate_exit_code, handoff pointer, register coherence,
+The pure logic (handoff pointer, register coherence,
 architecture) is tested here with a local FileIO (file://) and moto for Glue.
 The full export→register pipeline over a real DuckLake catalog + S3 lives in
 the integration matrix (PyArrow's S3FileSystem does not respect moto).
@@ -9,7 +9,6 @@ the integration matrix (PyArrow's S3FileSystem does not respect moto).
 from __future__ import annotations
 
 import ast
-import itertools
 import os
 import pathlib
 import uuid
@@ -27,9 +26,8 @@ from pyiceberg.partitioning import PartitionSpec
 from pyiceberg.schema import Schema
 from pyiceberg.types import IntegerType, NestedField, StringType
 
-from ducklake_iceberg.cli import aggregate_exit_code
 from ducklake_iceberg.config import DuckLakeIcebergSettings, load_settings
-from ducklake_iceberg.errors import DivergenceError, ExitCode
+from ducklake_iceberg.errors import DivergenceError
 from ducklake_iceberg.register import (
     POINTER_NAME,
     ExportPointer,
@@ -48,47 +46,6 @@ from ducklake_iceberg.writer.metadata import (
 )
 
 REGION = "us-east-1"
-
-
-# -- aggregate_exit_code ---------------------------------------------------
-
-
-def test_aggregate_priority_order() -> None:
-    # 1 > 2 > 3 > 4 > 0
-    assert aggregate_exit_code([ExitCode.SUCCESS, ExitCode.ERROR]) is ExitCode.ERROR
-    assert aggregate_exit_code([ExitCode.BLOCKED, ExitCode.ERROR]) is ExitCode.ERROR
-    assert (
-        aggregate_exit_code([ExitCode.DIVERGED, ExitCode.BLOCKED]) is ExitCode.BLOCKED
-    )
-    assert (
-        aggregate_exit_code([ExitCode.NOTHING_TO_DO, ExitCode.DIVERGED])
-        is ExitCode.DIVERGED
-    )
-    assert (
-        aggregate_exit_code([ExitCode.SUCCESS, ExitCode.NOTHING_TO_DO])
-        is ExitCode.NOTHING_TO_DO
-    )
-
-
-def test_aggregate_all_pairs() -> None:
-    priority = [
-        ExitCode.ERROR,
-        ExitCode.BLOCKED,
-        ExitCode.DIVERGED,
-        ExitCode.NOTHING_TO_DO,
-        ExitCode.SUCCESS,
-    ]
-    for a, b in itertools.product(priority, repeat=2):
-        expected = min(a, b, key=priority.index)
-        assert aggregate_exit_code([a, b]) is expected
-
-
-def test_aggregate_empty_is_nothing_to_do() -> None:
-    assert aggregate_exit_code([]) is ExitCode.NOTHING_TO_DO
-
-
-def test_aggregate_all_success() -> None:
-    assert aggregate_exit_code([ExitCode.SUCCESS] * 3) is ExitCode.SUCCESS
 
 
 # -- handoff pointer -------------------------------------------------------

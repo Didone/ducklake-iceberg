@@ -69,7 +69,7 @@ print(sorted(loaded))"
 # changing the DuckDB version. The build fails if the hash of any extension (or
 # the duckdb/pyiceberg version) differs from ducklake_iceberg.deps.
 RUN --network=none python -m ducklake_iceberg.deps
-RUN --network=none ducklake-iceberg --version && ducklake-iceberg doctor --help >/dev/null
+RUN --network=none ducklake-iceberg --version && ducklake-iceberg sync --help >/dev/null
 
 ENTRYPOINT ["ducklake-iceberg"]
 CMD ["--help"]

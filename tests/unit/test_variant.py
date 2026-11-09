@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import duckdb
-import pytest
 
 from ducklake_iceberg.checkpoint.model import NestedVariantError, TableRef
 from ducklake_iceberg.checkpoint.variant import (
@@ -99,7 +98,7 @@ def test_translate_text_matches_no_variant_column() -> None:
     err = translate_checkpoint_error(
         duckdb.Error("something about variant failed"),
         table=T,
-        phase="merge",
+        phase="flush",
         variants=(),
     )
     assert not isinstance(err, NestedVariantError)
@@ -111,11 +110,11 @@ def test_translate_text_matches_no_variant_column() -> None:
 
 def test_translate_unrecognized() -> None:
     err = translate_checkpoint_error(
-        duckdb.Error("disk full"), table=T, phase="rewrite", variants=()
+        duckdb.Error("disk full"), table=T, phase="flush", variants=()
     )
     assert err.code == "E-CHECKPOINT-UNKNOWN"
     assert err.exit_code == ExitCode.ERROR
-    assert err.phase == "rewrite"
+    assert err.phase == "flush"
     assert err.raw == "disk full"
 
 
@@ -130,12 +129,11 @@ def test_translate_preserves_snapshot_created() -> None:
     assert err.snapshot_created == 42
 
 
-@pytest.mark.parametrize("phase", ["flush", "merge", "rewrite"])
-def test_translate_always_keeps_raw(phase: str) -> None:
+def test_translate_always_keeps_raw() -> None:
     err = translate_checkpoint_error(
         duckdb.Error("anything"),
         table=T,
-        phase=phase,  # type: ignore[arg-type]
+        phase="flush",
         variants=(),
     )
     assert err.raw == "anything"

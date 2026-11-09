@@ -27,7 +27,7 @@ class InlinedDataRule:
     id: str = "inlined-data"  # fixed identifier (part of the --json contract)
     title: str = "Pending inlined data"
     severity: Severity = Severity.BLOCKER
-    remediation: str = "ducklake-iceberg checkpoint --table <schema>.<table>"
+    remediation: str = "ducklake-iceberg sync --table <schema>.<table>"
     requires: tuple[str, ...] = ()  # it is a gate; it depends on nothing
 
     def check(self, ctx: DoctorContext) -> Sequence[Finding]:
@@ -56,7 +56,7 @@ class InlinedDataRule:
                     f"Iceberg table without an error"
                 ),
                 remediation=(
-                    f"ducklake-iceberg checkpoint --table {ctx.target.qualified_name}"
+                    f"ducklake-iceberg sync --table {ctx.target.qualified_name}"
                 ),
                 data={
                     "pending_rows": status.pending_rows,

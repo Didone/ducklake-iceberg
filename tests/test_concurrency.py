@@ -3,10 +3,10 @@ from __future__ import annotations
 import os
 import threading
 import time
-from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import duckdb
 import pyarrow as pa
@@ -15,196 +15,62 @@ import pytest
 from pyiceberg.io.pyarrow import PyArrowFileIO
 
 from ducklake_iceberg import concurrency
-from ducklake_iceberg.concurrency import (
-    CANCELLED,
-    INTERRUPTED,
-    ConsolidatedReport,
-    Interrupted,
-    Limits,
-    Outcome,
-    map_parallel,
-    worker_cursor,
-)
+from ducklake_iceberg.concurrency import Limits, worker_cursor
 
 
-def test_map_parallel_preserves_input_order_and_captures_errors() -> None:
+def test_context_pool_preserves_context_and_input_order() -> None:
+    """Workers see the submitter's context vars; ``map`` keeps input order."""
+    var: ContextVar[str] = ContextVar("probe", default="unset")
+    var.set("main")
+
+    def run(value: int) -> tuple[int, str]:
+        time.sleep(0.01 * (3 - value))
+        return value * 10, var.get()
+
+    with concurrency.ContextThreadPoolExecutor(max_workers=3) as pool:
+        results = list(pool.map(run, [1, 2, 3]))
+
+    assert results == [(10, "main"), (20, "main"), (30, "main")]
+
+
+def test_context_pool_propagates_worker_errors() -> None:
     def run(value: int) -> int:
         if value == 2:
             raise RuntimeError("failure")
-        time.sleep(0.01 * (3 - value))
-        return value * 10
+        return value
 
-    outcomes = map_parallel(run, [1, 2, 3], workers=3)
+    with concurrency.ContextThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(run, v) for v in (1, 2, 3)]
 
-    assert [outcome.item for outcome in outcomes] == [1, 2, 3]
-    assert [outcome.value for outcome in outcomes] == [10, None, 30]
-    assert [outcome.exit_code for outcome in outcomes] == [0, 1, 0]
-    assert outcomes[1].error == "failure"
+    assert futures[0].result() == 1
+    with pytest.raises(RuntimeError, match="failure"):
+        futures[1].result()
+    assert futures[2].result() == 3
 
 
-def test_limits_cap_nested_workers_to_global_budget() -> None:
-    limits = Limits(
-        max_table_workers=4,
+def test_limits_capped_reduces_every_limit_to_the_global_budget() -> None:
+    requested = Limits(
         max_footer_workers=8,
-        max_total_workers=16,
-    ).for_all_tables()
-
-    assert limits.max_table_workers * limits.max_footer_workers <= 16
-    assert limits.max_footer_workers == 4
-    assert limits.duckdb_threads == max(
-        1, (os.cpu_count() or 1) // limits.max_table_workers
+        max_io_workers=8,
+        max_total_workers=4,
+        pyiceberg_max_workers=6,
     )
+    effective = requested.capped()
 
-
-@pytest.mark.parametrize(
-    ("values", "expected"),
-    [
-        ([0, 1, 4], 1),
-        ([0, 2, 4], 2),
-        ([0, 3, 4], 3),
-        ([0, 4], 0),
-        ([4, 4], 4),
-        ([0, 1, 4, 0], 1),
-        ([0, 4, 4], 0),
-        ([4, 4, 4], 4),
-        ([2, 3, 0], 2),
-    ],
-)
-def test_consolidated_exit_code_precedence(values: list[int], expected: int) -> None:
-    report = ConsolidatedReport(
-        command="sync",
-        outcomes=[Outcome(str(index), None, code) for index, code in enumerate(values)],
-    )
-
-    assert report.exit_code == expected
-
-
-# -- fail-fast, interruption, ordering, budget ------------------------------
-
-
-def _erase(outcomes: Sequence[Outcome[Any, Any]]) -> list[Outcome[object, object]]:
-    return cast(list[Outcome[object, object]], list(outcomes))
-
-
-def test_fail_fast_cancels_tasks_not_started() -> None:
-    """A failure on the 1st task, with 1 worker, cancels the unstarted ones."""
-    started: list[int] = []
-
-    def run(value: int) -> int:
-        started.append(value)
-        if value == 0:
-            return 1
-        # the worker may pick up the 2nd before the cancellation; it holds the
-        # worker and ensures the following ones are still queued by then
-        time.sleep(0.1)
-        return 0
-
-    outcomes = map_parallel(
-        run, [0, 1, 2, 3], workers=1, fail_fast=True, exit_code_of=lambda v: v
-    )
-
-    assert started[0] == 0
-    assert set(started) <= {0, 1}
-    assert outcomes[0].exit_code == 1
-    assert outcomes[0].error is None
-    assert [o.error for o in outcomes[2:]] == [CANCELLED, CANCELLED]
-    assert all(o.exit_code == 1 for o in outcomes if o.error == CANCELLED)
-    assert ConsolidatedReport("sync", _erase(outcomes)).exit_code == 1
-
-
-def test_fail_fast_preserves_running_and_ignores_nothing_to_do() -> None:
-    """Exit 4 is not a failure; a running task finishes even after a failure."""
-    gate = threading.Event()
-
-    def run(value: int) -> int:
-        if value == 0:
-            gate.wait(timeout=5)
-            return 0
-        if value == 1:
-            gate.set()
-            return 2
-        return 4
-
-    outcomes = map_parallel(
-        run, [0, 1, 2], workers=2, fail_fast=True, exit_code_of=lambda v: v
-    )
-
-    assert outcomes[0].value == 0
-    assert outcomes[0].exit_code == 0
-    assert outcomes[1].exit_code == 2
-    assert outcomes[2].error == CANCELLED
-
-
-def test_without_fail_fast_partial_failure_runs_everything() -> None:
-    outcomes = map_parallel(
-        lambda v: v, [1, 0, 4, 0], workers=1, exit_code_of=lambda v: v
-    )
-    assert [o.exit_code for o in outcomes] == [1, 0, 4, 0]
-    assert all(o.error is None for o in outcomes)
-
-
-def test_keyboard_interrupt_cancels_pending_and_waits_running(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """SIGINT cancels pending tasks, waits for running ones, ``Interrupted``."""
-    started = threading.Event()
-    release = threading.Event()
-
-    def run(value: int) -> int:
-        if value == 1:
-            started.set()
-            release.wait(timeout=5)
-        return value * 10
-
-    def interrupted(fs: Any) -> Any:
-        # SIGINT with the 1st task running; it only finishes after the pending
-        # ones are canceled, which has to wait for it
-        started.wait(timeout=5)
-        threading.Timer(0.05, release.set).start()
-        raise KeyboardInterrupt
-
-    monkeypatch.setattr(concurrency, "as_completed", interrupted)
-    with pytest.raises(Interrupted) as info:
-        map_parallel(run, [1, 2, 3], workers=1)
-
-    outcomes = info.value.outcomes
-    assert isinstance(info.value, KeyboardInterrupt)
-    assert outcomes[0].value == 10
-    assert outcomes[0].exit_code == 0
-    assert all(o.error == INTERRUPTED and o.exit_code == 1 for o in outcomes[1:])
-
-
-def test_to_results_sorted_by_table_regardless_of_finish_order() -> None:
-    """Shuffled durations: ``results[]`` sorted by name and stable."""
-    delays = {"s.c": 0.03, "s.a": 0.0, "s.b": 0.015}
-
-    def run(name: str) -> dict[str, object]:
-        time.sleep(delays[name])
-        return {"files_added": 1}
-
-    runs = [
-        ConsolidatedReport(
-            "sync", _erase(map_parallel(run, ["s.c", "s.a", "s.b"], workers=3))
-        ).to_results()
-        for _ in range(2)
-    ]
-
-    assert [r["table"] for r in runs[0]] == ["s.a", "s.b", "s.c"]
-    assert [r["table"] for r in runs[0]] == [r["table"] for r in runs[1]]
-
-
-def test_limits_capped_from_reports_each_reduced_limit() -> None:
-    """4 x 8 > 16 => effective footers and I/O = 4."""
-    requested = Limits(max_table_workers=4, max_footer_workers=8, max_total_workers=16)
-    effective = requested.for_all_tables()
-
+    assert effective.max_total_workers == 4
     assert effective.max_footer_workers == 4
     assert effective.max_io_workers == 4
+    assert effective.pyiceberg_max_workers == 4
     assert effective.capped_from(requested) == [
         ("max_footer_workers", 8, 4),
         ("max_io_workers", 8, 4),
+        ("pyiceberg_max_workers", 6, 4),
     ]
-    assert Limits().for_all_tables().capped_from(Limits()) == []
+
+
+def test_limits_within_the_budget_are_untouched() -> None:
+    assert Limits().capped() == Limits()
+    assert Limits().capped().capped_from(Limits()) == []
 
 
 def test_limits_reject_non_positive() -> None:
@@ -291,11 +157,11 @@ def test_worker_cursor_per_thread_has_no_contention() -> None:
             assert row is not None
             return int(row[0])
 
-    outcomes = map_parallel(query, range(16), workers=8)
+    with concurrency.ContextThreadPoolExecutor(max_workers=8) as pool:
+        values = list(pool.map(query, range(16)))
     con.close()
 
-    assert all(o.error is None for o in outcomes)
-    assert {o.value for o in outcomes} == {sum(range(200000))}
+    assert set(values) == {sum(range(200000))}
 
 
 def test_registered_relation_is_invisible_in_derived_cursor() -> None:
@@ -329,11 +195,11 @@ def test_footers_with_dedicated_cursors_match_serial(tmp_path: Path) -> None:
             return cursor.execute(sql, {"path": str(path)}).fetchone()
 
     serial = [footer(path) for path in paths]
-    parallel = map_parallel(footer, paths, workers=8)
+    with concurrency.ContextThreadPoolExecutor(max_workers=8) as pool:
+        parallel = list(pool.map(footer, paths))
     con.close()
 
-    assert all(o.error is None for o in parallel)
-    assert [o.value for o in parallel] == serial
+    assert parallel == serial
 
 
 def test_parallel_footer_phase_is_not_slower_than_serial(tmp_path: Path) -> None:

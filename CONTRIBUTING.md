@@ -32,13 +32,10 @@ poetry run mypy                     # strict; checks src and tests
 
 ```bash
 # Fast path: SQLite catalog and moto (what CI runs on every Python version)
-poetry run pytest -m "not postgres and not e2e and not minio"
+poetry run pytest -m "not postgres and not e2e"
 
 # Postgres catalog through testcontainers (needs Docker)
 poetry run pytest -m postgres --cov-fail-under=0
-
-# DuckLake file cleanup against MinIO (needs Docker)
-poetry run pytest -m minio --cov-fail-under=0
 
 # A single test (disable the coverage gate or the run fails)
 poetry run pytest tests/sync/test_delta.py::test_name --no-cov
@@ -54,7 +51,6 @@ Markers:
 | ------------- | ------- |
 | `integration` | Needs a real DuckLake catalog (SQLite by default) |
 | `postgres`    | Needs a Postgres container (testcontainers) |
-| `minio`       | Needs a MinIO container (testcontainers + Docker) |
 | `aws`         | Uses simulated S3/Glue (moto) |
 | `e2e`         | Needs a real AWS account; never runs in CI |
 | `roundtrip`   | Writer output is read back by the PyIceberg reader |
@@ -80,30 +76,28 @@ the AWS Glue Data Catalog **without copying data**. Sync is one-way
 
 ### Pipeline
 
-`sync` chains the per-table steps, which also exist as standalone commands,
-under a per-table process lock (`sync/lock.py`):
+`sync` (`cli.py`, `pipeline.py`) runs the per-table stages under a per-table
+process lock (`sync/lock.py`):
 
 1. **doctor** (`doctor/`): Iceberg v2 compatibility pre-flight. Rules live in
    `doctor/rules/` and are registered in `doctor/registry.py`. A blocker exits
    with code 2.
-2. **checkpoint** (`checkpoint/`): the only code that **writes to DuckLake**.
-   In `sync` it only flushes pending inlined data; the full expire + merge +
-   rewrite runs only with `checkpoint` or `sync --compact`.
+2. **flush** (`checkpoint/flush.py`): the only code that **writes to DuckLake**.
+   It flushes pending inlined data (`ducklake_flush_inlined_data`) and nothing
+   else: no compaction, no snapshot expiry, no file cleanup. The doctor runs
+   again on the snapshot that will be exported.
 3. **export** (`export.py`): reads the catalog, computes the delta against the
-   last exported snapshot (`sync/delta.py`, `sync/schema_evolution.py`) and
-   writes the Iceberg metadata through `writer/` (Avro manifests and manifest
-   lists via fastavro, then `vN.metadata.json`). DuckLake deletes become v2
-   position delete files (`deletes/`). Exits with code 4 when nothing changed.
+   last exported snapshot and writes the Iceberg metadata through `writer/`
+   (Avro manifests and manifest lists via fastavro, then `vN.metadata.json`).
+   DuckLake deletes become v2 position delete files (`deletes/`). Exits with
+   code 4 when nothing changed.
 4. **register** (`register.py`, `glue.py`): `register_table` the first time,
    then a Glue `UpdateTable` with optimistic locking. If Glue points at a
    `metadata.json` that is not an ancestor of ours (an external write), it
    exits with code 3.
 
 The sync state (the last exported snapshot, etc.) is stored in the Iceberg
-table properties (`sync/state.py`), not in local files. The remaining commands
-are `status`, `validate` (DuckLake and Iceberg reconciliation) and `clean`
-(garbage collection of unreachable Iceberg metadata, see
-`maintenance/orphans.py` and `retention.py`).
+table properties (`sync/state.py`), not in local files.
 
 ### Exit codes and output contract
 
@@ -138,12 +132,12 @@ Exception names such as `NothingToDo`, `RecordCountMismatch` and
 - **Catalog access only through DuckDB** (`catalog/connection.py`), never
   through psycopg. The catalog is attached with an explicit
   `METADATA_CATALOG` so that `lake_meta.ducklake_*` tables are queryable.
-  Connections are `READ_ONLY` except for checkpoint, which also prevents a
+  Connections are `READ_ONLY` except for the flush, which also prevents a
   mistyped DSN from silently creating an empty lake. Reads run inside a
   transaction for a consistent view. File enumeration uses
   `ducklake_list_files(...)`, cross-checked against `ducklake_data_file`; any
   divergence aborts.
-- **One DuckLake table checkpoint is one Iceberg snapshot.**
+- **One DuckLake table snapshot range is one Iceberg snapshot.**
 - **Iceberg v2 only**, because Athena only supports v2: no deletion vectors,
   variant, geometry or nanosecond timestamps.
 

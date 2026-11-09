@@ -39,12 +39,12 @@ def test_worse_exit_severity(a: ExitCode, b: ExitCode, expected: ExitCode) -> No
 
 
 def test_envelope_to_json_is_valid_and_versioned() -> None:
-    env = Envelope(command="doctor", dry_run=True)
+    env = Envelope(command="sync", dry_run=True)
     env.results.append({"table": "vendas.pedidos"})
     env.problems.append(Problem(code="x", message="failed", table="a.b"))
     payload = json.loads(env.to_json())
     assert payload["version"] == ENVELOPE_VERSION
-    assert payload["command"] == "doctor"
+    assert payload["command"] == "sync"
     assert payload["dry_run"] is True
     assert payload["status"] == "ok"
     assert payload["results"][0]["table"] == "vendas.pedidos"
@@ -55,7 +55,7 @@ def test_envelope_to_json_is_valid_and_versioned() -> None:
 
 
 def test_set_exit_syncs_status() -> None:
-    err = Envelope(command="export", dry_run=False)
+    err = Envelope(command="sync", dry_run=False)
     err.set_exit(ExitCode.ERROR)
     assert err.exit_code == 1
     assert err.status == "error"
@@ -66,67 +66,10 @@ def test_set_exit_syncs_status() -> None:
     assert nothing.status == "nothing-to-do"
 
 
-def _doctor_result(table: str, *, glue_exists: bool, s3: object) -> dict[str, object]:
-    return {
-        "table": table,
-        "identity": {
-            "table_id": 2,
-            "table_uuid": "uuid-x",
-            "schema_id": 1,
-            "schema_version": 2,
-        },
-        "snapshot": {
-            "snapshot_id": 4,
-            "snapshot_time": "2026-01-01",
-            "schema_version": 2,
-        },
-        "environment": {
-            "duckdb_version": "v2.0.0",
-            "extensions": {"ducklake": True, "aws": True},
-            "attached": ["lake", "lake_meta"],
-            "read_only": True,
-        },
-        "aws": {
-            "region": "sa-east-1",
-            "profile": None,
-            "glue_database": "analytics",
-            "glue_reachable": True,
-            "glue_database_exists": glue_exists,
-            "data_path_readable": s3,
-        },
-        "inlined_rows": 0,
-    }
-
-
-def test_emit_human_single(capsys: pytest.CaptureFixture[str]) -> None:
-    from ducklake_iceberg.output import emit
-
-    env = Envelope(command="doctor", dry_run=False)
-    env.results.append(_doctor_result("vendas.pedidos", glue_exists=False, s3=True))
-    emit(env, json_out=False)
-    out = capsys.readouterr().out
-    assert "vendas.pedidos" in out
-    assert "table_id" in out
-    assert "will be created on export" in out
-
-
-def test_emit_human_multi(capsys: pytest.CaptureFixture[str]) -> None:
-    from ducklake_iceberg.output import emit
-
-    env = Envelope(command="doctor", dry_run=False)
-    env.results.append(_doctor_result("a.x", glue_exists=True, s3=None))
-    env.results.append(_doctor_result("a.y", glue_exists=True, s3=False))
-    emit(env, json_out=False)
-    out = capsys.readouterr().out
-    assert "a.x" in out
-    assert "a.y" in out
-    assert "--all-tables" in out
-
-
 def test_emit_human_problem(capsys: pytest.CaptureFixture[str]) -> None:
     from ducklake_iceberg.output import emit
 
-    env = Envelope(command="doctor", dry_run=False)
+    env = Envelope(command="sync", dry_run=False)
     env.problems.append(Problem(code="x", message="failed", hint="tip", table="a.b"))
     env.set_exit(ExitCode.ERROR)
     emit(env, json_out=False)
@@ -141,114 +84,11 @@ def test_emit_json_writes_single_object(
 ) -> None:
     from ducklake_iceberg.output import emit
 
-    env = Envelope(command="doctor", dry_run=False)
+    env = Envelope(command="sync", dry_run=False)
     emit(env, json_out=True)
     out = capsys.readouterr().out
     payload = json.loads(out)  # exactly one object
-    assert payload["command"] == "doctor"
-
-
-def _rules_report(exit_code: int, rules: list[dict[str, Any]]) -> dict[str, Any]:
-    blocker = sum(
-        1
-        for r in rules
-        for f in r.get("findings", [])
-        if f.get("severity") == "blocker"
-    )
-    skipped = sum(1 for r in rules if r.get("status") == "skipped")
-    return {
-        "exit_code": exit_code,
-        "summary": {
-            "blocker": blocker,
-            "degraded": 0,
-            "info": 0,
-            "rules_skipped": skipped,
-            "rules_errored": sum(1 for r in rules if r.get("status") == "error"),
-            "short_circuited_by": ["inlined-data"] if skipped else [],
-        },
-        "rules": rules,
-    }
-
-
-def test_render_doctor_with_rules_all_states(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    from ducklake_iceberg.output import render_doctor
-
-    result = _doctor_result("vendas.pedidos", glue_exists=True, s3=True)
-    result["rules"] = _rules_report(
-        2,
-        [
-            {
-                "id": "inlined-data",
-                "status": "failed",
-                "findings": [
-                    {
-                        "severity": "blocker",
-                        "subject": "vendas.pedidos",
-                        "detail": "3 inlined rows",
-                        "remediation": "ducklake-iceberg checkpoint",
-                    }
-                ],
-                "skipped_by": [],
-            },
-            {
-                "id": "partial-files",
-                "status": "skipped",
-                "findings": [],
-                "skipped_by": ["inlined-data"],
-            },
-            {"id": "unsupported-type", "status": "passed", "findings": []},
-            {
-                "id": "mapping-divergence",
-                "status": "error",
-                "error": "duckdb.Error: x",
-                "findings": [],
-            },
-        ],
-    )
-    render_doctor(result)
-    out = capsys.readouterr().out
-    assert "Compatibility preflight" in out
-    assert "inlined-data" in out
-    assert "SKIPPED" in out
-    assert "OK" in out
-    assert "ERROR" in out
-    assert "not evaluated" in out  # paragraph for skipped rules
-
-
-def test_render_doctor_table_preflight_verdicts(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    from ducklake_iceberg.output import Envelope, emit
-
-    env = Envelope(command="doctor", dry_run=False)
-    clean = _doctor_result("a.clean", glue_exists=True, s3=True)
-    clean["rules"] = _rules_report(0, [{"id": "x", "status": "passed", "findings": []}])
-    blocked = _doctor_result("a.bad", glue_exists=True, s3=True)
-    blocked["rules"] = _rules_report(
-        2,
-        [
-            {
-                "id": "unsupported-type",
-                "status": "failed",
-                "findings": [
-                    {
-                        "severity": "blocker",
-                        "subject": "a.bad",
-                        "detail": "d",
-                        "remediation": "r",
-                    }
-                ],
-            }
-        ],
-    )
-    env.results.append(clean)
-    env.results.append(blocked)
-    emit(env, json_out=False)
-    out = capsys.readouterr().out
-    assert "ok" in out
-    assert "blocker" in out
+    assert payload["command"] == "sync"
 
 
 # -- problem level and the consolidated sync report --------------------------

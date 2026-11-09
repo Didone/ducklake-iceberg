@@ -25,7 +25,7 @@ from jsonschema import Draft202012Validator
 from typer.testing import CliRunner
 
 from ducklake_iceberg import cli, timing
-from ducklake_iceberg.concurrency import ContextThreadPoolExecutor, map_parallel
+from ducklake_iceberg.concurrency import ContextThreadPoolExecutor
 from ducklake_iceberg.errors import AwsError, ExitCode, NothingToDo
 from ducklake_iceberg.obs import redaction
 from ducklake_iceberg.obs.logging import (
@@ -159,19 +159,19 @@ def test_debug_logging_does_not_enable_botocore_debug(
 def test_closed_stderr_does_not_break_logging(monkeypatch: pytest.MonkeyPatch) -> None:
     """``2>&-`` leaves ``sys.stderr`` as ``None``; nothing raises."""
     monkeypatch.setattr(sys, "stderr", None)
-    configure_logging("INFO", fmt="auto", command="doctor")
+    configure_logging("INFO", fmt="auto", command="sync")
     log_event("command.end", exit_code=0)
 
     closed = StringIO()
     closed.close()
-    configure_logging("INFO", fmt="json", stream=closed, command="doctor")
+    configure_logging("INFO", fmt="json", stream=closed, command="sync")
     log_event("command.end", exit_code=0)  # the write fails silently
 
 
 # -- context in threads ------------------------------------------------------
 
 
-def test_map_parallel_workers_inherit_log_context() -> None:
+def test_pool_workers_inherit_log_context() -> None:
     """Without ``copy_context``, worker events were emitted without ``run_id``."""
     stream = _json_logging()
 
@@ -179,8 +179,8 @@ def test_map_parallel_workers_inherit_log_context() -> None:
         log_event("table.start", table=table)
         return 0
 
-    with bind(phase_hint="x"):
-        map_parallel(work, ["a.t1", "a.t2", "a.t3"], workers=3)
+    with bind(phase_hint="x"), ContextThreadPoolExecutor(max_workers=3) as pool:
+        list(pool.map(work, ["a.t1", "a.t2", "a.t3"]))
 
     events = _lines(stream)
     assert len(events) == 3
@@ -240,19 +240,14 @@ def test_run_metrics_serializes_phase_and_totals() -> None:
     assert payload["phases"][0]["started_at"].endswith("+00:00")
 
 
-def test_footers_and_glue_stats_record_work_counts() -> None:
+def test_footers_record_work_counts() -> None:
     metrics = RunMetrics(run_id="a" * 32, command="sync")
 
-    with collect(metrics):
-        with timing.phase("footers"):
-            add_work("footers", items=3, byte_count=120)
-        with timing.phase("glue_stats"):
-            add_work("glue_stats", items=2)
-            metrics.add_call("glue_stats")
+    with collect(metrics), timing.phase("footers"):
+        add_work("footers", items=3, byte_count=120)
 
     phases = {metric.phase: metric for metric in metrics.phases}
     assert (phases["footers"].items, phases["footers"].bytes) == (3, 120)
-    assert (phases["glue_stats"].items, phases["glue_stats"].calls) == (2, 1)
 
 
 def test_nested_phases_are_exclusive_and_sum_below_total() -> None:
@@ -426,7 +421,7 @@ def test_secret_filter_failure_drops_the_line(monkeypatch: pytest.MonkeyPatch) -
 def test_redaction_failure_becomes_problem_without_changing_exit_code(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    base = runner.invoke(cli.app, ["doctor", "--json"])
+    base = runner.invoke(cli.app, ["sync", "--table", "main.t", "--json"])
     original = redaction.scrub_mapping
     calls = {"n": 0}
 
@@ -437,7 +432,7 @@ def test_redaction_failure_becomes_problem_without_changing_exit_code(
         return original(data)
 
     monkeypatch.setattr(redaction, "scrub_mapping", flaky)
-    result = runner.invoke(cli.app, ["doctor", "--json"])
+    result = runner.invoke(cli.app, ["sync", "--table", "main.t", "--json"])
 
     assert result.exit_code == base.exit_code == int(ExitCode.ERROR)
     codes = [p["code"] for p in json.loads(result.stdout)["problems"]]
@@ -482,36 +477,15 @@ def test_unhandled_exception_is_internal_error_with_scrubbed_message(
 # -- envelope version -------------------------------------------------------
 
 
-def _comparable(stdout: str) -> dict[str, Any]:
-    payload: dict[str, Any] = json.loads(stdout)
-    for volatile in ("started_at", "duration_ms"):
-        payload.pop(volatile)
-    return payload
-
-
-def test_explicit_json_version_matches_default() -> None:
-    default = runner.invoke(cli.app, ["doctor", "--json"])
-    explicit = runner.invoke(cli.app, ["doctor", "--json", "--json-version", "1"])
-    assert explicit.exit_code == default.exit_code
-    assert _comparable(explicit.stdout) == _comparable(default.stdout)
-
-
-def test_unsupported_json_version_is_usage_error() -> None:
-    result = runner.invoke(cli.app, ["doctor", "--json", "--json-version", "9"])
+def test_json_version_flag_was_removed() -> None:
+    """The envelope version is fixed at 1; there is nothing to negotiate."""
+    result = runner.invoke(
+        cli.app, ["sync", "--table", "main.t", "--json", "--json-version", "1"]
+    )
     assert result.exit_code == 2
-    text = " ".join(result.output.replace("│", " ").split())
-    assert "unsupported envelope version 9 (current 1)" in text
-
-
-def test_deprecated_json_version_warns_without_changing_exit(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(cli, "DEPRECATED_ENVELOPE_VERSIONS", frozenset({1}))
-    result = runner.invoke(cli.app, ["doctor", "--json", "--json-version", "1"])
-    assert result.exit_code == int(ExitCode.ERROR)  # same as without the flag
-    problems = json.loads(result.stdout)["problems"]
-    warning = next(p for p in problems if p["code"] == "envelope_version_deprecated")
-    assert warning["level"] == "warning"
+    assert ENVELOPE_VERSION == 1
+    envelope = Envelope(command="sync", dry_run=False)
+    assert json.loads(envelope.to_json())["version"] == 1
 
 
 #: Minimum contract of envelope v1: required keys per ``$def`` and the type of
@@ -538,24 +512,6 @@ V1_CONTRACT: dict[str, dict[str, Any]] = {
         "table": {"type": ["string", "null"]},
     },
     "metrics": {"run_id": None, "duration_ms": None, "phases": None, "totals": None},
-    "doctor_result": dict.fromkeys(
-        ("table", "identity", "snapshot", "environment", "aws", "inlined_rows")
-    ),
-    "checkpoint_table": dict.fromkeys(
-        ("table", "inlined_rows_before", "inlined_rows_after")
-    ),
-    "export_publication": dict.fromkeys(
-        (
-            "table",
-            "ducklake_snapshot_id",
-            "metadata_location",
-            "files_added",
-            "bytes_referenced",
-        )
-    ),
-    "register_result": dict.fromkeys(
-        ("table", "metadata_location", "glue_table", "created")
-    ),
     "sync_table": dict.fromkeys(
         (
             "table",
@@ -567,17 +523,6 @@ V1_CONTRACT: dict[str, dict[str, Any]] = {
             "bytes_referenced",
         )
     ),
-    "status_table": dict.fromkeys(
-        (
-            "table",
-            "ducklake_snapshot_id",
-            "iceberg_snapshot_id",
-            "in_sync",
-            "external_write_suspected",
-        )
-    ),
-    "validate_data": dict.fromkeys(("table", "checks", "tolerances_applied")),
-    "validate_retention": dict.fromkeys(("table", "policy", "risk", "doomed_files")),
 }
 
 
@@ -601,6 +546,7 @@ def test_envelope_redacts_fields_and_validates_schema() -> None:
     envelope.results.append(
         {
             "table": "main.orders",
+            "steps": [],
             "exit_code": 1,
             "data_file_encryption_key": "do-not-export",
             "error": "host=db.local",

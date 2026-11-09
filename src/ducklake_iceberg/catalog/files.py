@@ -684,7 +684,8 @@ def check_blockers(
                 "delete-format",
                 f"{puffin} delete file(s) not in parquet format (puffin/DV); "
                 f"Athena does not read deletion vectors in Iceberg v2",
-                "ducklake-iceberg sync --materialize-deletes (rewrites the data files)",
+                "rewrite the data files in DuckLake "
+                "(CALL ducklake_rewrite_data_files) to remove the deletion vectors",
             )
         )
 
@@ -853,7 +854,7 @@ def enumerate_files(
                     _blocker(
                         "inlined-data",
                         "table has inlined data; export would produce an empty table",
-                        f"ducklake-iceberg checkpoint --table {target.qualified_name}",
+                        f"ducklake-iceberg sync --table {target.qualified_name}",
                     )
                 ]
             )

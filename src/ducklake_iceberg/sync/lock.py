@@ -127,7 +127,7 @@ def _lock_dir() -> Path:
 # -- key generation -----------------------------------------------------------
 
 
-def _lock_key(
+def lock_key(
     *,
     profile: str | None,
     glue_database: str,

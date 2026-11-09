@@ -207,7 +207,7 @@ def test_unsupported_delete_files_block(
     assert exc_info.value.exit_code == ExitCode.BLOCKED
     if error is rd.PuffinDeleteFormatError:
         assert "Athena" in exc_info.value.message
-        assert "--materialize-deletes" in (exc_info.value.hint or "")
+        assert "ducklake_rewrite_data_files" in (exc_info.value.hint or "")
 
 
 # --- tampered path -> mismatch with ducklake_list_files ----------------------
@@ -298,7 +298,7 @@ def test_inlined_deletes_block_by_default(catalog: CatalogHarness) -> None:
     with pytest.raises(rd.InlinedDeletesPendingError) as exc_info:
         _read(catalog)
     assert exc_info.value.exit_code == ExitCode.BLOCKED
-    assert "ducklake-iceberg checkpoint" in (exc_info.value.hint or "")
+    assert "ducklake-iceberg sync" in (exc_info.value.hint or "")
 
 
 def test_inlined_deletes_on_file_without_delete_file(catalog: CatalogHarness) -> None:

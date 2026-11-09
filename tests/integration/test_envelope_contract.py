@@ -2,7 +2,7 @@
 
 Real DuckLake (SQLite and Postgres, via the ``catalog`` fixture) -> moto Glue,
 Iceberg metadata under a local prefix. Covers the scenarios that need a real
-command: every command's envelope against the schema, log line format,
+command: the ``sync`` envelope against the schema, log line format,
 ``sync.end`` fields, phase metrics, credential redaction on every output
 surface and the exit code with a closed stderr. Also proves that worker
 events carry ``run_id``.
@@ -30,7 +30,7 @@ from jsonschema import Draft202012Validator
 from moto import mock_aws
 from typer.testing import CliRunner
 
-from ducklake_iceberg import cli
+from ducklake_iceberg import cli, pipeline
 from ducklake_iceberg.errors import AwsError, CatalogError
 from ducklake_iceberg.obs.logging import EVENTS, log_event
 
@@ -88,84 +88,78 @@ def _phases(result: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {phase["phase"]: phase for phase in result["metrics"]["phases"]}
 
 
-# -- every command envelope validates against the schema ----------------------
+# -- every sync scenario's envelope validates against the schema --------------
 
 #: (arguments, setup commands, accepted exit codes)
-COMMANDS: dict[str, tuple[tuple[str, ...], tuple[tuple[str, ...], ...], set[int]]] = {
-    "doctor": (("doctor", "--table", "main.t"), (), {0}),
-    "doctor-all": (("doctor", "--all-tables"), (), {0}),
-    "checkpoint": (("checkpoint", "--table", "main.t"), (), {0, 4}),
-    "checkpoint-dry-run": (
-        ("checkpoint", "--table", "main.t", "--dry-run"),
-        (),
-        {0, 4},
-    ),
-    "export": (("export", "--table", "main.t"), (), {0}),
-    "export-dry-run": (("export", "--table", "main.t", "--dry-run"), (), {0}),
-    "register": (
-        ("register", "--table", "main.t"),
-        (("export", "--table", "main.t"),),
-        {0},
-    ),
-    "register-again": (
-        ("register", "--table", "main.t"),
-        (("sync", "--table", "main.t"),),
-        {4},
-    ),
+SCENARIOS: dict[str, tuple[tuple[str, ...], tuple[tuple[str, ...], ...], set[int]]] = {
     "sync": (("sync", "--table", "main.t"), (), {0}),
-    "sync-all": (("sync", "--all-tables"), (), {0}),
-    "status": (("status", "--table", "main.t"), (("sync", "--table", "main.t"),), {4}),
-    "validate": (
-        ("validate", "--table", "main.t"),
-        (("sync", "--table", "main.t"),),
-        {0},
-    ),
-    "validate-retention": (
-        ("validate", "--table", "main.t", "--only", "retention"),
-        (("sync", "--table", "main.t"),),
-        {0},
-    ),
-    "clean": (("clean", "--table", "main.t"), (("sync", "--table", "main.t"),), {4}),
-    "clean-ducklake": (
-        ("clean", "--ducklake-files"),
+    "sync-dry-run": (("sync", "--table", "main.t", "--dry-run"), (), {0}),
+    "sync-again": (
+        ("sync", "--table", "main.t"),
         (("sync", "--table", "main.t"),),
         {4},
     ),
 }
 
 
-@pytest.mark.parametrize("name", sorted(COMMANDS))
-def test_every_command_envelope_matches_schema(
+@pytest.mark.parametrize("name", sorted(SCENARIOS))
+def test_sync_envelope_matches_schema(
     catalog: CatalogHarness, config: Path, glue_env: None, name: str
 ) -> None:
-    args, setup, accepted = COMMANDS[name]
+    args, setup, accepted = SCENARIOS[name]
     _seed(catalog)
     for step in setup:
         code, doc, _ = _run(config, *step)
         assert code in (0, 4), doc["problems"]
 
-    code, doc, stderr = _run(config, *args, "--metrics")
+    code, doc, stderr = _run(config, *args)
 
     assert code in accepted, doc["problems"]
     Draft202012Validator(SCHEMA).validate(doc)
-    assert doc["command"] == args[0]
+    assert doc["command"] == "sync"
     assert doc["results"], "command returned no result"
     first = doc["results"][0]
-    holder = first["tables"][0] if args[0] == "status" else first
-    assert holder["metrics"]["run_id"] == _events(stderr)[0]["run_id"]
+    assert first["metrics"]["run_id"] == _events(stderr)[0]["run_id"]
     # stdout is exactly one JSON object; stderr, one JSON line per event
     assert all(event["event"] in EVENTS for event in _events(stderr))
 
 
-def test_metrics_block_is_opt_in_outside_sync(
+def test_blocked_envelope_matches_schema(
+    catalog: CatalogHarness, config: Path, glue_env: None
+) -> None:
+    catalog.write("CREATE TABLE lake.main.bad (id INTEGER, qty UINTEGER)")
+
+    code, doc, _ = _run(config, "sync", "--table", "main.bad")
+
+    assert code == 2
+    Draft202012Validator(SCHEMA).validate(doc)
+    assert doc["status"] == "blocked"
+    assert doc["problems"][0]["code"] == "blocked"
+
+
+def test_schema_rejects_other_commands_and_malformed_results(
+    catalog: CatalogHarness, config: Path, glue_env: None
+) -> None:
+    """The schema only describes ``sync``: the validation is not vacuous."""
+    _seed(catalog)
+    code, doc, _ = _run(config, "sync", "--table", "main.t")
+    assert code == 0
+    validator = Draft202012Validator(SCHEMA)
+    assert not validator.is_valid({**doc, "command": "doctor"})
+    broken = {
+        **doc,
+        "results": [{k: v for k, v in doc["results"][0].items() if k != "steps"}],
+    }
+    assert not validator.is_valid(broken)
+    assert not validator.is_valid({**doc, "version": 2})
+
+
+def test_metrics_block_is_always_present(
     catalog: CatalogHarness, config: Path, glue_env: None
 ) -> None:
     _seed(catalog)
-    code, doc, _ = _run(config, "doctor", "--table", "main.t")
+    code, doc, _ = _run(config, "sync", "--table", "main.t")
     assert code == 0
-    assert "metrics" not in doc["results"][0]
-
-    code, doc, _ = _run(config, "doctor", "--table", "main.t", "--metrics")
     phases = _phases(doc["results"][0])
     assert phases["resolve"]["items"] == 1
     assert phases["doctor"]["items"] >= 6  # evaluated rules
@@ -178,15 +172,13 @@ def test_sync_log_lines_and_sync_end_fields(
     catalog: CatalogHarness, config: Path, glue_env: None
 ) -> None:
     _seed(catalog, "t1")
-    _seed(catalog, "t2")
 
     result = runner.invoke(
         cli.app,
         [
             "sync",
-            "--all-tables",
-            "--max-table-workers",
-            "2",
+            "--table",
+            "main.t1",
             "--config",
             str(config),
             "--json",
@@ -203,7 +195,7 @@ def test_sync_log_lines_and_sync_end_fields(
     assert all("\n" not in line for line in lines)
     run_id = events[0]["run_id"]
     for event in events:
-        # events emitted from the --all-tables threads carry it too
+        # events emitted from the worker threads carry it too
         assert event["run_id"] == run_id, event
         assert event["command"] == "sync"
         assert event["log_schema_version"] == 1
@@ -214,7 +206,7 @@ def test_sync_log_lines_and_sync_end_fields(
     assert events[-1]["exit_code"] == 0
 
     ends = {e["table"]: e for e in events if e["event"] == "sync.end"}
-    assert set(ends) == {"main.t1", "main.t2"}
+    assert set(ends) == {"main.t1"}
     types = {
         "table": str,
         "snapshot_id": int,
@@ -232,7 +224,7 @@ def test_sync_log_lines_and_sync_end_fields(
         for key, kind in types.items():
             assert isinstance(end[key], kind), (key, end)
     phase_ends = [e for e in events if e["event"] == "phase.end"]
-    assert {e["table"] for e in phase_ends} == {"main.t1", "main.t2"}
+    assert {e["table"] for e in phase_ends} == {"main.t1"}
 
     by_table = {r["table"]: r for r in envelope["results"]}
     result_t1 = by_table["main.t1"]
@@ -280,7 +272,7 @@ def test_glue_failure_is_recorded_in_phase_metrics(
     def broken(*_: Any, **__: Any) -> Any:
         raise AwsError("Glue unavailable")
 
-    monkeypatch.setattr(cli, "run_register", broken)
+    monkeypatch.setattr(pipeline, "run_register", broken)
     code, doc, stderr = _run(config, "sync", "--table", "main.t")
 
     assert code == 1
@@ -343,7 +335,7 @@ def _surfaces(config: Path, *args: str) -> list[tuple[str, str]]:
         ("--log-format", "text", "--log-level", "DEBUG"),
     ):
         result = runner.invoke(cli.app, [*args, "--config", str(config), *extra])
-        assert result.exit_code in (0, 1), result.output
+        assert result.exit_code in (0, 1, 4), result.output
         assert result.exception is None or isinstance(result.exception, SystemExit)
         outputs += [(f"stdout {extra[0]}", result.stdout)]
         outputs += [(f"stderr {extra[0]}", result.stderr)]
@@ -367,7 +359,7 @@ def test_password_forced_by_env_never_surfaces(
         "DUCKLAKE_ICEBERG_CATALOG_DSN",
         f"ducklake:postgres:dbname=lake host={HOST} password={PASSWORD}",
     )
-    outputs = _surfaces(config, "doctor", "--table", "main.t")
+    outputs = _surfaces(config, "sync", "--table", "main.t")
     doc = json.loads(outputs[0][1])
     assert doc["exit_code"] == 1
     assert doc["problems"][0]["code"] == "config_invalid"
@@ -391,8 +383,8 @@ def test_postgres_extension_error_is_scrubbed_everywhere(
             raise CatalogError(f"failed to attach the catalog: {LEAKY_MESSAGE}")
         raise duckdb.IOException(LEAKY_MESSAGE)
 
-    monkeypatch.setattr(cli, "open_catalog", fail)
-    outputs = _surfaces(config, "doctor", "--table", "main.t")
+    monkeypatch.setattr(pipeline, "open_catalog", fail)
+    outputs = _surfaces(config, "sync", "--table", "main.t")
 
     doc = json.loads(outputs[0][1])
     Draft202012Validator(SCHEMA).validate(doc)
@@ -413,10 +405,11 @@ def test_encryption_key_and_botocore_debug_never_surface(
     """``data_file_encryption_key``/``key_metadata`` stay out of the output;
     ``--log-level DEBUG`` does not print the ``Authorization`` header."""
     _seed(catalog)
-    real = cli._doctor_one
+    real = pipeline.sync_table
 
     def leaky(*args: Any, **kwargs: Any) -> Any:
-        result, code = real(*args, **kwargs)
+        code = real(*args, **kwargs)
+        result = kwargs["envelope"].results[0]
         result["files"] = [
             {
                 "path": "s3://b/f.parquet",
@@ -427,10 +420,10 @@ def test_encryption_key_and_botocore_debug_never_surface(
         log_event(
             "phase.end", phase="enumerate", data_file_encryption_key=ENCRYPTION_KEY
         )
-        return result, code
+        return code
 
-    monkeypatch.setattr(cli, "_doctor_one", leaky)
-    outputs = _surfaces(config, "doctor", "--table", "main.t")
+    monkeypatch.setattr("ducklake_iceberg.cli.sync_table", leaky)
+    outputs = _surfaces(config, "sync", "--table", "main.t")
 
     doc = json.loads(outputs[0][1])
     assert doc["results"][0]["files"] == [{"path": "s3://b/f.parquet"}]
@@ -449,7 +442,7 @@ def test_closed_stderr_keeps_the_exit_code(
 ) -> None:
     _seed(catalog)
     executable = Path(sys.executable).with_name("ducklake-iceberg")
-    args = [str(executable), "checkpoint", "--table", "main.t", "--dry-run"]
+    args = [str(executable), "sync", "--table", "main.t", "--dry-run"]
     args += ["--json", "--config", str(config)]
 
     normal = subprocess.run(args, capture_output=True, text=True, check=False)  # noqa: S603
@@ -460,6 +453,6 @@ def test_closed_stderr_keeps_the_exit_code(
         check=False,
     )
 
-    assert normal.returncode in (0, 4), normal.stderr
+    assert normal.returncode == 0, normal.stderr
     assert closed.returncode == normal.returncode
     assert json.loads(closed.stdout)["exit_code"] == normal.returncode

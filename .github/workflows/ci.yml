@@ -62,7 +62,7 @@ jobs:
           python -m venv /tmp/wheel-venv
           /tmp/wheel-venv/bin/pip install dist/*.whl
           /tmp/wheel-venv/bin/ducklake-iceberg --version
-          /tmp/wheel-venv/bin/ducklake-iceberg doctor --help > /dev/null
+          /tmp/wheel-venv/bin/ducklake-iceberg sync --help > /dev/null
 
   container-smoke:
     name: container (offline smoke)
@@ -79,7 +79,7 @@ jobs:
             -t ducklake-iceberg:ci .
       - name: Verify offline CLI and non-root runtime
         run: |
-          docker run --rm --network none ducklake-iceberg:ci doctor --help
+          docker run --rm --network none ducklake-iceberg:ci sync --help
           test "$(docker run --rm --network none --entrypoint id ducklake-iceberg:ci -u)" = 10001
           test "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' ducklake-iceberg:ci)" = "$GITHUB_SHA"
           test "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.created" }}' ducklake-iceberg:ci)" != unknown
@@ -100,12 +100,9 @@ jobs:
       - run: pipx install poetry==${{ env.POETRY_VERSION }}
       - run: poetry install --sync
       - name: Unit and fast integration tests (SQLite catalog)
-        run: poetry run pytest -m "not postgres and not e2e and not minio"
+        run: poetry run pytest -m "not postgres and not e2e"
       - name: Integration tests against Postgres
         if: matrix.python == '3.12'
         # Backend parity run: the global coverage gate is enforced by the fast
         # step above; here the SAME suite only has to pass against Postgres.
         run: poetry run pytest -m postgres --cov-fail-under=0
-      - name: Physical DuckLake cleanup against MinIO
-        if: matrix.python == '3.12'
-        run: poetry run pytest -m minio --cov-fail-under=0

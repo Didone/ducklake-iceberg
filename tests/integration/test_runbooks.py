@@ -1,16 +1,15 @@
 """Operational runbooks A, B and C exercised offline.
 
 Real DuckLake (SQLite) -> ``ducklake-iceberg sync`` -> moto Glue, with metadata under a
-**local** prefix (PyArrow S3 is not intercepted by moto), as in
-``test_status_clean``. Proves the limits the operational runbooks assume; a
-rehearsal in staging is still a separate acceptance criterion.
+**local** prefix (PyArrow S3 is not intercepted by moto). Proves the limits the
+operational runbooks assume; a rehearsal in staging is still a separate
+acceptance criterion.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -30,6 +29,9 @@ from pyiceberg.table import StaticTable
 from typer.testing import CliRunner
 
 from ducklake_iceberg.cli import app
+from ducklake_iceberg.config import load_settings
+from ducklake_iceberg.errors import DivergenceError
+from ducklake_iceberg.register import run_register
 
 from .conftest import CatalogHarness
 
@@ -138,43 +140,29 @@ def test_runbook_a_update_table_rolls_back_and_sync_recovers(
     assert table.scan().to_arrow().num_rows == 5
     assert _glue_parameters()["previous_metadata_location"] == current
 
-    # the mirror is "behind" (not diverged) and validate reconciles against the
-    # DuckLake snapshot recorded in the restored metadata
-    code, doc = _invoke(config, "status", "--table", "main.t")
-    assert code == 3
-    assert doc["results"][0]["tables"][0]["status"] == "behind"
-    code, doc = _invoke(config, "validate", "--table", "main.t")
-    assert code == 0, doc["problems"]
-
     # once the schedule is re-enabled, sync recomputes the delta and republishes
     _sync(config)
     assert _catalog().load_table(("analytics", "t")).scan().to_arrow().num_rows == 8
-    code, doc = _invoke(config, "validate", "--table", "main.t")
-    assert code == 0, doc["problems"]
+    assert _catalog().load_table(("analytics", "t")).metadata_location != previous
 
 
 def test_register_metadata_location_is_forward_only(
     catalog: CatalogHarness, config: Path, glue_env: None
 ) -> None:
-    """``register --metadata-location`` does not roll back: it only moves forward.
+    """Registering a given ``metadata_location`` does not roll back.
 
     Glue must point to an ancestor of the target; going back to an earlier
-    metadata is exit 3, which is why Runbook A uses ``UpdateTable``. Undoing the
-    rollback (returning to the newest metadata) passes the CLI validations.
+    metadata is a divergence, which is why Runbook A uses ``UpdateTable``.
+    Undoing the rollback (returning to the newest metadata) is accepted.
     """
     previous, current = _two_syncs(catalog, config)
-    code, doc = _invoke(
-        config, "register", "--table", "main.t", "--metadata-location", previous
-    )
-    assert code == 3
-    assert doc["problems"][0]["code"] == "catalog_diverged"
+    settings = load_settings(config_file=config)
+    with pytest.raises(DivergenceError):
+        run_register(settings, "main", "t", metadata_location=previous)
     assert _catalog().load_table(("analytics", "t")).metadata_location == current
 
     _runbook_a_update_table(previous)
-    code, doc = _invoke(
-        config, "register", "--table", "main.t", "--metadata-location", current
-    )
-    assert code == 0, doc["problems"]
+    run_register(settings, "main", "t", metadata_location=current)
     assert _catalog().load_table(("analytics", "t")).metadata_location == current
 
 
@@ -223,13 +211,12 @@ def test_register_table_overwrite_is_not_implemented(
 # -- Runbook B ------------------------------------------------------------------
 
 
-def test_runbook_b_deleting_reachable_manifest_breaks_validate(
+def test_runbook_b_deleting_reachable_manifest_breaks_reading(
     catalog: CatalogHarness, config: Path, glue_env: None, location: Path
 ) -> None:
     """Deleting a reachable manifest breaks reading the mirror.
 
-    Shows why the reachable set matters: ``validate`` stops being green and
-    ``clean`` refuses to operate on a table with a missing reference.
+    Shows why the reachable set matters: the table stops being scannable.
     """
     _two_syncs(catalog, config)
     table = _catalog().load_table(("analytics", "t"))
@@ -238,11 +225,8 @@ def test_runbook_b_deleting_reachable_manifest_breaks_validate(
     manifest = Path(snapshot.manifests(table.io)[0].manifest_path)
     manifest.unlink()
 
-    code, _ = _invoke(config, "validate", "--table", "main.t")
-    assert code != 0
-    code, doc = _invoke(config, "clean", "--table", "main.t", "--apply")
-    assert code == 1
-    assert "do not exist" in doc["problems"][0]["message"]
+    with pytest.raises(FileNotFoundError):
+        _catalog().load_table(("analytics", "t")).scan().to_arrow()
 
 
 # -- Runbook C ------------------------------------------------------------------
@@ -266,46 +250,24 @@ def test_runbook_c_restore_after_external_write(
 
     code, doc = _invoke(config, "sync", "--table", "main.t")
     assert code == 3, doc["problems"]
-    code, doc = _invoke(config, "validate", "--table", "main.t")
-    assert code == 3
 
     pointer = json.loads((location / "_ducklake_iceberg_last_export.json").read_text())
-    code, doc = _invoke(
-        config,
-        "register",
-        "--table",
-        "main.t",
-        "--metadata-location",
-        pointer["metadata_location"],
-    )
-    assert code == 3  # register does not overwrite an external write
+    with pytest.raises(DivergenceError):
+        run_register(
+            load_settings(config_file=config),
+            "main",
+            "t",
+            metadata_location=pointer["metadata_location"],
+        )  # register does not overwrite an external write
 
     _runbook_a_update_table(pointer["metadata_location"])
-    code, doc = _invoke(config, "validate", "--table", "main.t")
-    assert code == 0, doc["problems"]
     assert _catalog().load_table(("analytics", "t")).scan().to_arrow().num_rows == 5
 
-    # the external writer's data file landed under the metadata prefix: clean
-    # blocks (exit 2) until it is removed manually after forensics
+    # the external writer's data file landed under the metadata prefix; after
+    # preserving the evidence, the next sync moves forward again
     external = [p for p in location.rglob("*.parquet") if p.parent.name == "data"]
     assert len(external) == 1
-    code, doc = _invoke(config, "clean", "--table", "main.t", "--apply")
-    assert code == 2
-    assert ".parquet" in doc["problems"][0]["message"]
     external[0].unlink()  # manual fallback, after preserving the evidence
-
-    # the external metadata is still previous_metadata_location (a clean root);
-    # it leaves the reachable set on the next sync, and clean collects it
     catalog.write("INSERT INTO lake.main.t VALUES (5)")
     _sync(config)
-    old = time.time() - 3 * 86400
-    for path in location.rglob("*"):
-        if path.is_file():
-            os.utime(path, (old, old))
-    code, doc = _invoke(config, "clean", "--table", "main.t", "--apply")
-    assert code == 0, doc["problems"]
-    deleted = {Path(key).name for key in doc["results"][0]["deleted"]}
-    assert any(name.endswith(".metadata.json") for name in deleted)
-    code, doc = _invoke(config, "validate", "--table", "main.t")
-    assert code == 0, doc["problems"]
     assert _catalog().load_table(("analytics", "t")).scan().to_arrow().num_rows == 6

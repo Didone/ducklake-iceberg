@@ -3,14 +3,12 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Mapping
-from datetime import timedelta
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
 import yaml
 from pydantic import (
     AliasChoices,
-    BaseModel,
     Field,
     PrivateAttr,
     ValidationError,
@@ -28,36 +26,6 @@ from ducklake_iceberg.errors import ConfigError
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 StatsSource = Literal["catalog", "footer"]
-_DURATION_RE = re.compile(r"(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?")
-
-
-class RetentionSettings(BaseModel):
-    """Operational policy declared for checking retention."""
-
-    model_config = SettingsConfigDict(extra="forbid")
-
-    expire_window: str | None = None
-    cleanup_window: str | None = None
-    sync_interval: str = "1h"
-    sync_p95: str = "10m"
-    safety_factor: float = Field(default=2.0, gt=0)
-
-    @field_validator("expire_window", "cleanup_window", "sync_interval", "sync_p95")
-    @classmethod
-    def _valid_duration(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        text = value.strip().lower()
-        match = _DURATION_RE.fullmatch(text)
-        if not text or match is None or not any(match.groups()):
-            raise ValueError(f"invalid duration {value!r} (e.g. 14d, 2h30m)")
-        days, hours, minutes, seconds = (int(part or 0) for part in match.groups())
-        if (
-            timedelta(days=days, hours=hours, minutes=minutes, seconds=seconds)
-            <= timedelta()
-        ):
-            raise ValueError("duration must be greater than zero")
-        return text
 
 
 SQL_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -108,7 +76,6 @@ class DuckLakeIcebergSettings(BaseSettings):
     #: footer of each file. A file without stats in the catalog falls back to
     #: the footer.
     stats_source: StatsSource = "catalog"
-    max_table_workers: int = Field(default=4, ge=1)
     max_footer_workers: int = Field(default=8, ge=1)
     max_io_workers: int = Field(default=8, ge=1)
     max_total_workers: int = Field(default=32, ge=1)
@@ -133,7 +100,6 @@ class DuckLakeIcebergSettings(BaseSettings):
     #: everything. It must be shorter than the DuckLake file cleanup retention,
     #: otherwise a retained snapshot references Parquet files already deleted.
     snapshot_retention_hours: int | None = Field(default=None, ge=1)
-    retention: RetentionSettings | None = None
 
     #: Resolved YAML file, kept on the instance for `redacted()`.
     _config_file: Path | None = PrivateAttr(default=None)

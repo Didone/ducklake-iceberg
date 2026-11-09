@@ -1,4 +1,4 @@
-"""Tests for the rule framework (model, registry, plan, runner, render).
+"""Tests for the rule framework (model, registry, plan, runner).
 
 All of them use **synthetic** rules (fakes): the framework is tested without
 touching the catalog. The real rules are tested separately. The connection is
@@ -25,8 +25,6 @@ from ducklake_iceberg.doctor.model import (
     Severity,
     quote_ident,
 )
-from ducklake_iceberg.doctor.render import render
-from ducklake_iceberg.doctor.report import DoctorReport
 from ducklake_iceberg.doctor.runner import run
 
 _SCHEMA = json.loads((Path(__file__).parent / "schema" / "doctor-v1.json").read_text())
@@ -353,47 +351,6 @@ def test_quote_ident_accepts() -> None:
 
 
 # --------------------------------------------------------------------------
-# 15 - render without a TTY and with NO_COLOR: no ANSI, ASCII glyphs
-# --------------------------------------------------------------------------
-def _report_with_blocker(target: DoctorTarget) -> DoctorReport:
-    spy = SpyConnection()
-    ctx = DoctorContext(con=spy, target=target)  # type: ignore[arg-type]
-    return run(
-        ctx,
-        [
-            FakeRule(
-                "inlined-data",
-                title="Inlined data",
-                emits=[_finding("inlined-data", Severity.BLOCKER)],
-            ),
-            FakeRule("partial-files", requires=("inlined-data",)),
-            FakeRule("ok-rule"),
-        ],
-    )
-
-
-def test_render_no_color_no_tty(
-    target: DoctorTarget,
-    capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from rich.console import Console
-
-    monkeypatch.setenv("NO_COLOR", "1")
-    report = _report_with_blocker(target)
-    console = Console(force_terminal=False, no_color=True)
-    render(report, console=console)
-    out = capsys.readouterr().out
-    assert "\x1b[" not in out  # no ANSI sequences
-    assert "inlined-data" in out
-    assert "SKIPPED" in out
-    assert "exit 2" in out
-    # ASCII-safe glyphs when not a terminal
-    assert "✗" not in out
-    assert "⊘" not in out
-
-
-# --------------------------------------------------------------------------
 # 16 - to_json is pure, parseable, and free of ANSI
 # --------------------------------------------------------------------------
 def test_json_is_pure(ctx: DoctorContext) -> None:
@@ -506,38 +463,3 @@ def test_rule_result_max_severity_none(ctx: DoctorContext) -> None:
     report = run(ctx, [FakeRule("empty")])
     (result,) = report.results
     assert result.max_severity is None
-
-
-# --------------------------------------------------------------------------
-# render - FAILED/ERROR path with a forced terminal (covers unicode glyphs)
-# --------------------------------------------------------------------------
-def test_render_terminal_with_error(
-    target: DoctorTarget, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from rich.console import Console
-
-    spy = SpyConnection()
-    ctx = DoctorContext(con=spy, target=target)  # type: ignore[arg-type]
-    report = run(
-        ctx,
-        [
-            FakeRule("boom", raises=RuntimeError("x")),
-            FakeRule(
-                "deg",
-                severity=Severity.DEGRADED,
-                emits=[_finding("deg", Severity.DEGRADED)],
-            ),
-            FakeRule(
-                "inf",
-                severity=Severity.INFO,
-                emits=[_finding("inf", Severity.INFO)],
-            ),
-        ],
-    )
-    console = Console(force_terminal=True, width=100)
-    render(report, console=console)
-    out = capsys.readouterr().out
-    assert "ERROR" in out
-    assert "DEGRADED" in out
-    # the exit number is styled; confirming the "exit" label is enough
-    assert "exit" in out

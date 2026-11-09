@@ -82,7 +82,7 @@ class DanglingDeletesError(DivergenceError):
         )
         super().__init__(
             msg,
-            hint="Run 'ducklake-iceberg doctor' or consider --materialize-deletes",
+            hint="Rerun with --log-level DEBUG or report a visibility bug",
         )
 
 

@@ -61,10 +61,7 @@ def classify(table: pa.Table, ctx: DoctorContext, rule_id: str) -> list[Finding]
                 f"is not the Iceberg position delete schema"
             )
             remediation = (
-                "none: export rewrites them as Iceberg position deletes; to "
-                "contain them at the source, schedule "
-                "sync --materialize-deletes --delete-threshold 0.0 in a "
-                "low-activity window"
+                "none: export rewrites them as Iceberg position deletes"
                 if has_deletes
                 else "wait for position-delete support (export rewrites them), or "
                 "compact the table in DuckLake to materialize the deletes"
@@ -99,7 +96,7 @@ class DeleteParquetRule:
     id: str = "delete-parquet"
     title: str = "Parquet delete files"
     severity: Severity = Severity.BLOCKER
-    remediation: str = "export rewrites them, or use sync --materialize-deletes"
+    remediation: str = "export rewrites them as Iceberg position deletes"
     requires: tuple[str, ...] = ("inlined-data",)
 
     def check(self, ctx: DoctorContext) -> Sequence[Finding]:

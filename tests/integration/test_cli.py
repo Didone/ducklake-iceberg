@@ -26,27 +26,52 @@ def _json(output: str) -> dict[str, Any]:
     return payload
 
 
-# --- help lists the 7 subcommands (backend independent) ----------------------
-def test_help_lists_commands() -> None:
+# --- help lists only sync (backend independent) ------------------------------
+def test_help_lists_only_sync() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    for cmd in (
+    assert "sync" in result.stdout
+    for removed in (
         "doctor",
         "checkpoint",
         "export",
         "register",
-        "sync",
         "status",
         "validate",
+        "clean",
     ):
-        assert cmd in result.stdout
+        assert f"│ {removed} " not in result.stdout
 
 
-def test_doctor_help_lists_flags() -> None:
-    result = runner.invoke(app, ["doctor", "--help"])
+@pytest.mark.parametrize(
+    "removed", ["doctor", "checkpoint", "export", "register", "status", "validate"]
+)
+def test_removed_commands_are_usage_errors(removed: str) -> None:
+    result = runner.invoke(app, [removed, "--table", "main.t"])
+    assert result.exit_code == 2
+    assert result.stdout.strip() == ""
+
+
+def test_sync_help_lists_flags() -> None:
+    result = runner.invoke(app, ["sync", "--help"])
     assert result.exit_code == 0
-    for flag in ("--table", "--all-tables", "--schema", "--dry-run", "--json"):
+    for flag in (
+        "--table",
+        "--dry-run",
+        "--json",
+        "--profile",
+        "--log-level",
+        "--log-format",
+        "--config",
+    ):
         assert flag in result.stdout
+    for removed in ("--all-tables", "--metrics", "--compact", "--yes", "--no-lock"):
+        assert removed not in result.stdout
+
+
+def test_removed_flag_is_a_usage_error() -> None:
+    result = runner.invoke(app, ["sync", "--table", "main.t", "--all-tables"])
+    assert result.exit_code == 2
 
 
 # --- --version ---------------------------------------------------------------
@@ -58,37 +83,28 @@ def test_version() -> None:
     assert ", pyiceberg " in result.stdout
 
 
-# --- human-readable doctor ---------------------------------------------------
-@pytest.mark.usefixtures("aws_credentials")
-def test_doctor_human(flushed_catalog: CatalogHarness) -> None:
-    env = cli_env_for(flushed_catalog)
-    with mock_aws():
-        result = runner.invoke(app, ["doctor", "--table", "main.pedidos"], env=env)
-    assert result.exit_code == 0
-    assert "table_id" in result.stdout
-    assert "snapshot_id" in result.stdout
-    assert "schema_version" in result.stdout
+def test_table_is_required() -> None:
+    result = runner.invoke(app, ["sync", "--json"])
+    assert result.exit_code == 2
 
 
-# --- doctor --json (includes the config field = redacted()) ------------------
+# --- sync --json (includes the config field = redacted()) --------------------
 @pytest.mark.usefixtures("aws_credentials")
-def test_doctor_json(flushed_catalog: CatalogHarness) -> None:
+def test_sync_json(flushed_catalog: CatalogHarness) -> None:
     env = cli_env_for(flushed_catalog)
     with mock_aws():
         result = runner.invoke(
-            app, ["doctor", "--table", "main.pedidos", "--json"], env=env
+            app, ["sync", "--table", "main.pedidos", "--dry-run", "--json"], env=env
         )
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.stdout
     payload = _json(result.stdout)
     assert payload["version"] == 1
+    assert payload["command"] == "sync"
     assert payload["status"] == "ok"
     assert len(payload["results"]) == 1
-    assert payload["results"][0]["aws"]["glue_reachable"] is True
-    assert payload["results"][0]["aws"]["glue_database_exists"] is False
-    # The preflight report includes the compatibility rules and the advisory.
-    rules_report = payload["results"][0]["rules"]
-    assert len(rules_report["rules"]) == 9
-    assert rules_report["exit_code"] == 0
+    assert payload["results"][0]["table"] == "main.pedidos"
+    assert payload["results"][0]["steps"][0]["step"] == "doctor"
+    assert "metrics" in payload["results"][0]
     # redacted() is the `config` payload in the envelope, without the host
     assert payload["config"] is not None
     assert payload["config"]["glue_database"] == "analytics"
@@ -97,111 +113,41 @@ def test_doctor_json(flushed_catalog: CatalogHarness) -> None:
     )
 
 
-# --- global flag after the subcommand ----------------------------------------
+# --- flag order: options after the subcommand --------------------------------
 @pytest.mark.usefixtures("aws_credentials")
-def test_flag_after_subcommand(flushed_catalog: CatalogHarness) -> None:
+def test_log_level_flag(flushed_catalog: CatalogHarness) -> None:
     env = cli_env_for(flushed_catalog)
     with mock_aws():
         result = runner.invoke(
             app,
-            ["doctor", "--table", "main.pedidos", "--log-level", "DEBUG"],
+            ["sync", "--table", "main.pedidos", "--dry-run", "--log-level", "DEBUG"],
             env=env,
         )
     assert result.exit_code == 0
 
 
-# --- neither --table nor --all-tables ----------------------------------------
+# --- unqualified table -------------------------------------------------------
 @pytest.mark.usefixtures("aws_credentials")
-def test_missing_target_flags(seeded_catalog: CatalogHarness) -> None:
+def test_unqualified_table_fails(seeded_catalog: CatalogHarness) -> None:
     env = cli_env_for(seeded_catalog)
     with mock_aws():
-        result = runner.invoke(app, ["doctor", "--json"], env=env)
+        result = runner.invoke(app, ["sync", "--table", "pedidos", "--json"], env=env)
     assert result.exit_code == 1
     payload = _json(result.stdout)
-    assert "provide --table or --all-tables" in payload["problems"][0]["message"]
-
-
-# --- --table and --all-tables together ---------------------------------------
-@pytest.mark.usefixtures("aws_credentials")
-def test_mutually_exclusive(seeded_catalog: CatalogHarness) -> None:
-    env = cli_env_for(seeded_catalog)
-    with mock_aws():
-        result = runner.invoke(
-            app, ["doctor", "--table", "t", "--all-tables", "--json"], env=env
-        )
-    assert result.exit_code == 1
-    assert "not both" in _json(result.stdout)["problems"][0]["message"]
-
-
-# --- --schema without --all-tables -------------------------------------------
-@pytest.mark.usefixtures("aws_credentials")
-def test_schema_without_all_tables(seeded_catalog: CatalogHarness) -> None:
-    env = cli_env_for(seeded_catalog)
-    with mock_aws():
-        result = runner.invoke(
-            app, ["doctor", "--schema", "vendas", "--table", "t", "--json"], env=env
-        )
-    assert result.exit_code == 1
-
-
-# --- --all-tables with a table that fails to resolve -------------------------
-@pytest.mark.usefixtures("aws_credentials")
-def test_all_tables_partial_failure(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE TABLE lake.main.ok (id INTEGER)")
-    catalog.write("CREATE TABLE lake.main.dup (id INTEGER)")
-    # inject ambiguity only for 'dup': its resolve_table fails, 'ok' resolves
-    catalog.meta_exec(
-        "INSERT INTO ducklake_table "
-        "(table_id, table_uuid, begin_snapshot, end_snapshot, schema_id, "
-        " table_name, path, path_is_relative) "
-        "SELECT table_id + 1000, table_uuid, begin_snapshot, end_snapshot, "
-        " schema_id, table_name, path, path_is_relative "
-        "FROM ducklake_table WHERE table_name = 'dup'",
-    )
-    env = cli_env_for(catalog)
-    with mock_aws():
-        result = runner.invoke(app, ["doctor", "--all-tables", "--json"], env=env)
-    assert result.exit_code == 1  # error dominates
-    payload = _json(result.stdout)
-    # the ambiguous resolution of 'dup' is recorded as a problem with the table
+    assert payload["status"] == "error"
     assert payload["problems"]
-    assert any(p.get("table") == "main.dup" for p in payload["problems"])
-    # the ambiguity (forged duplicate PK) aborts the single read transaction;
-    # doctor exits 1 and the problem names the offending table.
 
 
-# --- --all-tables on a catalog without live tables ---------------------------
+# --- table that does not exist -----------------------------------------------
 @pytest.mark.usefixtures("aws_credentials")
-def test_all_tables_empty(catalog: CatalogHarness) -> None:
-    env = cli_env_for(catalog)  # only the empty schema
+def test_missing_table_fails(seeded_catalog: CatalogHarness) -> None:
+    env = cli_env_for(seeded_catalog)
     with mock_aws():
-        result = runner.invoke(app, ["doctor", "--all-tables", "--json"], env=env)
-    assert result.exit_code == 4
-    assert _json(result.stdout)["results"] == []
-
-
-# --- validate exposes the reconciliation controls ----------------------------
-def test_validate_help_lists_options() -> None:
-    result = runner.invoke(app, ["validate", "--help"])
-    assert result.exit_code == 0
-    for flag in (
-        "--deep",
-        "--sample-rows",
-        "--strict",
-        "--timestamp-precision",
-        "--only",
-        "--check-s3",
-        "--s3-sample",
-        "--log-format",
-    ):
-        assert flag in result.stdout
-
-
-def test_sync_help_lists_metrics_toggle() -> None:
-    result = runner.invoke(app, ["sync", "--help"])
-    assert result.exit_code == 0
-    assert "--metrics" in result.stdout
-    assert "--no-metrics" in result.stdout
+        result = runner.invoke(
+            app, ["sync", "--table", "main.nope", "--json", "--dry-run"], env=env
+        )
+    assert result.exit_code == 1
+    assert _json(result.stdout)["problems"][0]["table"] == "main.nope"
 
 
 # --- invalid catalog_dsn with --json -----------------------------------------
@@ -213,7 +159,7 @@ def test_invalid_dsn_emits_error_envelope(seeded_catalog: CatalogHarness) -> Non
     }
     with mock_aws():
         result = runner.invoke(
-            app, ["doctor", "--table", "main.pedidos", "--json"], env=env
+            app, ["sync", "--table", "main.pedidos", "--json"], env=env
         )
     assert result.exit_code == 1
     payload = _json(result.stdout)  # stdout is still valid JSON
@@ -240,7 +186,7 @@ def test_bad_aws_profile(seeded_catalog: CatalogHarness) -> None:
     }
     with mock_aws():
         result = runner.invoke(
-            app, ["doctor", "--table", "main.pedidos", "--json"], env=env
+            app, ["sync", "--table", "main.pedidos", "--json"], env=env
         )
     assert result.exit_code == 1
     payload = _json(result.stdout)
@@ -257,27 +203,31 @@ def test_dry_run(flushed_catalog: CatalogHarness) -> None:
     with mock_aws():
         result = runner.invoke(
             app,
-            ["doctor", "--table", "main.pedidos", "--dry-run", "--json"],
+            ["sync", "--table", "main.pedidos", "--dry-run", "--json"],
             env=env,
         )
     assert result.exit_code == 0
-    assert _json(result.stdout)["dry_run"] is True
+    payload = _json(result.stdout)
+    assert payload["dry_run"] is True
+    steps = [s["step"] for s in payload["results"][0]["steps"]]
+    # a dry run neither flushes nor registers; it still plans the export
+    assert steps == ["doctor", "export"]
 
 
-# --- data_path reconciliation mismatch -> exit 1 -----------------------------
 @pytest.mark.usefixtures("aws_credentials")
-def test_data_path_mismatch_fails(seeded_catalog: CatalogHarness) -> None:
-    env = {
-        **cli_env_for(seeded_catalog),
-        "DUCKLAKE_ICEBERG_DATA_PATH": "/path/that/does/not/match/data",
-    }
+def test_dry_run_does_not_flush(seeded_catalog: CatalogHarness) -> None:
+    """Inlined rows stay inlined: the dry run only plans."""
+    env = cli_env_for(seeded_catalog)
     with mock_aws():
         result = runner.invoke(
-            app, ["doctor", "--table", "main.pedidos", "--json"], env=env
+            app,
+            ["sync", "--table", "main.pedidos", "--dry-run", "--json"],
+            env=env,
         )
-    assert result.exit_code == 1
-    codes = [p["code"] for p in _json(result.stdout)["problems"]]
-    assert "data_path_mismatch" in codes
+    payload = _json(result.stdout)
+    steps = [s["step"] for s in payload["results"][0]["steps"]]
+    assert "checkpoint" not in steps
+    assert "register" not in steps
 
 
 # --- log level from the environment; clean stdout ----------------------------
@@ -286,11 +236,11 @@ def test_env_log_level_stdout_clean(flushed_catalog: CatalogHarness) -> None:
     env = {**cli_env_for(flushed_catalog), "DUCKLAKE_ICEBERG_LOG_LEVEL": "DEBUG"}
     with mock_aws():
         result = runner.invoke(
-            app, ["doctor", "--table", "main.pedidos", "--json"], env=env
+            app, ["sync", "--table", "main.pedidos", "--dry-run", "--json"], env=env
         )
     assert result.exit_code == 0
     payload = _json(result.stdout)
-    assert payload["command"] == "doctor"
+    assert payload["command"] == "sync"
     # stdout is exactly ONE line (the JSON envelope); DEBUG logs go to stderr
     assert len(result.stdout.strip().splitlines()) == 1
     assert "ducklake_iceberg:" not in result.stdout  # log format of the package logger

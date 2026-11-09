@@ -1,7 +1,7 @@
 """Pre-flight compatibility check for DuckLake -> Iceberg v2.
 
 Provides the framework: vocabulary, the `Rule` protocol, registry, execution
-plan, single-transaction runner, report, and rendering.
+plan, single-transaction runner and report.
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ from ducklake_iceberg.doctor.plan import (
     select_plan,
 )
 from ducklake_iceberg.doctor.registry import all_rules, get, register
-from ducklake_iceberg.doctor.render import render
 from ducklake_iceberg.doctor.report import DoctorReport, Revalidation, RuleResult
 from ducklake_iceberg.doctor.runner import read_transaction, run
 
@@ -48,7 +47,6 @@ __all__ = [
     "quote_ident",
     "read_transaction",
     "register",
-    "render",
     "run",
     "select_plan",
 ]

@@ -21,7 +21,6 @@ import duckdb
 import pytest
 from pyiceberg.table import StaticTable
 
-from ducklake_iceberg.cli import aggregate_exit_code
 from ducklake_iceberg.errors import ExitCode
 from ducklake_iceberg.export import run_export
 
@@ -258,10 +257,6 @@ def test_partitioned_sync_roundtrip(
     assert all(d == date(2024, 1, 2) for d in filtered.column("data").to_pylist()), (
         "Filtered rows must have data '2024-01-02'"
     )
-
-    # Aggregate exit code of the pipeline
-    codes = [ExitCode.SUCCESS, ExitCode.SUCCESS]  # doctor + export
-    assert aggregate_exit_code(codes) == ExitCode.SUCCESS
 
 
 def test_unpartitioned_table_roundtrip(

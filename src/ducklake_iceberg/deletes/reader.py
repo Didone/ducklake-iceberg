@@ -71,8 +71,7 @@ class PuffinDeleteFormatError(CompatibilityError):
         super().__init__(
             f"delete file {path} is in puffin format; "
             "Athena cannot read deletion vectors in Iceberg v2",
-            hint="Use 'ducklake-iceberg checkpoint' with --materialize-deletes "
-            "or rewrite the deletes in DuckLake",
+            hint="rewrite the deletes in DuckLake (CALL ducklake_rewrite_data_files)",
         )
 
 
@@ -102,8 +101,7 @@ class InlinedDeletesPendingError(CompatibilityError):
     def __init__(self, table_name: str, count: int) -> None:
         super().__init__(
             f"{count} pending inlined deletions in table {table_name}",
-            hint="Run 'ducklake-iceberg checkpoint' to materialize them, "
-            "or use --include-inlined-deletes",
+            hint="Run 'ducklake-iceberg sync' to flush them",
         )
 
 
@@ -125,7 +123,7 @@ class DeleteFileEnumerationMismatchError(DivergenceError):
         super().__init__(
             f"mismatch between ducklake_delete_file and ducklake_list_files: "
             f"{only_catalog} only in the catalog, {only_function} only in the function",
-            hint="Rerun 'ducklake-iceberg doctor' or report a range-handling bug",
+            hint="Rerun with --log-level DEBUG or report a range-handling bug",
         )
 
 

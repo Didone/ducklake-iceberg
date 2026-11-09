@@ -414,9 +414,7 @@ def _read_catalog(
             f"{target.qualified_name} has {inlined.pending_data_rows} row(s) and "
             f"{inlined.pending_delete_rows} deletion(s) of pending inlined data; "
             f"the export would lose them",
-            hint=(
-                f"ducklake-iceberg checkpoint --table {target.qualified_name} (or sync)"
-            ),
+            hint=(f"ducklake-iceberg sync --table {target.qualified_name}"),
         )
 
     file_set = enumerate_files(con.raw, target, allow_historic=True)

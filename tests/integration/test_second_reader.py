@@ -9,7 +9,7 @@ predicate and the row set against DuckLake **at the published snapshot**
 The scenarios exercise what position-delete consolidation changes: one delete
 file per spec and partition covering several data files, several partitions
 and specs (partition evolution), incremental cycles with DELETE/UPDATE/MERGE,
-and DuckLake compaction/materialization between exports.
+and DuckLake compaction between exports.
 
 Without the extension in the local cache (offline environment), the module is
 skipped.
@@ -25,7 +25,6 @@ from typing import Any
 import duckdb
 import pytest
 
-from ducklake_iceberg.deletes import materialize as mt
 from ducklake_iceberg.errors import ExitCode
 from ducklake_iceberg.export import ExportResult
 
@@ -194,30 +193,6 @@ def test_incremental_cycles_with_specs_and_compaction(
         assert_second_reader_agrees(lake, reader, result)
     metadata = json.loads(Path(result.plan.metadata_location).read_text())
     assert len(metadata["partition-specs"]) == 3  # unpartitioned, p, bucket(3, id)
-
-
-def test_materialize_between_syncs(
-    lake: Lake, reader: duckdb.DuckDBPyConnection
-) -> None:
-    """Materialization with threshold 0 (maintenance) between exports clears deletes."""
-    lake.write(
-        "CREATE TABLE lake.main.t (id INTEGER, p INTEGER, v BIGINT, s VARCHAR)",
-        "ALTER TABLE lake.main.t SET PARTITIONED BY (p)",
-        _insert(0, 50),
-        _insert(50, 100),
-        "DELETE FROM lake.main.t WHERE id % 3 = 0",
-    )
-    with_deletes = lake.export()
-    assert_second_reader_agrees(lake, reader, with_deletes)
-    assert _delete_files(reader, with_deletes.plan.metadata_location) > 0
-
-    mt.run_materialize(lake.settings, "main", "t", delete_threshold=0.0)
-    materialized = lake.export()
-    assert_second_reader_agrees(lake, reader, materialized)
-    assert _delete_files(reader, materialized.plan.metadata_location) == 0
-
-    lake.write("DELETE FROM lake.main.t WHERE id % 10 = 1")
-    assert_second_reader_agrees(lake, reader, lake.export())
 
 
 def test_fully_deleted_data_file_with_previous_delete_file(

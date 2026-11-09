@@ -493,7 +493,7 @@ def _handle_existing(
                 f"{target.database}.{target.table} points to {previous}, which "
                 f"is not an ancestor of {metadata_location}: there was a write "
                 f"outside ducklake-iceberg or an export from another state",
-                hint="ducklake-iceberg status; see the external-write runbook",
+                hint="the Iceberg table is a read-only mirror; stop external writers",
             )
         if dry_run:
             return RegisterResult(

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ducklake_iceberg.dev/schemas/envelope-v1.json",
   "title": "ducklake-iceberg envelope v1",
-  "description": "--json envelope of all commands with the minimum results[] schema per command. Keys not listed are allowed in items: the consumer ignores what it does not know.",
+  "description": "--json envelope of `ducklake-iceberg sync`. Keys not listed are allowed in items: the consumer ignores what it does not know.",
   "type": "object",
   "required": [
     "version",
@@ -17,59 +17,112 @@
     "problems"
   ],
   "properties": {
-    "version": { "const": 1 },
+    "version": {
+      "const": 1
+    },
     "command": {
-      "enum": [
-        "doctor",
-        "checkpoint",
-        "export",
-        "register",
-        "sync",
-        "status",
-        "validate",
-        "clean"
-      ]
+      "const": "sync"
     },
     "status": {
-      "enum": ["ok", "error", "blocked", "diverged", "nothing-to-do"]
+      "enum": [
+        "ok",
+        "error",
+        "blocked",
+        "diverged",
+        "nothing-to-do"
+      ]
     },
-    "exit_code": { "type": "integer", "minimum": 0 },
-    "dry_run": { "type": "boolean" },
-    "started_at": { "type": "string", "format": "date-time" },
-    "duration_ms": { "type": "integer", "minimum": 0 },
-    "config": { "type": ["object", "null"] },
-    "results": { "type": "array", "items": { "type": "object" } },
-    "problems": { "type": "array", "items": { "$ref": "#/$defs/problem" } },
-    "timings": { "type": "object" }
+    "exit_code": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "dry_run": {
+      "type": "boolean"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "config": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/sync_result"
+      }
+    },
+    "problems": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/problem"
+      }
+    },
+    "timings": {
+      "type": "object"
+    }
   },
   "additionalProperties": false,
-  "allOf": [
-    { "$ref": "#/$defs/when_doctor" },
-    { "$ref": "#/$defs/when_checkpoint" },
-    { "$ref": "#/$defs/when_export" },
-    { "$ref": "#/$defs/when_register" },
-    { "$ref": "#/$defs/when_sync" },
-    { "$ref": "#/$defs/when_status" },
-    { "$ref": "#/$defs/when_validate" },
-    { "$ref": "#/$defs/when_clean" }
-  ],
   "$defs": {
     "problem": {
       "type": "object",
-      "required": ["code", "message", "hint", "table"],
+      "required": [
+        "code",
+        "message",
+        "hint",
+        "table"
+      ],
       "properties": {
-        "code": { "type": "string" },
-        "message": { "type": "string" },
-        "hint": { "type": ["string", "null"] },
-        "table": { "type": ["string", "null"] },
-        "level": { "enum": ["error", "warning"] }
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "hint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "table": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "level": {
+          "enum": [
+            "error",
+            "warning"
+          ]
+        }
       },
       "additionalProperties": false
     },
-    "count": { "type": "integer", "minimum": 0 },
-    "nullable_count": { "type": ["integer", "null"], "minimum": 0 },
-    "snapshot_id": { "type": ["integer", "null"] },
-    "location": { "type": ["string", "null"] },
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "snapshot_id": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "location": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "phase_metric": {
       "type": "object",
       "required": [
@@ -98,146 +151,71 @@
             "manifest_list",
             "metadata_json",
             "s3_put",
-            "glue",
-            "validate",
-            "retention",
-            "glue_stats"
+            "glue"
           ]
         },
-        "started_at": { "type": "string", "format": "date-time" },
-        "duration_ms": { "$ref": "#/$defs/count" },
-        "items": { "$ref": "#/$defs/count" },
-        "bytes": { "$ref": "#/$defs/count" },
-        "calls": { "$ref": "#/$defs/count" },
-        "retries": { "$ref": "#/$defs/count" },
-        "ok": { "type": "boolean" },
-        "error_code": { "type": ["string", "null"] }
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "duration_ms": {
+          "$ref": "#/$defs/count"
+        },
+        "items": {
+          "$ref": "#/$defs/count"
+        },
+        "bytes": {
+          "$ref": "#/$defs/count"
+        },
+        "calls": {
+          "$ref": "#/$defs/count"
+        },
+        "retries": {
+          "$ref": "#/$defs/count"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "error_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
     "metrics": {
       "type": "object",
-      "required": ["run_id", "duration_ms", "phases", "totals"],
+      "required": [
+        "run_id",
+        "duration_ms",
+        "phases",
+        "totals"
+      ],
       "properties": {
-        "run_id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
-        "duration_ms": { "$ref": "#/$defs/count" },
+        "run_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "duration_ms": {
+          "$ref": "#/$defs/count"
+        },
         "phases": {
           "type": "array",
-          "items": { "$ref": "#/$defs/phase_metric" }
+          "items": {
+            "$ref": "#/$defs/phase_metric"
+          }
         },
         "totals": {
           "type": "object",
-          "required": ["api_calls", "retries"],
-          "additionalProperties": { "$ref": "#/$defs/count" }
+          "required": [
+            "api_calls",
+            "retries"
+          ],
+          "additionalProperties": {
+            "$ref": "#/$defs/count"
+          }
         }
-      }
-    },
-    "doctor_result": {
-      "type": "object",
-      "required": [
-        "table",
-        "identity",
-        "snapshot",
-        "environment",
-        "aws",
-        "inlined_rows"
-      ],
-      "properties": {
-        "table": { "type": "string" },
-        "identity": { "type": "object" },
-        "snapshot": { "type": "object" },
-        "environment": { "type": "object" },
-        "aws": { "type": "object" },
-        "inlined_rows": { "$ref": "#/$defs/count" },
-        "rules": { "type": "object" },
-        "metrics": { "$ref": "#/$defs/metrics" }
-      }
-    },
-    "checkpoint_table": {
-      "type": "object",
-      "required": ["table", "inlined_rows_before", "inlined_rows_after"],
-      "properties": {
-        "table": { "type": "string" },
-        "inlined_rows_before": { "$ref": "#/$defs/nullable_count" },
-        "inlined_rows_after": { "$ref": "#/$defs/nullable_count" },
-        "files_processed": { "$ref": "#/$defs/count" },
-        "files_created": { "$ref": "#/$defs/count" }
-      },
-      "if": { "not": { "required": ["rows_pending"] } },
-      "then": { "required": ["files_processed", "files_created"] }
-    },
-    "checkpoint_result": {
-      "type": "object",
-      "required": [
-        "version",
-        "command",
-        "dry_run",
-        "wrote",
-        "tables",
-        "totals",
-        "exit_code"
-      ],
-      "properties": {
-        "table": { "type": "string" },
-        "dry_run": { "type": "boolean" },
-        "wrote": { "type": "boolean" },
-        "tables": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/checkpoint_table" }
-        },
-        "totals": { "type": "object" },
-        "exit_code": { "$ref": "#/$defs/count" },
-        "metrics": { "$ref": "#/$defs/metrics" }
-      }
-    },
-    "export_publication": {
-      "type": "object",
-      "required": [
-        "table",
-        "ducklake_snapshot_id",
-        "metadata_location",
-        "files_added",
-        "bytes_referenced"
-      ],
-      "properties": {
-        "table": {
-          "type": "string",
-          "description": "Table name without the schema."
-        },
-        "ducklake_snapshot_id": { "type": "integer" },
-        "iceberg_snapshot_id": { "$ref": "#/$defs/snapshot_id" },
-        "metadata_location": { "type": "string" },
-        "files_added": { "$ref": "#/$defs/count" },
-        "files_removed": { "$ref": "#/$defs/count" },
-        "delete_files_added": { "$ref": "#/$defs/count" },
-        "bytes_referenced": { "$ref": "#/$defs/count" },
-        "bytes_written": { "$ref": "#/$defs/count" },
-        "metrics": { "$ref": "#/$defs/metrics" }
-      }
-    },
-    "steps_result": {
-      "type": "object",
-      "required": ["table", "steps"],
-      "properties": {
-        "table": { "type": "string" },
-        "steps": { "type": "array", "items": { "type": "object" } }
-      }
-    },
-    "export_result": {
-      "anyOf": [
-        { "$ref": "#/$defs/export_publication" },
-        { "$ref": "#/$defs/steps_result" }
-      ]
-    },
-    "register_result": {
-      "type": "object",
-      "required": ["table", "metadata_location", "glue_table", "created"],
-      "properties": {
-        "table": { "type": "string" },
-        "metadata_location": { "$ref": "#/$defs/location" },
-        "glue_table": { "type": "string" },
-        "created": { "type": "boolean" },
-        "outcome": { "type": "string" },
-        "metrics": { "$ref": "#/$defs/metrics" }
       }
     },
     "sync_table": {
@@ -254,202 +232,113 @@
         "bytes_referenced"
       ],
       "properties": {
-        "table": { "type": "string" },
-        "steps": { "type": "array", "items": { "type": "object" } },
-        "exit_code": { "$ref": "#/$defs/count" },
-        "duration_ms": { "$ref": "#/$defs/count" },
-        "ducklake_snapshot_id": { "$ref": "#/$defs/snapshot_id" },
-        "iceberg_snapshot_id": { "$ref": "#/$defs/snapshot_id" },
-        "metadata_location": { "$ref": "#/$defs/location" },
-        "files_added": { "$ref": "#/$defs/count" },
-        "files_removed": { "$ref": "#/$defs/count" },
-        "delete_files_added": { "$ref": "#/$defs/count" },
-        "bytes_referenced": { "$ref": "#/$defs/count" },
-        "bytes_written": { "$ref": "#/$defs/count" },
-        "metrics": { "$ref": "#/$defs/metrics" }
-      }
+        "table": {
+          "type": "string"
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "step",
+              "exit_code"
+            ],
+            "properties": {
+              "step": {
+                "enum": [
+                  "doctor",
+                  "checkpoint",
+                  "export",
+                  "register"
+                ]
+              },
+              "exit_code": {
+                "$ref": "#/$defs/count"
+              }
+            }
+          }
+        },
+        "exit_code": {
+          "$ref": "#/$defs/count"
+        },
+        "duration_ms": {
+          "$ref": "#/$defs/count"
+        },
+        "ducklake_snapshot_id": {
+          "$ref": "#/$defs/snapshot_id"
+        },
+        "iceberg_snapshot_id": {
+          "$ref": "#/$defs/snapshot_id"
+        },
+        "metadata_location": {
+          "$ref": "#/$defs/location"
+        },
+        "files_added": {
+          "$ref": "#/$defs/count"
+        },
+        "files_removed": {
+          "$ref": "#/$defs/count"
+        },
+        "delete_files_added": {
+          "$ref": "#/$defs/count"
+        },
+        "bytes_referenced": {
+          "$ref": "#/$defs/count"
+        },
+        "bytes_written": {
+          "$ref": "#/$defs/count"
+        },
+        "metrics": {
+          "$ref": "#/$defs/metrics"
+        }
+      },
+      "description": "One result per synced table; `steps` lists the stages that ran (doctor, checkpoint, export, register)."
     },
-    "sync_failure": {
-      "description": "Table that failed outside the steps (exception, --fail-fast, SIGINT).",
+    "sync_aborted": {
+      "description": "Partial result of a sync that ended on an unhandled exception (problem internal_error): only the steps that ran, no totals.",
       "type": "object",
-      "required": ["table", "exit_code", "error"],
+      "required": [
+        "table",
+        "steps"
+      ],
       "properties": {
-        "table": { "type": "string" },
-        "exit_code": { "$ref": "#/$defs/count" },
-        "duration_ms": { "$ref": "#/$defs/count" },
-        "error": { "type": "string" }
+        "table": {
+          "type": "string"
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "step",
+              "exit_code"
+            ],
+            "properties": {
+              "step": {
+                "enum": [
+                  "doctor",
+                  "checkpoint",
+                  "export",
+                  "register"
+                ]
+              },
+              "exit_code": {
+                "$ref": "#/$defs/count"
+              }
+            }
+          }
+        }
       }
     },
     "sync_result": {
       "anyOf": [
-        { "$ref": "#/$defs/sync_table" },
-        { "$ref": "#/$defs/sync_failure" }
+        {
+          "$ref": "#/$defs/sync_table"
+        },
+        {
+          "$ref": "#/$defs/sync_aborted"
+        }
       ]
-    },
-    "status_table": {
-      "type": "object",
-      "required": [
-        "table",
-        "ducklake_snapshot_id",
-        "iceberg_snapshot_id",
-        "in_sync",
-        "external_write_suspected",
-        "status",
-        "exit_code",
-        "pending"
-      ],
-      "properties": {
-        "table": { "type": "string" },
-        "ducklake_snapshot_id": { "$ref": "#/$defs/snapshot_id" },
-        "iceberg_snapshot_id": { "$ref": "#/$defs/snapshot_id" },
-        "in_sync": { "type": "boolean" },
-        "external_write_suspected": { "type": "boolean" },
-        "status": { "type": "string" },
-        "exit_code": { "$ref": "#/$defs/count" },
-        "pending": { "type": "object" },
-        "metrics": { "$ref": "#/$defs/metrics" }
-      }
-    },
-    "status_result": {
-      "description": "The document is the only item; per-table keys live in tables[].",
-      "type": "object",
-      "required": ["version", "tables", "summary"],
-      "properties": {
-        "version": { "type": "integer" },
-        "tables": { "type": "array", "items": { "$ref": "#/$defs/status_table" } },
-        "summary": { "type": "object" }
-      }
-    },
-    "validate_data": {
-      "type": "object",
-      "required": ["table", "checks", "tolerances_applied"],
-      "properties": {
-        "table": { "type": "string" },
-        "checks": { "type": "array", "items": { "type": "object" } },
-        "tolerances_applied": { "type": "array" },
-        "retention": { "$ref": "#/$defs/validate_retention" },
-        "metrics": { "$ref": "#/$defs/metrics" }
-      }
-    },
-    "validate_retention": {
-      "type": "object",
-      "required": ["table", "policy", "risk", "doomed_files"],
-      "properties": {
-        "table": { "type": "string" },
-        "policy": { "type": ["object", "null"] },
-        "risk": { "type": ["object", "null"] },
-        "doomed_files": { "type": "array" },
-        "metrics": { "$ref": "#/$defs/metrics" }
-      }
-    },
-    "validate_result": {
-      "anyOf": [
-        { "$ref": "#/$defs/validate_data" },
-        { "$ref": "#/$defs/validate_retention" }
-      ]
-    },
-    "clean_table": {
-      "type": "object",
-      "required": [
-        "table",
-        "scanned",
-        "reachable",
-        "deletable",
-        "deleted",
-        "dry_run"
-      ],
-      "properties": {
-        "table": { "type": "string" },
-        "scanned": { "$ref": "#/$defs/count" },
-        "reachable": { "$ref": "#/$defs/count" },
-        "deletable": { "$ref": "#/$defs/count" },
-        "deleted": { "type": "array" },
-        "dry_run": { "type": "boolean" },
-        "metrics": { "$ref": "#/$defs/metrics" }
-      }
-    },
-    "clean_ducklake": {
-      "description": "clean --ducklake-files: global operation, with no table.",
-      "type": "object",
-      "required": ["scope", "candidates", "referenced", "deleted", "dry_run"],
-      "properties": {
-        "scope": { "const": "ducklake" },
-        "candidates": { "type": "array" },
-        "referenced": { "type": "array" },
-        "deleted": { "type": "array" },
-        "dry_run": { "type": "boolean" },
-        "metrics": { "$ref": "#/$defs/metrics" }
-      }
-    },
-    "clean_result": {
-      "anyOf": [
-        { "$ref": "#/$defs/clean_table" },
-        { "$ref": "#/$defs/clean_ducklake" }
-      ]
-    },
-    "when_doctor": {
-      "if": { "properties": { "command": { "const": "doctor" } } },
-      "then": {
-        "properties": {
-          "results": { "items": { "$ref": "#/$defs/doctor_result" } }
-        }
-      }
-    },
-    "when_checkpoint": {
-      "if": { "properties": { "command": { "const": "checkpoint" } } },
-      "then": {
-        "properties": {
-          "results": { "items": { "$ref": "#/$defs/checkpoint_result" } }
-        }
-      }
-    },
-    "when_export": {
-      "if": { "properties": { "command": { "const": "export" } } },
-      "then": {
-        "properties": {
-          "results": { "items": { "$ref": "#/$defs/export_result" } }
-        }
-      }
-    },
-    "when_register": {
-      "if": { "properties": { "command": { "const": "register" } } },
-      "then": {
-        "properties": {
-          "results": { "items": { "$ref": "#/$defs/register_result" } }
-        }
-      }
-    },
-    "when_sync": {
-      "if": { "properties": { "command": { "const": "sync" } } },
-      "then": {
-        "properties": {
-          "results": { "items": { "$ref": "#/$defs/sync_result" } }
-        }
-      }
-    },
-    "when_status": {
-      "if": { "properties": { "command": { "const": "status" } } },
-      "then": {
-        "properties": {
-          "results": { "items": { "$ref": "#/$defs/status_result" } }
-        }
-      }
-    },
-    "when_validate": {
-      "if": { "properties": { "command": { "const": "validate" } } },
-      "then": {
-        "properties": {
-          "results": { "items": { "$ref": "#/$defs/validate_result" } }
-        }
-      }
-    },
-    "when_clean": {
-      "if": { "properties": { "command": { "const": "clean" } } },
-      "then": {
-        "properties": {
-          "results": { "items": { "$ref": "#/$defs/clean_result" } }
-        }
-      }
     }
   }
 }

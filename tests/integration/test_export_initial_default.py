@@ -16,7 +16,6 @@ import pytest
 from pyiceberg.table import StaticTable
 
 import ducklake_iceberg.export
-from ducklake_iceberg.checkpoint.command import run_checkpoint
 from ducklake_iceberg.config import DuckLakeIcebergSettings
 from ducklake_iceberg.errors import CompatibilityError, ExitCode
 from ducklake_iceberg.export import run_export
@@ -107,21 +106,6 @@ def test_rewritten_rows_publish_the_default(
     result = run_export(_settings(harness, tmp_path), "main", "t")
     rows = _iceberg_rows(result.plan.metadata_location)
     assert [(r["id"], r["c"]) for r in rows] == [(1, 42), (2, 42)]
-
-
-def test_compacted_files_with_default_are_published(
-    harness: CatalogHarness, tmp_path: Path
-) -> None:
-    """The checkpoint merge materializes the default and keeps begin_snapshot:
-    only the footer says the file already has the column."""
-    harness.write("INSERT INTO lake.main.t VALUES (3)")
-    harness.write("ALTER TABLE lake.main.t ADD COLUMN c INTEGER DEFAULT 42")
-    harness.write("INSERT INTO lake.main.t (id) VALUES (4)")
-    settings = _settings(harness, tmp_path)
-    run_checkpoint(settings, table="main.t")
-    result = run_export(settings, "main", "t")
-    rows = _iceberg_rows(result.plan.metadata_location)
-    assert [(r["id"], r["c"]) for r in rows] == [(1, 42), (2, 42), (3, 42), (4, 42)]
 
 
 # -- no false positives (and no footer reads) --------------------------------

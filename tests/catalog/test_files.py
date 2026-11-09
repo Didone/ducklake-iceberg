@@ -349,7 +349,7 @@ def _with_delete(fmt: str) -> LiveDataFile:
 def test_blocker_puffin_delete_file() -> None:
     findings = check_blockers([_with_delete("puffin")], [], [], 5)
     assert any("puffin" in f.detail for f in findings)
-    assert any("--materialize-deletes" in f.remediation for f in findings)
+    assert any("ducklake_rewrite_data_files" in f.remediation for f in findings)
     assert check_blockers([_with_delete("parquet")], [], [], 5) == []
 
 

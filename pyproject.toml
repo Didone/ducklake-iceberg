@@ -134,20 +134,12 @@ ignore = ["S101"]  # assert is legitimate in tests
 # named parameters.
 "src/ducklake_iceberg/catalog/reader.py" = ["S608"]
 "src/ducklake_iceberg/catalog/files.py" = ["S608"]
-"src/ducklake_iceberg/doctor/rules/*.py" = ["S608"]
-"src/ducklake_iceberg/checkpoint/command.py" = ["S608"]
+"src/ducklake_iceberg/checkpoint/flush.py" = ["S608"]
 "src/ducklake_iceberg/checkpoint/detect.py" = ["S608"]
-"src/ducklake_iceberg/checkpoint/revalidate.py" = ["S608"]
 "src/ducklake_iceberg/checkpoint/variant.py" = ["S608"]
-"src/ducklake_iceberg/checkpoint/dry_run.py" = ["S608"]
-"src/ducklake_iceberg/checkpoint/report.py" = ["S608"]
-"src/ducklake_iceberg/checkpoint/partitions.py" = ["S608"]
+"src/ducklake_iceberg/doctor/rules/*.py" = ["S608"]
 # S105: `pass` is a validation status, not a credential.
-"src/ducklake_iceberg/validate.py" = ["S105", "S608"]
-"src/ducklake_iceberg/retention.py" = ["S608"]
-"src/ducklake_iceberg/maintenance/ducklake_cleanup.py" = ["S608"]
 "src/ducklake_iceberg/deletes/reader.py" = ["S608"]
-"src/ducklake_iceberg/deletes/materialize.py" = ["S608"]
 "src/ducklake_iceberg/export.py" = ["S608"]
 "src/ducklake_iceberg/writer/catalog_stats.py" = ["S608"]
 # E501, SIM102: end-to-end tests may use long lines and nested ifs for clarity.
@@ -188,7 +180,6 @@ addopts = [
 markers = [
     "integration: requires a real DuckLake catalog (SQLite by default)",
     "postgres: requires a Postgres container (testcontainers)",
-    "minio: requires a MinIO container (testcontainers + Docker; skipped without Docker)",
     "aws: requires simulated S3/Glue (moto)",
     "e2e: requires a real AWS account; never runs in CI",
     "roundtrip: ducklake-iceberg writer output read back by the PyIceberg reader",

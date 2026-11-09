@@ -160,7 +160,7 @@ def read_pointer(io: FileIO, location: str) -> ExportPointer:
     except FileNotFoundError:
         raise PointerError(
             f"no export found at {location}",
-            hint="run ducklake-iceberg export before register",
+            hint="run ducklake-iceberg sync",
         ) from None
     try:
         data = json.loads(raw)
@@ -224,7 +224,7 @@ def _read_metadata_properties(io: FileIO, metadata_location: str) -> dict[str, s
     if not input_file.exists():
         raise PointerError(
             f"pointer points to {metadata_location}, which does not exist",
-            hint="re-export with ducklake-iceberg export",
+            hint="re-export with ducklake-iceberg sync",
         )
     metadata = FromInputFile.table_metadata(input_file)
     return dict(metadata.properties)

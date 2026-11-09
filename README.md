@@ -25,20 +25,22 @@ Spark, ...) can query tables that are managed by DuckDB.
 
 - **Zero-copy.** Only Iceberg metadata is written. Data Parquet files are
   never copied, moved or deleted by ducklake-iceberg.
-- **Incremental sync.** Each `sync` publishes one new Iceberg snapshot
-  (`append`, `delete`, `overwrite` or `replace`) and reuses the manifests that
-  did not change. When nothing changed, it exits with code 4 and writes
-  nothing.
+- **One command.** `ducklake-iceberg sync --table schema.table` is meant to run
+  from cron, Airflow or any scheduler. It is idempotent: when nothing changed,
+  it exits with code 4 and writes nothing.
+- **Incremental.** Each run publishes one new Iceberg snapshot (`append`,
+  `delete`, `overwrite` or `replace`) and reuses the manifests that did not
+  change.
 - **Deletes.** DuckLake `DELETE`, `UPDATE` and `MERGE` become Iceberg v2
-  *position delete files*. `--materialize-deletes` rewrites the affected data
-  files instead, when that is preferable.
+  *position delete files*.
 - **Field IDs preserved.** Iceberg field IDs equal DuckLake `column_id`s,
   including nested `STRUCT`/`LIST`/`MAP` fields, renames and dropped columns,
   so readers never see silently-null columns.
-- **Pre-flight checks.** `doctor` verifies Iceberg v2 compatibility before
-  anything is exported and reports blockers with a dedicated exit code.
+- **Pre-flight checks.** Before exporting, `sync` verifies Iceberg v2
+  compatibility and stops with a dedicated exit code (2) and an explanation when
+  the table cannot be published.
 - **Safe by design.** The Iceberg table is a read-only mirror. External writes
-  (for example from Athena) are detected and block the sync (exit code 3).
+  (for example from Athena) are detected and stop the sync (exit code 3).
 - **Automation friendly.** Stable exit codes, a versioned `--json` envelope,
   structured logs on stderr and credential redaction.
 
@@ -69,10 +71,10 @@ ducklake-iceberg --version
 
 ## Configuration
 
-Settings are resolved in this order: **CLI flag > `DUCKLAKE_ICEBERG_*` environment
-variable > YAML file > default**. The YAML file is the one given by `--config`,
-then `DUCKLAKE_ICEBERG_CONFIG_FILE`, then `./ducklake-iceberg.yaml` or the user config
-directory (`~/.config/ducklake-iceberg/config.yaml`).
+Settings are resolved in this order: **CLI flag > `DUCKLAKE_ICEBERG_*`
+environment variable > YAML file > default**. The YAML file is the one given by
+`--config`, then `DUCKLAKE_ICEBERG_CONFIG_FILE`, then `./ducklake-iceberg.yaml`
+or `~/.config/ducklake-iceberg/config.yaml`.
 
 ```yaml
 # DuckLake catalog. Never put credentials in the DSN: use the libpq PG*
@@ -95,7 +97,6 @@ log_level: "INFO"                 # optional
 # Optional tuning
 stats_source: "catalog"           # "catalog" (default, no S3 GET) or "footer"
 snapshot_retention_hours: 24      # expire older Iceberg snapshots (default: keep all)
-max_table_workers: 4              # concurrent tables with --all-tables
 max_footer_workers: 8             # concurrent Parquet footer reads
 max_io_workers: 8                 # parallel I/O operations
 max_total_workers: 32             # global concurrency ceiling
@@ -104,8 +105,8 @@ duckdb_memory_limit: null         # DuckDB memory limit
 duckdb_extension_directory: null  # pre-installed extensions (read-only HOME)
 ```
 
-The same keys are available as environment variables with the `DUCKLAKE_ICEBERG_`
-prefix:
+The same keys are available as environment variables with the
+`DUCKLAKE_ICEBERG_` prefix:
 
 ```bash
 export DUCKLAKE_ICEBERG_CATALOG_DSN="ducklake:postgres:dbname=lake host=pg.internal"
@@ -115,121 +116,79 @@ export DUCKLAKE_ICEBERG_GLUE_DATABASE="my_database"
 export DUCKLAKE_ICEBERG_AWS_REGION="us-east-1"
 ```
 
-## Quick start
+## Usage
 
 ```bash
-# Run the whole pipeline for one table: doctor + checkpoint + export + register
 ducklake-iceberg sync --table sales.orders
-
-# Inspect the result
-ducklake-iceberg status --table sales.orders
 ```
 
-Or step by step:
+| Option                | Description |
+| --------------------- | ----------- |
+| `--table schema.table` | Table to publish (required). |
+| `--dry-run`           | Write nothing: no flush of inlined data, no export. Still runs the pre-flight checks. |
+| `--json`              | Print the JSON envelope on stdout. |
+| `--profile`           | AWS profile. |
+| `--config`            | YAML configuration file. |
+| `--log-level`, `--log-format` | Log verbosity, and `auto`/`json`/`text` format on stderr. |
 
-```bash
-ducklake-iceberg doctor     --table sales.orders   # Iceberg v2 compatibility pre-flight
-ducklake-iceberg checkpoint --table sales.orders   # flush inlined data (DuckLake)
-ducklake-iceberg export     --table sales.orders   # write Iceberg metadata to S3
-ducklake-iceberg register   --table sales.orders   # create/update the table in Glue
+`sync` runs these stages for the table, under a per-table process lock:
+
+1. **doctor**: Iceberg v2 compatibility pre-flight (exit 2 on a blocker).
+2. **flush**: pending *inlined* data is written to Parquet in DuckLake. This is
+   the only step that writes to DuckLake; it never compacts or deletes files.
+3. **export**: computes the delta against the last published snapshot and writes
+   the Iceberg manifests and `vN.metadata.json` to S3.
+4. **register**: `register_table` in Glue the first time, then `UpdateTable`
+   with optimistic locking.
+
+### Running from cron
+
+```cron
+# every 15 minutes, one line per table
+*/15 * * * * ducklake-iceberg sync --table sales.orders --config /etc/ducklake-iceberg.yaml --json >> /var/log/ducklake-iceberg/orders.json 2>/dev/null
 ```
 
-## Commands
-
-Every command accepts `--table schema.table` or `--all-tables` (optionally
-restricted with `--schema`), `--json`, `--profile`, `--config`, `--log-level`
-and `--log-format`. Use `ducklake-iceberg <command> --help` for the full option list.
-
-| Command      | What it does |
-| ------------ | ------------ |
-| `doctor`     | Compatibility pre-flight: identity, connectivity and Iceberg v2 rules. A blocker exits with code 2. |
-| `checkpoint` | Per-table DuckLake checkpoint: flush inlined data, expire snapshots, merge and rewrite files. The only command that **writes to DuckLake**. |
-| `export`     | Reads the catalog and writes Iceberg manifests, the manifest list and `vN.metadata.json` to S3. Incremental after the first export. |
-| `register`   | Registers the table in Glue, or advances its metadata pointer with optimistic locking. Exits with code 3 if Glue points at metadata written by someone else. |
-| `sync`       | `doctor` + `checkpoint` + `export` + `register` under a per-table process lock. |
-| `status`     | Compares DuckLake with Glue: snapshots, pending changes and divergence. |
-| `validate`   | Reconciles DuckLake and Iceberg: row counts, column bounds and samples (`--deep` reads the Iceberg files). |
-| `clean`      | Garbage-collects Iceberg metadata no retained snapshot can reach, or scheduled DuckLake files. Reports only, unless `--apply` is given. |
-
-### Examples
-
-```bash
-# Dry run: show what would happen without writing anything
-ducklake-iceberg sync --table sales.orders --dry-run
-
-# All tables of a schema, no confirmation prompt
-ducklake-iceberg sync --all-tables --schema sales --yes
-
-# Full checkpoint (expire + merge + rewrite) before exporting
-ducklake-iceberg sync --table sales.orders --compact
-
-# Publish Glue column statistics for the query planner
-ducklake-iceberg sync --table sales.orders --glue-stats on
-
-# Concurrency limits and fail-fast
-ducklake-iceberg sync --all-tables --yes --max-table-workers 4 --fail-fast
-
-# Remove unreachable Iceberg metadata older than 48 hours
-ducklake-iceberg clean --table sales.orders --grace 48h --apply
-```
-
-By default `sync` only flushes pending inlined data to DuckLake. The full
-compaction (expire + merge + rewrite) runs with `ducklake-iceberg checkpoint` or
-`ducklake-iceberg sync --compact`.
-
-With `--glue-stats on`, ducklake-iceberg scans the published DuckLake snapshot and
-sends column statistics to Glue. The scan can read all the data; use
-`--glue-stats-sample 5` to sample 5% of it. Distinct-value counts come from
-`approx_count_distinct` (HyperLogLog), so they are **estimates**.
+Logs go to stderr and the envelope to stdout, so they can be sent to different
+files. Alert on exit codes 1, 2 and 3 (see below).
 
 ## Exit codes
 
 Exit codes are part of the public contract.
 
-| Code | Meaning |
-| ---- | ------- |
-| `0`  | Success |
-| `1`  | Error |
-| `2`  | Blocked by the compatibility pre-flight (a command-line usage error also exits with 2; use `--json` to tell them apart) |
-| `3`  | Diverged: the Iceberg table was modified outside of ducklake-iceberg |
-| `4`  | Nothing to do |
+| Code | Meaning | Typical action |
+| ---- | ------- | -------------- |
+| `0`  | Published a new snapshot | none |
+| `1`  | Error (AWS, catalog, configuration, ...) | alert; safe to retry |
+| `2`  | Blocked by the compatibility pre-flight (a command-line usage error also exits with 2; use `--json` to tell them apart) | fix the table; see the `blocked` problem |
+| `3`  | Diverged: the Iceberg table was modified outside of ducklake-iceberg | stop the external writer, then investigate |
+| `4`  | Nothing to do | none (treat as success) |
 
 ## JSON output and logs
 
-Any command accepts `--json` and prints a versioned envelope on stdout. The
-schema ships with the package (`ducklake-iceberg/schemas/envelope-v1.json`). Consumers
-should ignore unknown keys, should not rely on the order of `results[]` or
-`problems[]`, and should decide on `status`, `exit_code` and `problems[].code`
-instead of parsing message text.
-
-- Adding optional keys, new problem codes or new commands keeps the envelope
-  version.
-- Renaming or removing keys, or changing a key's type or meaning, bumps the
-  version. The previous version stays available for at least one minor
-  release through `--json-version N`.
+With `--json`, stdout carries only a versioned envelope. The schema ships with
+the package (`ducklake_iceberg/schemas/envelope-v1.json`). Consumers should
+ignore unknown keys and decide on `status`, `exit_code` and `problems[].code`
+instead of parsing message text. Adding optional keys keeps the envelope
+version; renaming or removing keys, or changing a key's type or meaning, bumps
+it.
 
 Logs go to stderr, one JSON object per event with `--log-format json`.
-`--metrics` adds per-phase timings and counters (DuckDB connections, boto3
-sessions, AWS calls and retries) to each result, and `sync` includes them by
-default. Credentials, full DSNs and encryption keys are redacted from logs,
-envelopes and terminal output. Setting `DUCKLAKE_ICEBERG_TIMINGS=1` adds a `timings` key
-to the `--json` envelope.
+Per-phase timings and counters (DuckDB connections, boto3 sessions, AWS calls
+and retries) are part of each result, and `DUCKLAKE_ICEBERG_TIMINGS=1` adds a
+`timings` key to the envelope. Credentials, full DSNs and encryption keys are
+redacted from logs, envelopes and terminal output.
 
-## How it works
+## What ducklake-iceberg does not do
 
-1. **doctor** checks Iceberg v2 compatibility. Iceberg v2 is the target
-   because Athena only supports v2: no deletion vectors, variant, geometry or
-   nanosecond timestamps.
-2. **checkpoint** flushes inlined data (and optionally compacts) in DuckLake.
-3. **export** computes the delta against the last exported snapshot and writes
-   Avro manifests (via `fastavro`) plus `vN.metadata.json`. One DuckLake table
-   checkpoint becomes one Iceberg snapshot.
-4. **register** calls Glue `register_table` the first time and `UpdateTable`
-   afterwards, never `create_table` (which would reassign field IDs).
+DuckLake maintenance is yours to schedule with DuckLake itself
+(`CALL ducklake_merge_adjacent_files`, `ducklake_expire_snapshots`,
+`ducklake_cleanup_old_files`, ...). Keep DuckLake's file-cleanup retention
+longer than `snapshot_retention_hours`, otherwise a retained Iceberg snapshot
+may reference Parquet files DuckLake has already deleted.
 
-The sync state lives in the Iceberg table properties, not in local files. The
-catalog is accessed only through DuckDB, attached read-only except for
-`checkpoint`.
+Tables with deletion vectors (puffin delete files), nested `VARIANT` columns or
+other types that Iceberg v2 cannot represent are reported as blockers (exit 2).
+Iceberg v2 is the target because Athena only supports v2.
 
 ## Development
 
@@ -237,7 +196,7 @@ catalog is accessed only through DuckDB, attached read-only except for
 git clone https://github.com/Didone/ducklake-iceberg.git
 cd ducklake-iceberg
 poetry install
-poetry run pytest -m "not postgres and not e2e and not minio"
+poetry run pytest -m "not postgres and not e2e"
 poetry run ruff check .
 poetry run ruff format --check .
 poetry run mypy

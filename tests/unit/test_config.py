@@ -315,7 +315,6 @@ def test_env_prefix_and_fields_declared() -> None:
         "aws_profile",
         "log_level",
         "stats_source",
-        "max_table_workers",
         "max_footer_workers",
         "max_io_workers",
         "max_total_workers",
@@ -324,7 +323,6 @@ def test_env_prefix_and_fields_declared() -> None:
         "pyiceberg_max_workers",
         "duckdb_extension_directory",
         "snapshot_retention_hours",
-        "retention",
     }
     assert set(DuckLakeIcebergSettings.model_fields) == expected
 

@@ -69,7 +69,7 @@ jobs:
       - name: Smoke test (offline, non-root, labels)
         run: |
           image="ducklake-iceberg:$VERSION"
-          docker run --rm --network none "$image" doctor --help
+          docker run --rm --network none "$image" sync --help
           docker run --rm --network none "$image" --version
           test "$(docker run --rm --network none --entrypoint id "$image" -u)" = 10001
           test "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$image")" = "$VERSION"

@@ -10,7 +10,7 @@ phase/counter in the envelope.
 
 ``--prepare`` runs a shell command before each iteration (for example, an
 INSERT into DuckLake to measure the "1 new file" case). ``--args`` replaces the
-measured command (default: ``sync``), for example ``--args "export --dry-run"``.
+measured command (default: ``sync``), for example ``--args "sync --dry-run"``.
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ def main() -> None:
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--table", required=True)
     parser.add_argument("-n", type=int, default=5)
-    parser.add_argument("--args", default="sync", help="subcommand and flags")
+    parser.add_argument("--args", default="sync", help="subcommand and extra flags")
     parser.add_argument("--exe", default=None, help="ducklake-iceberg executable")
     parser.add_argument("--prepare", default=None, help="shell command before each run")
     parser.add_argument("--json", action="store_true", help="output the result as JSON")

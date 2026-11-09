@@ -1,9 +1,9 @@
-"""Acceptance: `doctor` classifies rules per table, with rich output and --json.
+"""Acceptance: the doctor stage of `sync` classifies a table before publishing.
 
-`doctor` must correctly classify a set of test tables covering each rule, with
-readable output and --json. These tests exercise the `ducklake-iceberg doctor` command
-end to end (CliRunner + SQLite catalog + moto), covering the three verdicts:
-clean (0), inlined-data blocker (2) and type blocker (2).
+`sync` runs the compatibility preflight first. These tests exercise
+`ducklake-iceberg sync` end to end (CliRunner + SQLite catalog + moto) and cover
+the verdicts: clean (0), inlined data (not a blocker: the flush resolves it) and
+type blocker (2, with a `blocked` problem listing the findings).
 """
 
 from __future__ import annotations
@@ -28,104 +28,86 @@ def _json(output: str) -> dict[str, Any]:
     return payload
 
 
-def _rules_report(payload: dict[str, Any]) -> dict[str, Any]:
+def _steps(payload: dict[str, Any]) -> list[dict[str, Any]]:
     results = payload["results"]
     assert len(results) == 1
-    report: dict[str, Any] = results[0]["rules"]
-    return report
+    steps: list[dict[str, Any]] = results[0]["steps"]
+    return steps
 
 
 # --------------------------------------------------------------------------
-# clean (flushed) table -> exit 0, 9 rules evaluated, no blocker
+# clean (flushed) table -> exit 0, doctor step passes
 # --------------------------------------------------------------------------
 @pytest.mark.usefixtures("aws_credentials")
-def test_doctor_clean_table_exit_0(flushed_catalog: CatalogHarness) -> None:
+def test_clean_table_passes_doctor(flushed_catalog: CatalogHarness) -> None:
     env = cli_env_for(flushed_catalog)
     with mock_aws():
         result = runner.invoke(
-            app, ["doctor", "--table", "main.pedidos", "--json"], env=env
+            app, ["sync", "--table", "main.pedidos", "--dry-run", "--json"], env=env
         )
-    assert result.exit_code == 0
-    report = _rules_report(_json(result.stdout))
-    assert len(report["rules"]) == 9
-    assert report["exit_code"] == 0
-    assert report["summary"]["blocker"] == 0
-    assert report["summary"]["rules_skipped"] == 0
-    assert report["summary"]["short_circuited_by"] == []
-
-
-# --------------------------------------------------------------------------
-# table with inlined data -> exit 2, 5 rules skipped by the inlined-data gate
-# --------------------------------------------------------------------------
-@pytest.mark.usefixtures("aws_credentials")
-def test_doctor_inlined_blocker_exit_2(seeded_catalog: CatalogHarness) -> None:
-    env = cli_env_for(seeded_catalog)
-    with mock_aws():
-        result = runner.invoke(
-            app, ["doctor", "--table", "main.pedidos", "--json"], env=env
-        )
-    # seeded_catalog has 2 inlined rows; skip if inlining does not happen
-    report = _rules_report(_json(result.stdout))
-    if report["exit_code"] != 2:
-        pytest.skip("inlining did not happen in this environment; default differs")
-    assert result.exit_code == 2
-    assert _json(result.stdout)["status"] == "blocked"
-    inlined = next(r for r in report["rules"] if r["id"] == "inlined-data")
-    assert inlined["status"] == "failed"
-    assert report["summary"]["rules_skipped"] == 5
-    assert report["summary"]["short_circuited_by"] == ["inlined-data"]
-    assert report["summary"]["revalidation_required"] is True
-
-
-# --------------------------------------------------------------------------
-# table with a blocked type -> exit 2, unsupported-type fires
-# --------------------------------------------------------------------------
-@pytest.mark.usefixtures("aws_credentials")
-def test_doctor_unsupported_type_exit_2(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE SCHEMA IF NOT EXISTS lake.main")
-    catalog.write("CREATE TABLE lake.main.bad (id INTEGER, qty UINTEGER)")
-    env = cli_env_for(catalog)
-    with mock_aws():
-        result = runner.invoke(
-            app, ["doctor", "--table", "main.bad", "--json"], env=env
-        )
-    assert result.exit_code == 2
-    report = _rules_report(_json(result.stdout))
-    unsupported = next(r for r in report["rules"] if r["id"] == "unsupported-type")
-    assert unsupported["status"] == "failed"
-    assert any("uint32" in f["detail"] for f in unsupported["findings"])
-
-
-# --------------------------------------------------------------------------
-# readable rich output: rule ids and the skipped-rules paragraph appear
-# --------------------------------------------------------------------------
-@pytest.mark.usefixtures("aws_credentials")
-def test_doctor_rich_readable(seeded_catalog: CatalogHarness) -> None:
-    env = cli_env_for(seeded_catalog)
-    with mock_aws():
-        result = runner.invoke(app, ["doctor", "--table", "main.pedidos"], env=env)
-    out = result.stdout
-    assert "Compatibility preflight" in out
-    assert "inlined-data" in out
-    # with inlined data, the footer explains the consequence of skipped rules
-    if result.exit_code == 2:
-        assert "not evaluated" in out
-        assert "inlined-data" in out
-
-
-# --------------------------------------------------------------------------
-# --all-tables: each table gets a preflight verdict in --json
-# --------------------------------------------------------------------------
-@pytest.mark.usefixtures("aws_credentials")
-def test_doctor_all_tables_per_table_verdict(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE SCHEMA IF NOT EXISTS lake.main")
-    catalog.write("CREATE TABLE lake.main.clean (id INTEGER)")
-    catalog.write("CREATE TABLE lake.main.bad (id INTEGER, qty UINTEGER)")
-    env = cli_env_for(catalog)
-    with mock_aws():
-        result = runner.invoke(app, ["doctor", "--all-tables", "--json"], env=env)
-    assert result.exit_code == 2  # the blocker in 'bad' dominates
+    assert result.exit_code == 0, result.stdout
     payload = _json(result.stdout)
-    by_table = {r["table"]: r["rules"] for r in payload["results"]}
-    assert by_table["main.clean"]["exit_code"] == 0
-    assert by_table["main.bad"]["exit_code"] == 2
+    assert payload["problems"] == []
+    assert _steps(payload)[0] == {"step": "doctor", "exit_code": 0}
+
+
+# --------------------------------------------------------------------------
+# inlined data is not a doctor blocker: only the dry run's export refuses it
+# --------------------------------------------------------------------------
+@pytest.mark.usefixtures("aws_credentials")
+def test_inlined_data_passes_doctor_but_dry_run_cannot_export(
+    seeded_catalog: CatalogHarness,
+) -> None:
+    env = cli_env_for(seeded_catalog)
+    with mock_aws():
+        result = runner.invoke(
+            app, ["sync", "--table", "main.pedidos", "--dry-run", "--json"], env=env
+        )
+    payload = _json(result.stdout)
+    steps = _steps(payload)
+    # the flush would resolve it, so the doctor stage does not block...
+    assert steps[0] == {"step": "doctor", "exit_code": 0}
+    # ...but a dry run does not flush, so the export refuses to lose the rows
+    assert [s["step"] for s in steps] == ["doctor", "export"]
+    assert result.exit_code == 2
+    (problem,) = payload["problems"]
+    assert problem["code"] == "blocked"
+    assert "inlined data" in problem["message"]
+
+
+# --------------------------------------------------------------------------
+# table with a blocked type -> exit 2, `blocked` problem names the finding
+# --------------------------------------------------------------------------
+@pytest.mark.usefixtures("aws_credentials")
+def test_unsupported_type_blocks_sync(catalog: CatalogHarness) -> None:
+    catalog.write("CREATE SCHEMA IF NOT EXISTS lake.main")
+    catalog.write("CREATE TABLE lake.main.bad (id INTEGER, qty UINTEGER)")
+    env = cli_env_for(catalog)
+    with mock_aws():
+        result = runner.invoke(app, ["sync", "--table", "main.bad", "--json"], env=env)
+    assert result.exit_code == 2
+    payload = _json(result.stdout)
+    assert payload["status"] == "blocked"
+    blocked = [p for p in payload["problems"] if p["code"] == "blocked"]
+    assert len(blocked) == 1
+    assert blocked[0]["table"] == "main.bad"
+    assert "unsupported-type" in blocked[0]["message"]
+    assert "uint32" in blocked[0]["message"]
+    # the pipeline stops at the doctor stage: nothing was flushed or exported
+    steps = _steps(payload)
+    assert [s["step"] for s in steps] == ["doctor"]
+    assert steps[0]["exit_code"] == 2
+
+
+# --------------------------------------------------------------------------
+# human-readable output also reports the blocker
+# --------------------------------------------------------------------------
+@pytest.mark.usefixtures("aws_credentials")
+def test_blocked_human_output(catalog: CatalogHarness) -> None:
+    catalog.write("CREATE SCHEMA IF NOT EXISTS lake.main")
+    catalog.write("CREATE TABLE lake.main.bad (id INTEGER, qty UINTEGER)")
+    env = cli_env_for(catalog)
+    with mock_aws():
+        result = runner.invoke(app, ["sync", "--table", "main.bad"], env=env)
+    assert result.exit_code == 2
+    assert "unsupported-type" in result.stdout
