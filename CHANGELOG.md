@@ -43,6 +43,8 @@ First public release.
   structured log on stderr with credential redaction.
 - Per-phase timings and counters in each result; `DUCKLAKE_ICEBERG_TIMINGS=1`
   adds a `timings` key to the envelope.
+- `s3_endpoint` setting for S3-compatible stores such as MinIO (Iceberg metadata
+  I/O and DuckDB S3 secret, path-style addressing).
 - Concurrency limits (`max_footer_workers`, `max_io_workers`,
   `max_total_workers`), `snapshot_retention_hours` to expire old Iceberg
   snapshots, and `duckdb_extension_directory` to run with a read-only `HOME`.

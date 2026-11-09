@@ -60,6 +60,7 @@ jobs:
       - name: Install the wheel in a clean virtualenv
         run: |
           python -m venv /tmp/wheel-venv
+          /tmp/wheel-venv/bin/python -m pip install --upgrade pip
           /tmp/wheel-venv/bin/pip install dist/*.whl
           /tmp/wheel-venv/bin/ducklake-iceberg --version
           /tmp/wheel-venv/bin/ducklake-iceberg sync --help > /dev/null
@@ -100,9 +101,12 @@ jobs:
       - run: pipx install poetry==${{ env.POETRY_VERSION }}
       - run: poetry install --sync
       - name: Unit and fast integration tests (SQLite catalog)
-        run: poetry run pytest -m "not postgres and not e2e"
+        run: poetry run pytest -m "not postgres and not e2e and not minio"
       - name: Integration tests against Postgres
         if: matrix.python == '3.12'
         # Backend parity run: the global coverage gate is enforced by the fast
         # step above; here the SAME suite only has to pass against Postgres.
         run: poetry run pytest -m postgres --cov-fail-under=0
+      - name: End-to-end zero-copy audit against MinIO
+        if: matrix.python == '3.12'
+        run: poetry run pytest -m minio --cov-fail-under=0

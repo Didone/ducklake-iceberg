@@ -42,6 +42,7 @@ jobs:
       - name: Install the wheel in a clean virtualenv
         run: |
           python -m venv /tmp/wheel-venv
+          /tmp/wheel-venv/bin/python -m pip install --upgrade pip
           /tmp/wheel-venv/bin/pip install dist/*.whl
           /tmp/wheel-venv/bin/ducklake-iceberg --version
       - uses: actions/upload-artifact@v4

@@ -126,3 +126,29 @@ def test_missing_profile_is_aws_error() -> None:
             "us-east-2", "nonexistent_profile_ducklake_iceberg_xyz"
         )
     assert "AWS profile not found" in exc.value.message
+
+
+@pytest.mark.usefixtures("fake_aws")
+def test_s3_endpoint_reaches_the_file_io_and_the_glue_catalog() -> None:
+    endpoint = "http://minio:9000"
+    settings = _settings("ducklake_iceberg_test").model_copy(
+        update={"s3_endpoint": endpoint}
+    )
+    assert dict(build_file_io(settings).properties)["s3.endpoint"] == endpoint
+    target = GlueTarget(
+        database="analytics",
+        table="pedidos",
+        region="us-east-2",
+        profile="ducklake_iceberg_test",
+        catalog_id=None,
+        s3_endpoint=endpoint,
+    )
+    catalog = build_catalog(target)
+    io = _catalog_file_io(catalog, "s3://bucket/iceberg/analytics/pedidos/v1.json")
+    assert dict(io.properties)["s3.endpoint"] == endpoint
+
+
+@pytest.mark.usefixtures("fake_aws")
+def test_no_endpoint_keeps_the_aws_default() -> None:
+    props = dict(build_file_io(_settings("ducklake_iceberg_test")).properties)
+    assert "s3.endpoint" not in props

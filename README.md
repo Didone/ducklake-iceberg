@@ -103,7 +103,13 @@ max_total_workers: 32             # global concurrency ceiling
 duckdb_threads: null              # DuckDB `SET threads`
 duckdb_memory_limit: null         # DuckDB memory limit
 duckdb_extension_directory: null  # pre-installed extensions (read-only HOME)
+s3_endpoint: null                 # custom S3 endpoint, e.g. "http://minio:9000"
 ```
+
+`s3_endpoint` points the Iceberg metadata I/O and the DuckDB S3 secret at an
+S3-compatible store such as MinIO (path-style addressing). Leave it unset for
+AWS S3. For a Glue-compatible API (LocalStack, moto), set the standard
+`AWS_ENDPOINT_URL_GLUE` environment variable.
 
 The same keys are available as environment variables with the
 `DUCKLAKE_ICEBERG_` prefix:
@@ -196,7 +202,7 @@ Iceberg v2 is the target because Athena only supports v2.
 git clone https://github.com/Didone/ducklake-iceberg.git
 cd ducklake-iceberg
 poetry install
-poetry run pytest -m "not postgres and not e2e"
+poetry run pytest -m "not postgres and not e2e and not minio"
 poetry run ruff check .
 poetry run ruff format --check .
 poetry run mypy

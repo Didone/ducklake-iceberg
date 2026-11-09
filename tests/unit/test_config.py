@@ -322,6 +322,7 @@ def test_env_prefix_and_fields_declared() -> None:
         "duckdb_memory_limit",
         "pyiceberg_max_workers",
         "duckdb_extension_directory",
+        "s3_endpoint",
         "snapshot_retention_hours",
     }
     assert set(DuckLakeIcebergSettings.model_fields) == expected
@@ -345,3 +346,21 @@ def test_pyiceberg_max_workers_precedence(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.delenv("PYICEBERG_MAX_WORKERS")
     monkeypatch.setenv("DUCKLAKE_ICEBERG_PYICEBERG_MAX_WORKERS", "5")
     assert DuckLakeIcebergSettings(**_BASE).pyiceberg_max_workers == 5
+
+
+# --- custom S3 endpoint ----------------------------------------------------
+def test_s3_endpoint_defaults_to_aws(tmp_path: Path) -> None:
+    assert load_settings(config_file=_write_yaml(tmp_path, _BASE)).s3_endpoint is None
+
+
+def test_s3_endpoint_is_normalized(tmp_path: Path) -> None:
+    data = {**_BASE, "s3_endpoint": "http://minio:9000/"}
+    settings = load_settings(config_file=_write_yaml(tmp_path, data))
+    assert settings.s3_endpoint == "http://minio:9000"
+
+
+@pytest.mark.parametrize("value", ["minio:9000", "ftp://minio", "http://", ""])
+def test_s3_endpoint_rejects_invalid_values(tmp_path: Path, value: str) -> None:
+    data = {**_BASE, "s3_endpoint": value}
+    with pytest.raises(ConfigError, match="s3_endpoint"):
+        load_settings(config_file=_write_yaml(tmp_path, data))

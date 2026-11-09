@@ -59,7 +59,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 from botocore.exceptions import ClientError
 
 from ducklake_iceberg import aws
-from ducklake_iceberg.aws import s3_credential_properties
+from ducklake_iceberg.aws import s3_credential_properties, s3_endpoint_properties
 from ducklake_iceberg.errors import AwsError, DivergenceError, ExitCode, NothingToDo
 from ducklake_iceberg.sync.state import SyncState, parse_sync_state
 
@@ -97,6 +97,7 @@ class GlueTarget:
     region: str
     profile: str | None
     catalog_id: str | None  # account that owns the catalog; None = current account
+    s3_endpoint: str | None = None  # custom S3 endpoint for the metadata I/O
 
     @property
     def identifier(self) -> tuple[str, str]:
@@ -190,6 +191,7 @@ def build_catalog(target: GlueTarget) -> GlueCatalog:
         client,
         **_glue_properties(target),
         **s3_credential_properties(target.region, target.profile),
+        **s3_endpoint_properties(target.s3_endpoint),
     )
 
 

@@ -32,10 +32,14 @@ poetry run mypy                     # strict; checks src and tests
 
 ```bash
 # Fast path: SQLite catalog and moto (what CI runs on every Python version)
-poetry run pytest -m "not postgres and not e2e"
+poetry run pytest -m "not postgres and not e2e and not minio"
 
 # Postgres catalog through testcontainers (needs Docker)
 poetry run pytest -m postgres --cov-fail-under=0
+
+# End to end against a MinIO container (needs Docker): zero-copy audit of
+# create/insert/delete/update/merge, schema evolution and partition evolution
+poetry run pytest -m minio --cov-fail-under=0
 
 # A single test (disable the coverage gate or the run fails)
 poetry run pytest tests/sync/test_delta.py::test_name --no-cov
@@ -51,6 +55,7 @@ Markers:
 | ------------- | ------- |
 | `integration` | Needs a real DuckLake catalog (SQLite by default) |
 | `postgres`    | Needs a Postgres container (testcontainers) |
+| `minio`       | End to end against a MinIO container (testcontainers + Docker) |
 | `aws`         | Uses simulated S3/Glue (moto) |
 | `e2e`         | Needs a real AWS account; never runs in CI |
 | `roundtrip`   | Writer output is read back by the PyIceberg reader |

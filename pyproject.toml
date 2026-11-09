@@ -180,6 +180,7 @@ addopts = [
 markers = [
     "integration: requires a real DuckLake catalog (SQLite by default)",
     "postgres: requires a Postgres container (testcontainers)",
+    "minio: end-to-end against a MinIO container (testcontainers + Docker; skipped without Docker)",
     "aws: requires simulated S3/Glue (moto)",
     "e2e: requires a real AWS account; never runs in CI",
     "roundtrip: ducklake-iceberg writer output read back by the PyIceberg reader",

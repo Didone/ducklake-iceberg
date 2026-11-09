@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, Final, Self
+from urllib.parse import urlparse
 
 import duckdb
 import pyarrow as pa
@@ -358,6 +359,15 @@ class DuckLakeConnection:
         if S3_SESSION_TOKEN in props:
             options.append("SESSION_TOKEN $session_token")
             params["session_token"] = props[S3_SESSION_TOKEN]
+        endpoint = self._settings.s3_endpoint
+        if endpoint:
+            parsed = urlparse(endpoint)
+            options += [
+                "ENDPOINT $endpoint",
+                "URL_STYLE 'path'",
+                f"USE_SSL {'true' if parsed.scheme == 'https' else 'false'}",
+            ]
+            params["endpoint"] = parsed.netloc
         try:
             self._require_con().execute(
                 f"CREATE OR REPLACE SECRET {S3_SECRET} ({', '.join(options)})",

@@ -10,6 +10,7 @@ import json
 from typing import Any
 
 import pytest
+from click import unstyle
 from moto import mock_aws
 from typer.testing import CliRunner
 
@@ -52,9 +53,17 @@ def test_removed_commands_are_usage_errors(removed: str) -> None:
     assert result.stdout.strip() == ""
 
 
-def test_sync_help_lists_flags() -> None:
+@pytest.mark.parametrize("force_color", [False, True])
+def test_sync_help_lists_flags(
+    monkeypatch: pytest.MonkeyPatch, force_color: bool
+) -> None:
+    if force_color:
+        monkeypatch.setenv("FORCE_COLOR", "1")
+    else:
+        monkeypatch.delenv("FORCE_COLOR", raising=False)
     result = runner.invoke(app, ["sync", "--help"])
     assert result.exit_code == 0
+    help_text = unstyle(result.stdout)
     for flag in (
         "--table",
         "--dry-run",
@@ -64,9 +73,9 @@ def test_sync_help_lists_flags() -> None:
         "--log-format",
         "--config",
     ):
-        assert flag in result.stdout
+        assert flag in help_text
     for removed in ("--all-tables", "--metrics", "--compact", "--yes", "--no-lock"):
-        assert removed not in result.stdout
+        assert removed not in help_text
 
 
 def test_removed_flag_is_a_usage_error() -> None:

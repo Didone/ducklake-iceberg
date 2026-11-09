@@ -5,6 +5,7 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, ClassVar, Literal
+from urllib.parse import urlparse
 
 import yaml
 from pydantic import (
@@ -95,6 +96,10 @@ class DuckLakeIcebergSettings(BaseSettings):
     #: on connect. Allows a read-only ``HOME``; the
     #: ``DUCKDB_EXTENSION_DIRECTORY`` variable has no effect in duckdb 2.0.
     duckdb_extension_directory: str | None = None
+    #: Custom S3 endpoint (MinIO, LocalStack, any S3-compatible store), e.g.
+    #: ``http://minio:9000``. Applied to the Iceberg metadata I/O and to the
+    #: DuckDB S3 secret, always with path-style addressing. ``None`` = AWS S3.
+    s3_endpoint: str | None = None
     #: Iceberg snapshot retention, in hours: each export expires history
     #: older than this, except the current snapshot. ``None`` retains
     #: everything. It must be shorter than the DuckLake file cleanup retention,
@@ -155,6 +160,18 @@ class DuckLakeIcebergSettings(BaseSettings):
         if not GLUE_DATABASE.fullmatch(value):
             raise ValueError(f"invalid glue_database: {value!r}")
         return value
+
+    @field_validator("s3_endpoint")
+    @classmethod
+    def _valid_s3_endpoint(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parsed = urlparse(value)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError(
+                f"invalid s3_endpoint: {value!r}; use 'http(s)://host[:port]'"
+            )
+        return value.rstrip("/")
 
     @field_validator("aws_region")
     @classmethod

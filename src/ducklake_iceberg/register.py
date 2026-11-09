@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pyiceberg.io import AWS_PROFILE_NAME, AWS_REGION, load_file_io
 
 from ducklake_iceberg import timing
-from ducklake_iceberg.aws import s3_credential_properties
+from ducklake_iceberg.aws import s3_credential_properties, s3_endpoint_properties
 from ducklake_iceberg.errors import ConfigError, DivergenceError
 from ducklake_iceberg.glue import (
     GlueTarget,
@@ -106,6 +106,7 @@ def build_file_io(settings: DuckLakeIcebergSettings) -> FileIO:
     if settings.aws_profile is not None:
         props[AWS_PROFILE_NAME] = settings.aws_profile
     props.update(s3_credential_properties(settings.aws_region, settings.aws_profile))
+    props.update(s3_endpoint_properties(settings.s3_endpoint))
     return _file_io(tuple(sorted(props.items())))
 
 
@@ -282,6 +283,7 @@ def run_register(
         region=settings.aws_region,
         profile=settings.aws_profile,
         catalog_id=None,
+        s3_endpoint=settings.s3_endpoint,
     )
     if handoff is not None and metadata is None:
         # export without changes: the common case is Glue already pointing at the

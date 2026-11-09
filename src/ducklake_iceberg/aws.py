@@ -28,7 +28,12 @@ from typing import Any
 
 import boto3
 from botocore.exceptions import BotoCoreError, ProfileNotFound
-from pyiceberg.io import S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, S3_SESSION_TOKEN
+from pyiceberg.io import (
+    S3_ACCESS_KEY_ID,
+    S3_ENDPOINT,
+    S3_SECRET_ACCESS_KEY,
+    S3_SESSION_TOKEN,
+)
 
 from ducklake_iceberg import timing
 from ducklake_iceberg.errors import AwsError
@@ -77,6 +82,11 @@ def clear_cache() -> None:
     with _LOCK:
         _SESSIONS.clear()
         _CLIENTS.clear()
+
+
+def s3_endpoint_properties(endpoint: str | None) -> dict[str, str]:
+    """``s3.*`` property that points PyIceberg's FileIO at a custom endpoint."""
+    return {S3_ENDPOINT: endpoint} if endpoint else {}
 
 
 def s3_credential_properties(region: str, profile: str | None) -> dict[str, str]:
