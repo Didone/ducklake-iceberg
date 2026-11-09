@@ -14,8 +14,8 @@ Spark, ...) can query tables that are managed by DuckDB.
 
 ```text
 ┌──────────┐      ┌──────────┐      ┌───────────────┐      ┌──────────┐
-│ DuckLake │─────▶│ ducklake-iceberg  │─────▶│ S3 (Iceberg   │─────▶│   Glue   │
-│ catalog  │      │   CLI    │      │   metadata)   │      │ catalog  │
+│ DuckLake │─────▶│    Sync  │─────▶│ S3 (Iceberg   │─────▶│   Glue   │
+│ catalog  │      │    tool  │      │   metadata)   │      │ catalog  │
 └──────────┘      └──────────┘      └───────────────┘      └──────────┘
       │                                                          │
       └──── Parquet data files (never copied) ◀── Athena, Trino, Spark, ...
