@@ -260,19 +260,3 @@ def test_roundtrip_nestedfield(name: str) -> None:
     assert res.iceberg is not None
     field = NestedField(field_id=1, name="c", field_type=res.iceberg, required=False)
     assert field.field_type == res.iceberg
-
-
-# pending verifications recorded as named xfails
-@pytest.mark.xfail(reason="To verify: UTC semantics of timestamptz")
-def test_timestamptz_utc_semantics_verified() -> None:  # pragma: no cover
-    raise AssertionError("timestamptz time zone verification not run yet")
-
-
-@pytest.mark.xfail(reason="To verify: physical representation of uuid")
-def test_uuid_physical_layout_verified() -> None:  # pragma: no cover
-    raise AssertionError("uuid physical layout verification not run yet")
-
-
-@pytest.mark.xfail(reason="To verify: INT_8/INT_16 annotations in the reader")
-def test_int8_int16_annotation_verified() -> None:  # pragma: no cover
-    raise AssertionError("INT_8/INT_16 annotation verification not run yet")

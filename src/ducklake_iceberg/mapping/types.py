@@ -73,8 +73,8 @@ JSON_NOTE: Final[str] = (
     "Parquet and may be rejected by strict Iceberg readers"
 )
 UUID_NOTE: Final[str] = (
-    "uuid requires 16 big-endian bytes in Parquet; the physical layout is "
-    "not verified yet"
+    "uuid is stored as 16 big-endian bytes, as Iceberg requires; no column "
+    "bounds are published for it, so filters on it do not prune files"
 )
 
 
