@@ -210,6 +210,18 @@ def test_field_ids_deterministic_under_shuffle() -> None:
     assert base.field_ids == {(5, 0): 1000, (5, 1): 1001, (8, 0): 1002}
 
 
+def test_same_field_in_a_later_spec_reuses_its_field_id() -> None:
+    """Partition evolution keeping `state` must not give it a second field ID."""
+    infos = [
+        _info(5, (_col(5, 0, 3, "identity"),), begin=1, end=50),
+        _info(8, (_col(8, 0, 3, "identity"), _col(8, 1, 4, "bucket(4)")), begin=50),
+    ]
+    mapping = build_spec_mapping(infos, _schema(), snapshot_id=100)
+    assert mapping.field_ids == {(5, 0): 1000, (8, 0): 1000, (8, 1): 1001}
+    assert [f.field_id for f in mapping.specs[8].fields] == [1000, 1001]
+    assert mapping.last_partition_id == 1001
+
+
 # -- a new spec after a degraded one does not shift IDs -----------------------------
 
 

@@ -382,6 +382,7 @@ def build_iceberg_schema(
         paths=paths,
         seen=seen,
         warnings=warnings,
+        baseline_snapshot=min(c.begin_snapshot for c in kept),
     )
     fields = [builder.build_field(c, "") for c in roots]
 
@@ -434,6 +435,30 @@ class _SchemaBuilder:
     paths: dict[int, str]
     seen: set[int]
     warnings: list[str]
+    #: ``begin_snapshot`` of the oldest column: anything added after it is
+    #: missing from the files written before the column existed
+    baseline_snapshot: int | None = None
+
+    def _required(self, col: DuckLakeColumn, path: str) -> bool:
+        """A column added after the table was created is never ``required``.
+
+        Older data files do not contain it, and Iceberg v2 cannot fill the gap
+        (no ``initial-default``), so readers would fail on a ``required`` field
+        that is absent from the file. DuckLake itself reads such files as NULL;
+        ``optional`` is the faithful and always-safe Iceberg equivalent.
+        """
+        if col.nulls_allowed:
+            return False
+        if (
+            self.baseline_snapshot is not None
+            and col.begin_snapshot > self.baseline_snapshot
+        ):
+            self.warnings.append(
+                f"{path}: NOT NULL column added after the table was created is "
+                f"published as optional (older files do not contain it)"
+            )
+            return False
+        return True
 
     def build_field(self, col: DuckLakeColumn, parent_path: str) -> NestedField:
         path = f"{parent_path}.{col.column_name}" if parent_path else col.column_name
@@ -447,7 +472,7 @@ class _SchemaBuilder:
             field_id=col.column_id,
             name=col.column_name,
             field_type=self.build_type(col, path),
-            required=not col.nulls_allowed,
+            required=self._required(col, path),
             initial_default=initial,
             write_default=write,
         )
@@ -514,48 +539,3 @@ class _SchemaBuilder:
                 res = resolve_type(col.column_type)
                 self.blocked.append(_blocked_finding(column_type, res.reason, path))
             return StringType()  # placeholder; the schema will be discarded
-
-
-# -- retroactive required column rule ----------------------------
-
-
-def check_required_backfill(
-    mapping: SchemaMapping, min_file_begin_snapshot: int | None
-) -> list[Finding]:
-    """``required`` column newer than some live file.
-
-    In v2 there is no ``initial-default`` to fill the missing column in an old
-    file: the metadata becomes inconsistent and reader behavior varies.
-    ``min_file_begin_snapshot = None`` (table without files) disables the rule.
-    """
-    if min_file_begin_snapshot is None:
-        return []
-    findings: list[Finding] = []
-    for column_id, col in mapping.columns_by_id.items():
-        required = not col.nulls_allowed
-        if required and col.begin_snapshot > min_file_begin_snapshot:
-            path = mapping.paths_by_id.get(column_id, col.column_name)
-            findings.append(
-                Finding(
-                    rule_id=_RULE_ID,
-                    severity=Severity.BLOCKER,
-                    subject=f"column {path}",
-                    detail=(
-                        f"column {path} is required and was added at snapshot "
-                        f"{col.begin_snapshot}, later than live files "
-                        f"(min begin_snapshot={min_file_begin_snapshot})"
-                    ),
-                    remediation=(
-                        "make the column nullable at the source or compact the "
-                        "table in DuckLake so that all live files "
-                        "contain the column"
-                    ),
-                    data={
-                        "column_id": column_id,
-                        "path": path,
-                        "begin_snapshot": col.begin_snapshot,
-                        "min_file_begin_snapshot": min_file_begin_snapshot,
-                    },
-                )
-            )
-    return findings

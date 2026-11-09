@@ -12,9 +12,10 @@ Two critical points of correctness, not performance:
 
 - **Field ID stability**: the 1000+ ordinal is computed over **all** rows of
   ``ducklake_partition_column`` of the table, including those of degraded
-  specs, ordered by ``(partition_id, partition_key_index)``. Instability here
-  breaks manifest reuse in incremental syncs and can make the reader prune by
-  the wrong field, silently.
+  specs, ordered by ``(partition_id, partition_key_index)``; a field with the
+  same source column and transform as an earlier one reuses its ID.
+  Instability here breaks manifest reuse in incremental syncs and can make the
+  reader prune by the wrong field, silently.
 - **``epoch_*`` versus calendar**: DuckLake's ``year``/``month``/``day``/
   ``hour`` are calendar components, **not** units since the Unix epoch.
   Declaring them as the Iceberg transforms of the same name would produce
@@ -374,14 +375,30 @@ def _allocate_field_ids(
     """``1000 + ordinal`` over ALL rows, including degraded ones.
 
     The ordinal is deterministic: ``(partition_id, partition_key_index)`` in
-    ascending order, regardless of the read order.
+    ascending order, regardless of the read order. A partition field with the
+    same source column and transform as an earlier one (the same ``region``
+    identity kept across a partition evolution) REUSES its field ID, as the
+    Iceberg specification recommends: with distinct IDs for the same field,
+    engines that union the partition types of every spec end up with duplicate
+    field names.
     """
-    keys: list[tuple[int, int]] = []
+    keyed: list[tuple[tuple[int, int], tuple[int, str]]] = []
     for info in infos:
         for col in info.columns:
-            keys.append((info.partition_id, col.partition_key_index))
-    keys.sort()
-    return {key: PARTITION_FIELD_ID_START + ordinal for ordinal, key in enumerate(keys)}
+            keyed.append(
+                (
+                    (info.partition_id, col.partition_key_index),
+                    (col.column_id, col.transform),
+                )
+            )
+    keyed.sort(key=lambda item: item[0])
+    by_field: dict[tuple[int, str], int] = {}
+    allocated: dict[tuple[int, int], int] = {}
+    for key, field in keyed:
+        if field not in by_field:
+            by_field[field] = PARTITION_FIELD_ID_START + len(by_field)
+        allocated[key] = by_field[field]
+    return allocated
 
 
 def _build_one_spec(

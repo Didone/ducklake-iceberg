@@ -18,14 +18,12 @@ from pyiceberg.types import (
     StructType,
 )
 
-from ducklake_iceberg.doctor.model import Severity
 from ducklake_iceberg.mapping.schema import (
     BlockedTypeError,
     DuckLakeColumn,
     SchemaMapping,
     SchemaShapeError,
     build_iceberg_schema,
-    check_required_backfill,
     map_primitive,
 )
 
@@ -346,28 +344,29 @@ def test_default_dialect_discarded_with_warning() -> None:
     assert any("duckdb" in w for w in mapping.warnings)
 
 
-# -- check_required_backfill --------------------------------------
+# -- columns added after the table was created ---------------------------
 
 
-def test_required_backfill_blocks_retroactive_column() -> None:
+def test_not_null_column_added_later_is_published_as_optional() -> None:
+    """Older files lack the column and Iceberg v2 has no initial-default."""
     cols = [
         col(1, "id", "int32", nulls=False, begin_snapshot=1),
         col(2, "newcol", "int32", nulls=False, begin_snapshot=5),
     ]
     mapping = build(cols)
-    findings = check_required_backfill(mapping, min_file_begin_snapshot=3)
-    assert len(findings) == 1
-    assert findings[0].severity is Severity.BLOCKER
-    assert findings[0].data["column_id"] == 2
+    assert mapping.schema.find_field("id").required is True
+    assert mapping.schema.find_field("newcol").required is False
+    assert any("newcol" in w and "optional" in w for w in mapping.warnings)
 
 
-def test_required_backfill_none_disables_rule() -> None:
+def test_nested_field_added_later_is_published_as_optional() -> None:
     cols = [
-        col(1, "id", "int32", nulls=False, begin_snapshot=1),
-        col(2, "newcol", "int32", nulls=False, begin_snapshot=5),
+        col(1, "addr", "struct", begin_snapshot=1),
+        col(2, "city", "varchar", parent=1, order=0, begin_snapshot=1),
+        col(3, "country", "varchar", parent=1, order=1, nulls=False, begin_snapshot=4),
     ]
     mapping = build(cols)
-    assert check_required_backfill(mapping, min_file_begin_snapshot=None) == []
+    assert mapping.schema.find_field(3).required is False
 
 
 # -- extras: arity and edge cases --------------------------------------

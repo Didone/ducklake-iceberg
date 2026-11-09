@@ -176,9 +176,18 @@ def test_secret_created_for_s3(catalog: CatalogHarness) -> None:
     import os
 
     import boto3
+    from botocore.exceptions import BotoCoreError
 
     profile = os.environ.get("AWS_PROFILE")
-    if profile is None or boto3.Session(profile_name=profile).get_credentials() is None:
+    try:
+        credentials = (
+            boto3.Session(profile_name=profile).get_credentials() if profile else None
+        )
+        if credentials is not None:
+            credentials.get_frozen_credentials()  # forces the SSO token refresh
+    except BotoCoreError:  # expired SSO token, unknown profile, ...
+        credentials = None
+    if credentials is None:
         pytest.skip("no AWS profile with credentials available to validate the secret")
     settings = catalog.settings(
         data_path="s3://bucket/ducklake/data/",
