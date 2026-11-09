@@ -1,0 +1,55 @@
+# Byte-compiled / optimized
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+.installed.cfg
+
+# Virtual environments
+.venv/
+venv/
+env/
+.python-version
+
+# Poetry: poetry.lock IS versioned (reproducible CI and image builds).
+
+# Tests and coverage
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.cache/
+
+# Quality tools
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Local configuration and secrets
+# Credentials never go in the DSN; local config files stay out of version control.
+.env
+.env.*
+!.env.example
+iceduck.local.yaml
+*.local.yaml
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Operating system
+.DS_Store
+Thumbs.db
+
+# Artifacts of real end-to-end runs (SQLite catalog, evidence)
+.e2e-runs/

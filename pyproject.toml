@@ -1,0 +1,197 @@
+[project]
+name = "iceduck"
+version = "0.1.0"
+description = "Publish DuckLake tables as Apache Iceberg v2 tables in AWS Glue, without copying data"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Tiago Didone", email = "didone@live.com" }]
+maintainers = [{ name = "Tiago Didone", email = "didone@live.com" }]
+requires-python = ">=3.11,<3.15"
+keywords = [
+    "ducklake",
+    "duckdb",
+    "iceberg",
+    "apache-iceberg",
+    "aws-glue",
+    "athena",
+    "data-lake",
+    "lakehouse",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Database",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = [
+    "typer (>=0.27.3,<0.28.0)",
+    "rich (>=15.0.0,<16.0.0)",
+    # Exact versions: DuckDB extensions are published per DuckDB version and
+    # the writer relies on internal PyIceberg constructors. Bumping either one
+    # also requires updating `iceduck.deps` (tests marked `pins`).
+    "duckdb (==2.0.0)",
+    "pyiceberg[glue,s3fs] (==0.12.0)",
+    "fastavro (>=1.13.1,<2.0.0)",
+    "pyarrow (>=26.0.0,<27.0.0)",
+    "pydantic-settings (>=2.16.1,<3.0.0)",
+    "pyyaml (>=6.0.3,<7.0.0)",
+]
+
+[project.urls]
+Homepage = "https://github.com/Didone/iceduck"
+Repository = "https://github.com/Didone/iceduck"
+Issues = "https://github.com/Didone/iceduck/issues"
+Changelog = "https://github.com/Didone/iceduck/blob/main/CHANGELOG.md"
+
+[project.scripts]
+iceduck = "iceduck.cli:app"
+
+[tool.poetry]
+packages = [{ include = "iceduck", from = "src" }]
+include = [
+    { path = "src/iceduck/py.typed", format = ["sdist", "wheel"] },
+    { path = "src/iceduck/schemas/*.json", format = ["sdist", "wheel"] },
+    { path = "CHANGELOG.md", format = "sdist" },
+]
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^9.1.1"
+pytest-cov = "^7.1.0"
+ruff = "^0.17.2"
+mypy = "^2.4.0"
+moto = { version = "^5.2.4", extras = ["glue", "s3"] }
+testcontainers = { version = "^4.15.0", extras = ["postgres"] }
+types-pyyaml = "^6.0.12"
+jsonschema = "^4.23.0"
+types-jsonschema = "^4.23.0"
+ipykernel = "^7.4.0"
+boto3 = ">=1.43.0,<2.0.0"
+duckdb-cli = "^1.5.6"
+pandas = "^3.1.0"
+twine = "^6.2.0"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # isort
+    "N",         # pep8-naming
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "A",         # builtins shadowing
+    "C4",        # comprehensions
+    "S",         # bandit
+    "PT",        # pytest style
+    "SIM",       # simplify
+    "TID",       # tidy imports
+    "RUF",
+]
+ignore = ["S101"]  # assert is legitimate in tests
+
+[tool.ruff.lint.per-file-ignores]
+# S608: tests build fixture DDL/DML for the test DuckLake with their own names
+# and literals, never from external input.
+"tests/**" = ["S105", "S106", "S608"]
+# S603/S607: end-to-end tests call subprocess with a trusted command line.
+"tests/e2e/**" = ["S603", "S607"]
+# N818: exception names such as `NothingToDo`, `RecordCountMismatch`,
+# `UnsupportedFormatVersion`, `TableAlreadyRegistered`, `LakeFormationBlocked`
+# and `RegisterDiverged` are part of the documented public contract; the
+# "Error" suffix required by N818 would break it.
+"src/iceduck/errors.py" = ["N818"]
+"src/iceduck/writer/stats.py" = ["N818"]
+"src/iceduck/writer/avro.py" = ["N818"]
+"src/iceduck/glue.py" = ["N818"]
+# S105: `S3_SECRET` is the *name* of a DuckDB secret, not a credential.
+# S608: DuckDB cannot bind identifiers, so the queries interpolate only
+# `metadata_catalog`/`catalog_alias`, which are validated as SQL identifiers
+# when the configuration is loaded (or quoted with `quote_ident`).
+"src/iceduck/catalog/connection.py" = ["S105", "S608"]
+# S608 (all entries below): the modules interpolate only identifiers that are
+# validated at configuration load time or escaped with `quote_ident` (the
+# metadata catalog alias, schema/table names read from the DuckLake catalog and
+# fixed maintenance function names). User-provided values always travel as
+# named parameters.
+"src/iceduck/catalog/reader.py" = ["S608"]
+"src/iceduck/catalog/files.py" = ["S608"]
+"src/iceduck/doctor/rules/*.py" = ["S608"]
+"src/iceduck/checkpoint/command.py" = ["S608"]
+"src/iceduck/checkpoint/detect.py" = ["S608"]
+"src/iceduck/checkpoint/revalidate.py" = ["S608"]
+"src/iceduck/checkpoint/variant.py" = ["S608"]
+"src/iceduck/checkpoint/dry_run.py" = ["S608"]
+"src/iceduck/checkpoint/report.py" = ["S608"]
+"src/iceduck/checkpoint/partitions.py" = ["S608"]
+# S105: `pass` is a validation status, not a credential.
+"src/iceduck/validate.py" = ["S105", "S608"]
+"src/iceduck/retention.py" = ["S608"]
+"src/iceduck/maintenance/ducklake_cleanup.py" = ["S608"]
+"src/iceduck/deletes/reader.py" = ["S608"]
+"src/iceduck/deletes/materialize.py" = ["S608"]
+"src/iceduck/export.py" = ["S608"]
+"src/iceduck/writer/catalog_stats.py" = ["S608"]
+# E501, SIM102: end-to-end tests may use long lines and nested ifs for clarity.
+"tests/e2e/*.py" = ["E501", "SIM102"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src", "tests"]
+warn_unreachable = true
+disallow_any_explicit = false
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = [
+    "boto3.*",
+    "botocore.*",
+    "fastavro.*",
+    "moto.*",
+    "pyarrow.*",
+    "testcontainers.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "-ra",
+    "--cov=iceduck",
+    "--cov-report=term-missing",
+    "--cov-fail-under=85",
+]
+markers = [
+    "integration: requires a real DuckLake catalog (SQLite by default)",
+    "postgres: requires a Postgres container (testcontainers)",
+    "minio: requires a MinIO container (testcontainers + Docker; skipped without Docker)",
+    "aws: requires simulated S3/Glue (moto)",
+    "e2e: requires a real AWS account; never runs in CI",
+    "roundtrip: iceduck writer output read back by the PyIceberg reader",
+    "pins: pinned versions of DuckDB, its extensions and PyIceberg",
+]
+filterwarnings = ["error"]

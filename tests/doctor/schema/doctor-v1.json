@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://iceduck/doctor-v1.json",
+  "title": "iceduck doctor --json (version 1)",
+  "type": "object",
+  "required": [
+    "version",
+    "command",
+    "generated_at",
+    "target",
+    "iceberg",
+    "summary",
+    "exit_code",
+    "revalidation",
+    "rules"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "command": { "const": "doctor" },
+    "generated_at": { "type": "string" },
+    "target": {
+      "type": "object",
+      "required": [
+        "catalog",
+        "metadata_catalog",
+        "schema",
+        "table",
+        "table_id",
+        "snapshot_id",
+        "schema_version"
+      ],
+      "properties": {
+        "catalog": { "type": "string" },
+        "metadata_catalog": { "type": "string" },
+        "schema": { "type": "string" },
+        "table": { "type": "string" },
+        "table_id": { "type": "integer" },
+        "snapshot_id": { "type": "integer" },
+        "schema_version": { "type": "integer" }
+      }
+    },
+    "iceberg": {
+      "type": "object",
+      "required": ["format_version"],
+      "properties": { "format_version": { "type": "integer" } }
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "rules_total",
+        "rules_run",
+        "rules_skipped",
+        "rules_errored",
+        "blocker",
+        "degraded",
+        "info",
+        "worst_severity",
+        "short_circuited_by",
+        "revalidation_required"
+      ],
+      "properties": {
+        "rules_total": { "type": "integer" },
+        "rules_run": { "type": "integer" },
+        "rules_skipped": { "type": "integer" },
+        "rules_errored": { "type": "integer" },
+        "blocker": { "type": "integer" },
+        "degraded": { "type": "integer" },
+        "info": { "type": "integer" },
+        "worst_severity": { "type": ["string", "null"] },
+        "short_circuited_by": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "revalidation_required": { "type": "boolean" }
+      }
+    },
+    "exit_code": { "type": "integer" },
+    "revalidation": {
+      "type": ["object", "null"],
+      "required": ["after", "previous_snapshot_id", "previous_exit_code"],
+      "properties": {
+        "after": { "type": "string" },
+        "previous_snapshot_id": { "type": "integer" },
+        "previous_exit_code": { "type": "integer" }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "status",
+          "declared_severity",
+          "requires",
+          "order",
+          "duration_ms",
+          "skipped_by",
+          "skip_reason",
+          "error",
+          "findings"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "status": {
+            "enum": ["passed", "failed", "skipped", "error"]
+          },
+          "declared_severity": {
+            "enum": ["info", "degraded", "blocker"]
+          },
+          "requires": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "order": { "type": "integer" },
+          "duration_ms": { "type": "integer" },
+          "skipped_by": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "skip_reason": { "type": ["string", "null"] },
+          "error": { "type": ["string", "null"] },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "severity",
+                "subject",
+                "detail",
+                "remediation",
+                "data"
+              ],
+              "properties": {
+                "severity": {
+                  "enum": ["info", "degraded", "blocker"]
+                },
+                "subject": { "type": "string" },
+                "detail": { "type": "string" },
+                "remediation": { "type": "string" },
+                "data": { "type": "object" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

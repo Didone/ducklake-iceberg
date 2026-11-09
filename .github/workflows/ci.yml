@@ -1,0 +1,111 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  POETRY_VERSION: "2.5.1"
+
+jobs:
+  lock:
+    name: lock file is in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pipx install poetry==${{ env.POETRY_VERSION }}
+      - name: poetry.lock matches pyproject.toml
+        run: poetry check --lock
+
+  quality:
+    name: lint and type check
+    runs-on: ubuntu-latest
+    needs: lock
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pipx install poetry==${{ env.POETRY_VERSION }}
+      - run: poetry install --sync
+      - run: poetry run ruff check .
+      - run: poetry run ruff format --check .
+      - run: poetry run mypy
+
+  build:
+    name: build and check distributions
+    runs-on: ubuntu-latest
+    needs: lock
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pipx install poetry==${{ env.POETRY_VERSION }}
+      - name: Build sdist and wheel
+        run: poetry build
+      - name: Validate package metadata
+        run: pipx run twine check --strict dist/*
+      - name: Install the wheel in a clean virtualenv
+        run: |
+          python -m venv /tmp/wheel-venv
+          /tmp/wheel-venv/bin/pip install dist/*.whl
+          /tmp/wheel-venv/bin/iceduck --version
+          /tmp/wheel-venv/bin/iceduck doctor --help > /dev/null
+
+  container-smoke:
+    name: container (offline smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build runtime image and extensions
+        run: |
+          docker build \
+            --build-arg VERSION=ci \
+            --build-arg REVISION="$GITHUB_SHA" \
+            --build-arg SOURCE="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --build-arg CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -t iceduck:ci .
+      - name: Verify offline CLI and non-root runtime
+        run: |
+          docker run --rm --network none iceduck:ci doctor --help
+          test "$(docker run --rm --network none --entrypoint id iceduck:ci -u)" = 10001
+          test "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' iceduck:ci)" = "$GITHUB_SHA"
+          test "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.created" }}' iceduck:ci)" != unknown
+
+  test:
+    name: tests (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    needs: lock
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pipx install poetry==${{ env.POETRY_VERSION }}
+      - run: poetry install --sync
+      - name: Unit and fast integration tests (SQLite catalog)
+        run: poetry run pytest -m "not postgres and not e2e and not minio"
+      - name: Integration tests against Postgres
+        if: matrix.python == '3.12'
+        # Backend parity run: the global coverage gate is enforced by the fast
+        # step above; here the SAME suite only has to pass against Postgres.
+        run: poetry run pytest -m postgres --cov-fail-under=0
+      - name: Physical DuckLake cleanup against MinIO
+        if: matrix.python == '3.12'
+        run: poetry run pytest -m minio --cov-fail-under=0

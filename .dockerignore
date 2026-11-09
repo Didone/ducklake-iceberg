@@ -1,0 +1,9 @@
+# Allowlist build contexts; do not send local credentials or data.
+*
+!Dockerfile
+!pyproject.toml
+!poetry.lock
+!README.md
+!LICENSE
+!src/
+!src/**
