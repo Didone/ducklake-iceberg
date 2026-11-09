@@ -138,3 +138,20 @@ def test_status_aggregates_data_and_delete() -> None:
     assert payload["pending_rows"] == 4
     assert payload["sources"][0]["physical_name"] == "ducklake_inlined_data_5_0"
     assert payload["sources"][1]["visibility_filtered"] is False
+
+
+def test_reconcile_ignores_other_tables_inlined_names_silently() -> None:
+    """Catalog-wide introspection sees every table; foreign names are not noise."""
+    warnings: list[str] = []
+    sources = _reconcile(
+        {},
+        {
+            "ducklake_inlined_data_2_2",
+            "ducklake_inlined_delete_3",
+            "ducklake_inlined_data_5_7",
+        },
+        5,
+        warnings,
+    )
+    assert [s.physical_name for s in sources] == ["ducklake_inlined_data_5_7"]
+    assert warnings == []

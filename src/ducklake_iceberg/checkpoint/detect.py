@@ -269,6 +269,10 @@ def _reconcile(
         exists = name in introspected
         physical = _classify(name, table_id, is_registered, exists)
         if physical is None:
+            # Introspection is catalog-wide: a well-formed name that belongs to
+            # another table (and is not registered for this one) is expected.
+            if not is_registered and _PHYSICAL_NAME.match(name) is not None:
+                continue
             # Name outside the pattern or mismatched table_id: never interpolate.
             if is_registered or exists:
                 warnings.append(

@@ -20,6 +20,11 @@ example: "envelope v1: optional key `timings`".
 
 ## [Unreleased]
 
+### Fixed
+
+- `checkpoint` no longer warns about other tables' inlined-data tables when
+  detecting inlined rows (the introspection is catalog-wide).
+
 ## [0.1.0] - 2026-11-09
 
 First public release.
