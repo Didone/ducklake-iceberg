@@ -14,7 +14,7 @@ import pyarrow as pa
 from ducklake_iceberg import timing
 from ducklake_iceberg.aws import s3_credential_properties
 from ducklake_iceberg.config import DuckLakeIcebergSettings
-from ducklake_iceberg.errors import AwsError, CatalogError
+from ducklake_iceberg.errors import AwsError, CatalogError, ProfileNotFoundError
 
 LOG = logging.getLogger(__name__)
 
@@ -91,7 +91,7 @@ def _translate(exc: duckdb.Error, sql: str) -> CatalogError | AwsError:
     ):
         return CatalogError("aws extension not loaded")
     if "no profile" in lowered or ("profile" in lowered and "found" in lowered):
-        return AwsError(
+        return ProfileNotFoundError(
             "AWS profile not found",
             hint="adjust --profile or ~/.aws/config",
         )

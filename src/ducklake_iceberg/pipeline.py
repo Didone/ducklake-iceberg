@@ -34,13 +34,10 @@ from ducklake_iceberg.doctor.model import (
 from ducklake_iceberg.doctor.report import AUTO_REMEDIABLE_GATES, DoctorReport
 from ducklake_iceberg.doctor.runner import run as run_rules
 from ducklake_iceberg.errors import (
-    AwsError,
     ConfigError,
-    DivergenceError,
     DuckLakeIcebergError,
     ExitCode,
     NothingToDo,
-    OperationAborted,
 )
 from ducklake_iceberg.export import run_export
 from ducklake_iceberg.glue import normalize_table_name
@@ -69,24 +66,17 @@ def exit_of(exc: BaseException) -> ExitCode:
 
 
 def _code_for(exc: BaseException) -> str:
-    text = str(getattr(exc, "message", None) or exc).lower()
-    if "profile" in text:
-        return "profile_not_found"
-    if "does not exist at snapshot" in text or "not found" in text:
-        return "table_not_found"
-    if isinstance(exc, OperationAborted):
-        return "aborted"
-    if isinstance(exc, NothingToDo):
-        return "nothing_to_do"
-    if isinstance(exc, DivergenceError):
-        return "catalog_diverged"
-    if isinstance(exc, ConfigError):
-        return "config_invalid"
-    if isinstance(exc, AwsError):
-        return "aws_error"
-    if exit_of(exc) is ExitCode.BLOCKED:
+    """Stable ``problems[].code`` declared by the error class.
+
+    Errors outside the tool's hierarchy (some export errors only carry an
+    ``exit_code``) map by that exit code.
+    """
+    if isinstance(exc, DuckLakeIcebergError):
+        return exc.problem_code
+    code = exit_of(exc)
+    if code is ExitCode.BLOCKED:
         return "blocked"
-    if exit_of(exc) is ExitCode.DIVERGED:
+    if code is ExitCode.DIVERGED:
         return "catalog_diverged"
     return "error"
 

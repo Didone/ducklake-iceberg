@@ -36,7 +36,7 @@ from pyiceberg.io import (
 )
 
 from ducklake_iceberg import timing
-from ducklake_iceberg.errors import AwsError
+from ducklake_iceberg.errors import AwsError, ProfileNotFoundError
 
 _LOCK = threading.RLock()
 _SESSIONS: dict[tuple[Any, ...], boto3.Session] = {}
@@ -107,7 +107,7 @@ def s3_credential_properties(region: str, profile: str | None) -> dict[str, str]
             credentials = session(region, profile).get_credentials()
             frozen = credentials.get_frozen_credentials() if credentials else None
     except ProfileNotFound as exc:
-        raise AwsError(
+        raise ProfileNotFoundError(
             f"AWS profile not found: {label}",
             hint="fix aws_profile, AWS_PROFILE, or ~/.aws/config",
         ) from exc
