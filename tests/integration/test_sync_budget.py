@@ -25,9 +25,9 @@ os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 from moto import mock_aws
 from typer.testing import CliRunner
 
-from iceduck import timing
-from iceduck.catalog.connection import DuckLakeConnection
-from iceduck.cli import app
+from ducklake_iceberg import timing
+from ducklake_iceberg.catalog.connection import DuckLakeConnection
+from ducklake_iceberg.cli import app
 
 from .conftest import CatalogHarness
 
@@ -39,13 +39,13 @@ REGION = "us-east-1"
 
 @pytest.fixture
 def glue_env() -> Iterator[None]:
-    with mock_aws(), mock.patch("iceduck.glue._validate_metadata_location"):
+    with mock_aws(), mock.patch("ducklake_iceberg.glue._validate_metadata_location"):
         yield
 
 
 def _config(catalog: CatalogHarness, tmp_path: Path, *, inlining: int) -> Path:
     catalog.write(f"CALL lake.set_option('data_inlining_row_limit', {inlining})")
-    path = tmp_path / "iceduck.yaml"
+    path = tmp_path / "ducklake-iceberg.yaml"
     path.write_text(
         f"catalog_dsn: '{catalog.dsn}'\n"
         f"data_path: '{catalog.data_path}'\n"
@@ -73,7 +73,7 @@ def opened(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
 @pytest.fixture
 def maintenance_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """SQL of the DuckLake maintenance functions called by the checkpoint."""
-    from iceduck.checkpoint import command
+    from ducklake_iceberg.checkpoint import command
 
     calls: list[str] = []
     real_call = command._call
@@ -205,10 +205,10 @@ def test_unchanged_sync_reads_only_pointer_and_glue(
     catalog.write("CREATE TABLE lake.main.outra (x INTEGER)")
     _forbid(
         monkeypatch,
-        "iceduck.export.read_metadata_json",
-        "iceduck.export.load_base_snapshot",
-        "iceduck.register._read_metadata_properties",
-        "iceduck.glue._read_metadata",
+        "ducklake_iceberg.export.read_metadata_json",
+        "ducklake_iceberg.export.load_base_snapshot",
+        "ducklake_iceberg.register._read_metadata_properties",
+        "ducklake_iceberg.glue._read_metadata",
     )
     code, doc = _sync(config)
     assert code == 4, doc["problems"]
@@ -233,10 +233,10 @@ def test_changed_sync_register_does_not_reread(
     catalog.write("INSERT INTO lake.main.t SELECT * FROM range(10, 20)")
     _forbid(
         monkeypatch,
-        "iceduck.register.read_pointer",
-        "iceduck.register._read_metadata_properties",
-        "iceduck.glue._read_metadata",
-        "iceduck.glue._metadata_exists",
+        "ducklake_iceberg.register.read_pointer",
+        "ducklake_iceberg.register._read_metadata_properties",
+        "ducklake_iceberg.glue._read_metadata",
+        "ducklake_iceberg.glue._metadata_exists",
     )
     code, doc = _sync(config)
     assert code == 0, doc["problems"]
@@ -251,15 +251,15 @@ def test_unchanged_after_upgrade_takes_full_path(
     glue_env: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Different iceduck version in the pointer: the shortcut does not apply."""
+    """Different tool version in the pointer: the shortcut does not apply."""
     config = _config(catalog, tmp_path, inlining=0)
     catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
     catalog.write("INSERT INTO lake.main.t SELECT * FROM range(10)")
     code, doc = _sync(config)
     assert code == 0, doc["problems"]
 
-    from iceduck import export
-    from iceduck.writer.commit import load_base_snapshot as real
+    from ducklake_iceberg import export
+    from ducklake_iceberg.writer.commit import load_base_snapshot as real
 
     calls: list[object] = []
 

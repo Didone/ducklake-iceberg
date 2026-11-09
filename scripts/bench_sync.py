@@ -1,11 +1,11 @@
-"""Performance benchmark for ``iceduck sync`` (target: < 1 s per table).
+"""Performance benchmark for ``ducklake-iceberg sync`` (target: < 1 s per table).
 
 Runs the command N times, each in a fresh process (like the E2E tests), with
-``ICEDUCK_TIMINGS=1``, and prints p50/p95 of wall-clock time, in-process time
+``DUCKLAKE_ICEBERG_TIMINGS=1``, and prints p50/p95 of wall-clock time, in-process time
 (``duration_ms``), ``startup`` (the difference between the two) and each
 phase/counter in the envelope.
 
-    python scripts/bench_sync.py --config .e2e-runs/<run>/iceduck.yaml \\
+    python scripts/bench_sync.py --config .e2e-runs/<run>/ducklake-iceberg.yaml \\
         --table main.t_time -n 5
 
 ``--prepare`` runs a shell command before each iteration (for example, an
@@ -35,14 +35,14 @@ def _percentile(values: list[float], q: float) -> float:
 
 
 def _default_exe() -> list[str]:
-    found = shutil.which("iceduck")
+    found = shutil.which("ducklake-iceberg")
     if found:
         return [found]
-    return [sys.executable, "-c", "from iceduck.cli import main; main()"]
+    return [sys.executable, "-c", "from ducklake_iceberg.cli import main; main()"]
 
 
 def _run_once(cmd: list[str]) -> dict[str, Any]:
-    env = {**os.environ, "ICEDUCK_TIMINGS": "1"}
+    env = {**os.environ, "DUCKLAKE_ICEBERG_TIMINGS": "1"}
     started = time.perf_counter()
     proc = subprocess.run(  # noqa: S603 - command built by this script itself
         cmd, capture_output=True, text=True, env=env, check=False
@@ -62,7 +62,7 @@ def main() -> None:
     parser.add_argument("--table", required=True)
     parser.add_argument("-n", type=int, default=5)
     parser.add_argument("--args", default="sync", help="subcommand and flags")
-    parser.add_argument("--exe", default=None, help="iceduck executable")
+    parser.add_argument("--exe", default=None, help="ducklake-iceberg executable")
     parser.add_argument("--prepare", default=None, help="shell command before each run")
     parser.add_argument("--json", action="store_true", help="output the result as JSON")
     opts = parser.parse_args()

@@ -5,15 +5,15 @@ from __future__ import annotations
 import duckdb
 import pytest
 
-from iceduck.checkpoint.model import NestedVariantError, TableRef
-from iceduck.checkpoint.variant import (
+from ducklake_iceberg.checkpoint.model import NestedVariantError, TableRef
+from ducklake_iceberg.checkpoint.variant import (
     NESTED_VARIANT_PATTERNS,
     VariantColumn,
     find_nested_variants,
     nested_variant_error,
     translate_checkpoint_error,
 )
-from iceduck.errors import ExitCode
+from ducklake_iceberg.errors import ExitCode
 
 T = TableRef("vendas", "pedidos", 5)
 

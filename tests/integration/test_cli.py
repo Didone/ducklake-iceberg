@@ -13,7 +13,7 @@ import pytest
 from moto import mock_aws
 from typer.testing import CliRunner
 
-from iceduck.cli import app
+from ducklake_iceberg.cli import app
 from tests.integration.conftest import CatalogHarness, cli_env_for
 
 pytestmark = [pytest.mark.integration, pytest.mark.aws]
@@ -53,7 +53,7 @@ def test_doctor_help_lists_flags() -> None:
 def test_version() -> None:
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert result.stdout.strip().startswith("iceduck ")
+    assert result.stdout.strip().startswith("ducklake-iceberg ")
     assert "(duckdb " in result.stdout
     assert ", pyiceberg " in result.stdout
 
@@ -209,7 +209,7 @@ def test_sync_help_lists_metrics_toggle() -> None:
 def test_invalid_dsn_emits_error_envelope(seeded_catalog: CatalogHarness) -> None:
     env = {
         **cli_env_for(seeded_catalog),
-        "ICEDUCK_CATALOG_DSN": "ducklake:sqlite:/does/not/exist.sqlite",
+        "DUCKLAKE_ICEBERG_CATALOG_DSN": "ducklake:sqlite:/does/not/exist.sqlite",
     }
     with mock_aws():
         result = runner.invoke(
@@ -234,9 +234,9 @@ def test_unknown_command() -> None:
 def test_bad_aws_profile(seeded_catalog: CatalogHarness) -> None:
     env = {
         **cli_env_for(seeded_catalog),
-        "ICEDUCK_DATA_PATH": "s3://bucket/ducklake/data/",
-        "ICEDUCK_ICEBERG_METADATA_PREFIX": "s3://bucket/iceberg/",
-        "ICEDUCK_AWS_PROFILE": "nonexistent_profile_iceduck_xyz",
+        "DUCKLAKE_ICEBERG_DATA_PATH": "s3://bucket/ducklake/data/",
+        "DUCKLAKE_ICEBERG_ICEBERG_METADATA_PREFIX": "s3://bucket/iceberg/",
+        "DUCKLAKE_ICEBERG_AWS_PROFILE": "nonexistent_profile_ducklake_iceberg_xyz",
     }
     with mock_aws():
         result = runner.invoke(
@@ -269,7 +269,7 @@ def test_dry_run(flushed_catalog: CatalogHarness) -> None:
 def test_data_path_mismatch_fails(seeded_catalog: CatalogHarness) -> None:
     env = {
         **cli_env_for(seeded_catalog),
-        "ICEDUCK_DATA_PATH": "/path/that/does/not/match/data",
+        "DUCKLAKE_ICEBERG_DATA_PATH": "/path/that/does/not/match/data",
     }
     with mock_aws():
         result = runner.invoke(
@@ -283,7 +283,7 @@ def test_data_path_mismatch_fails(seeded_catalog: CatalogHarness) -> None:
 # --- log level from the environment; clean stdout ----------------------------
 @pytest.mark.usefixtures("aws_credentials")
 def test_env_log_level_stdout_clean(flushed_catalog: CatalogHarness) -> None:
-    env = {**cli_env_for(flushed_catalog), "ICEDUCK_LOG_LEVEL": "DEBUG"}
+    env = {**cli_env_for(flushed_catalog), "DUCKLAKE_ICEBERG_LOG_LEVEL": "DEBUG"}
     with mock_aws():
         result = runner.invoke(
             app, ["doctor", "--table", "main.pedidos", "--json"], env=env
@@ -293,4 +293,4 @@ def test_env_log_level_stdout_clean(flushed_catalog: CatalogHarness) -> None:
     assert payload["command"] == "doctor"
     # stdout is exactly ONE line (the JSON envelope); DEBUG logs go to stderr
     assert len(result.stdout.strip().splitlines()) == 1
-    assert "iceduck:" not in result.stdout  # log format of the 'iceduck' logger
+    assert "ducklake_iceberg:" not in result.stdout  # log format of the package logger

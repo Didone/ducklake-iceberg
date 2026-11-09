@@ -17,8 +17,12 @@ from pathlib import Path
 import duckdb
 import pytest
 
-from iceduck.catalog.connection import CONNECT_CONFIG, DuckLakeConnection, open_catalog
-from iceduck.errors import CatalogError
+from ducklake_iceberg.catalog.connection import (
+    CONNECT_CONFIG,
+    DuckLakeConnection,
+    open_catalog,
+)
+from ducklake_iceberg.errors import CatalogError
 from tests.integration.conftest import CatalogHarness
 
 pytestmark = [
@@ -76,7 +80,7 @@ def test_read_only_home_fails_with_hint(
     assert exc.value.message == "could not load extension 'ducklake'"
     assert exc.value.hint is not None
     assert "duckdb_extension_directory" in exc.value.hint
-    assert "ICEDUCK_DUCKDB_EXTENSION_DIRECTORY" in exc.value.hint
+    assert "DUCKLAKE_ICEBERG_DUCKDB_EXTENSION_DIRECTORY" in exc.value.hint
     assert not (read_only_home / ".duckdb").exists()
 
 
@@ -110,7 +114,9 @@ def test_extension_directory_allows_read_only_home(
 def test_extension_directory_from_env(
     monkeypatch: pytest.MonkeyPatch, catalog: CatalogHarness, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("ICEDUCK_DUCKDB_EXTENSION_DIRECTORY", str(tmp_path / "x"))
+    monkeypatch.setenv(
+        "DUCKLAKE_ICEBERG_DUCKDB_EXTENSION_DIRECTORY", str(tmp_path / "x")
+    )
     settings = catalog.settings()
     assert settings.duckdb_extension_directory == str(tmp_path / "x")
     config = DuckLakeConnection(settings)._connect_config()

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timezone
 
-from iceduck.sync.state import (
+from ducklake_iceberg.sync.state import (
     PROP_DATA_PATH,
     PROP_ICEBERG_SNAPSHOT_ID,
     PROP_LAST_COLUMN_ID,
@@ -40,7 +40,7 @@ from iceduck.sync.state import (
     parse_sync_state,
     validate_identity,
 )
-from iceduck.writer.metadata import merge_properties
+from ducklake_iceberg.writer.metadata import merge_properties
 
 
 def test_build_sync_properties_round_trip() -> None:
@@ -102,7 +102,7 @@ def test_build_sync_properties_round_trip() -> None:
     assert state.iceberg_snapshot_id == 999
     assert state.sync_mode == SyncMode.INCREMENTAL
     assert state.synced_at == now
-    assert state.iceduck_version == "0.1.0"
+    assert state.ducklake_iceberg_version == "0.1.0"
     assert not state.is_absent
 
 
@@ -188,14 +188,14 @@ def test_merge_properties_preserves_unmanaged() -> None:
         "write.target-file-size-bytes": "134217728",
         "write.format.default": "parquet",
         "ducklake.snapshot-id": "100",  # orphan: will be removed
-        "iceduck.version": "0.0.9",  # orphan: will be removed
+        "ducklake_iceberg.version": "0.0.9",  # orphan: will be removed
         "custom.property": "user-value",
     }
 
     new_props = {
         "ducklake.snapshot-id": "200",
         "ducklake.table-id": "42",
-        "iceduck.version": "0.1.0",
+        "ducklake_iceberg.version": "0.1.0",
     }
 
     merged = merge_properties(base, new_props)
@@ -208,7 +208,7 @@ def test_merge_properties_preserves_unmanaged() -> None:
     # Managed properties updated
     assert merged["ducklake.snapshot-id"] == "200"
     assert merged["ducklake.table-id"] == "42"
-    assert merged["iceduck.version"] == "0.1.0"
+    assert merged["ducklake_iceberg.version"] == "0.1.0"
 
 
 def test_merge_properties_removes_orphaned() -> None:
@@ -221,7 +221,7 @@ def test_merge_properties_removes_orphaned() -> None:
 
     new_props = {
         "ducklake.snapshot-id": "200",
-        "iceduck.version": "0.1.0",
+        "ducklake_iceberg.version": "0.1.0",
     }
 
     merged = merge_properties(base, new_props)
@@ -232,7 +232,7 @@ def test_merge_properties_removes_orphaned() -> None:
     assert merged["write.format.default"] == "parquet"
     # New managed ones present
     assert merged["ducklake.snapshot-id"] == "200"
-    assert merged["iceduck.version"] == "0.1.0"
+    assert merged["ducklake_iceberg.version"] == "0.1.0"
 
 
 def test_parse_sync_state_absent() -> None:
@@ -287,7 +287,7 @@ def test_validate_identity_malformed() -> None:
         iceberg_snapshot_id=None,
         sync_mode=None,
         synced_at=None,
-        iceduck_version=None,
+        ducklake_iceberg_version=None,
         raw={
             PROP_STATE_VERSION: "abc",  # present but malformed
             PROP_TABLE_ID: "xyz",  # present but malformed
@@ -324,7 +324,7 @@ def test_validate_identity_state_version_ahead() -> None:
         iceberg_snapshot_id=999,
         sync_mode=SyncMode.INCREMENTAL,
         synced_at=datetime.now(tz=UTC),
-        iceduck_version="0.1.0",
+        ducklake_iceberg_version="0.1.0",
         raw={},
     )
 
@@ -359,7 +359,7 @@ def test_validate_identity_table_uuid_mismatch() -> None:
         iceberg_snapshot_id=999,
         sync_mode=SyncMode.INCREMENTAL,
         synced_at=datetime.now(tz=UTC),
-        iceduck_version="0.1.0",
+        ducklake_iceberg_version="0.1.0",
         raw={},
     )
 
@@ -395,7 +395,7 @@ def test_validate_identity_table_id_mismatch() -> None:
         iceberg_snapshot_id=999,
         sync_mode=SyncMode.INCREMENTAL,
         synced_at=datetime.now(tz=UTC),
-        iceduck_version="0.1.0",
+        ducklake_iceberg_version="0.1.0",
         raw={},
     )
 
@@ -430,7 +430,7 @@ def test_validate_identity_data_path_mismatch() -> None:
         iceberg_snapshot_id=999,
         sync_mode=SyncMode.INCREMENTAL,
         synced_at=datetime.now(tz=UTC),
-        iceduck_version="0.1.0",
+        ducklake_iceberg_version="0.1.0",
         raw={},
     )
 
@@ -465,7 +465,7 @@ def test_validate_identity_ok() -> None:
         iceberg_snapshot_id=999,
         sync_mode=SyncMode.INCREMENTAL,
         synced_at=datetime.now(tz=UTC),
-        iceduck_version="0.1.0",
+        ducklake_iceberg_version="0.1.0",
         raw={},
     )
 
@@ -474,7 +474,7 @@ def test_validate_identity_ok() -> None:
 
 
 def test_build_summary_properties() -> None:
-    """Snapshot summary contains ducklake.*/iceduck.* properties."""
+    """Snapshot summary contains ducklake.*/ducklake_iceberg.* properties."""
     identity = DuckLakeIdentity(
         table_id=42,
         table_uuid="550e8400-e29b-41d4-a716-446655440000",

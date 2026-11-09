@@ -16,8 +16,8 @@ import duckdb
 import pytest
 from jsonschema import validate
 
-from iceduck.doctor import registry
-from iceduck.doctor.model import (
+from ducklake_iceberg.doctor import registry
+from ducklake_iceberg.doctor.model import (
     DoctorContext,
     DoctorTarget,
     Finding,
@@ -25,9 +25,9 @@ from iceduck.doctor.model import (
     Severity,
     quote_ident,
 )
-from iceduck.doctor.render import render
-from iceduck.doctor.report import DoctorReport
-from iceduck.doctor.runner import run
+from ducklake_iceberg.doctor.render import render
+from ducklake_iceberg.doctor.report import DoctorReport
+from ducklake_iceberg.doctor.runner import run
 
 _SCHEMA = json.loads((Path(__file__).parent / "schema" / "doctor-v1.json").read_text())
 
@@ -423,14 +423,14 @@ def test_transitive_skip(ctx: DoctorContext) -> None:
 # plan - validation, order, and index
 # --------------------------------------------------------------------------
 def test_plan_rejects_orphan_requires() -> None:
-    from iceduck.doctor.plan import PlanError, execution_plan
+    from ducklake_iceberg.doctor.plan import PlanError, execution_plan
 
     with pytest.raises(PlanError, match="nonexistent gate"):
         execution_plan([FakeRule("dep", requires=("absent",))])
 
 
 def test_plan_rejects_cycle() -> None:
-    from iceduck.doctor.plan import PlanError, execution_plan
+    from ducklake_iceberg.doctor.plan import PlanError, execution_plan
 
     a = FakeRule("a", requires=("b",))
     b = FakeRule("b", requires=("a",))
@@ -439,7 +439,7 @@ def test_plan_rejects_cycle() -> None:
 
 
 def test_plan_index_and_dependents() -> None:
-    from iceduck.doctor.plan import execution_plan
+    from ducklake_iceberg.doctor.plan import execution_plan
 
     gate = FakeRule("g")
     mid = FakeRule("m", requires=("g",))
@@ -454,7 +454,7 @@ def test_plan_index_and_dependents() -> None:
 
 
 def test_plan_topological_order_respects_requires() -> None:
-    from iceduck.doctor.plan import execution_plan
+    from ducklake_iceberg.doctor.plan import execution_plan
 
     # 'dep' is registered before the gate, but must run after it.
     plan = execution_plan([FakeRule("dep", requires=("gate",)), FakeRule("gate")])
@@ -465,7 +465,7 @@ def test_plan_topological_order_respects_requires() -> None:
 # sql - visibility predicate
 # --------------------------------------------------------------------------
 def test_visible_predicate() -> None:
-    from iceduck.doctor.sql import visible
+    from ducklake_iceberg.doctor.sql import visible
 
     bare = visible()
     assert "$snapshot_id >= begin_snapshot" in bare

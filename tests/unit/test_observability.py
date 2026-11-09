@@ -24,28 +24,28 @@ import pytest
 from jsonschema import Draft202012Validator
 from typer.testing import CliRunner
 
-from iceduck import cli, timing
-from iceduck.concurrency import ContextThreadPoolExecutor, map_parallel
-from iceduck.errors import AwsError, ExitCode, NothingToDo
-from iceduck.obs import redaction
-from iceduck.obs.logging import (
+from ducklake_iceberg import cli, timing
+from ducklake_iceberg.concurrency import ContextThreadPoolExecutor, map_parallel
+from ducklake_iceberg.errors import AwsError, ExitCode, NothingToDo
+from ducklake_iceberg.obs import redaction
+from ducklake_iceberg.obs.logging import (
     EVENTS,
     bind,
     configure_logging,
     log_event,
     restore_library_levels,
 )
-from iceduck.obs.metrics import (
+from ducklake_iceberg.obs.metrics import (
     PhaseMetric,
     RunMetrics,
     add_work,
     collect,
     current,
 )
-from iceduck.output import ENVELOPE_VERSION, Envelope, Problem
+from ducklake_iceberg.output import ENVELOPE_VERSION, Envelope, Problem
 
 ROOT = Path(__file__).parents[2]
-SCHEMA_PATH = ROOT / "src/iceduck/schemas/envelope-v1.json"
+SCHEMA_PATH = ROOT / "src/ducklake_iceberg/schemas/envelope-v1.json"
 runner = CliRunner()
 
 
@@ -100,11 +100,11 @@ def test_free_text_lines_become_log_events_with_scrubbed_message() -> None:
     ``message``; a non-``str`` argument (an exception with the DSN) is redacted."""
     stream = _json_logging()
     error = RuntimeError("failed: host=db.internal password=hunter2\nline 2")
-    logging.getLogger("iceduck.export").warning("export failed: %s", error)
+    logging.getLogger("ducklake_iceberg.export").warning("export failed: %s", error)
 
     (event,) = _lines(stream)
     assert event["event"] == "log"
-    assert event["logger"] == "iceduck.export"
+    assert event["logger"] == "ducklake_iceberg.export"
     assert event["run_id"] == "a" * 32
     assert "host=***" in event["message"]
     assert "hunter2" not in stream.getvalue()
@@ -128,7 +128,7 @@ def test_traceback_only_in_debug_as_single_line() -> None:
         try:
             raise ValueError("password=hunter2\nsecond line")
         except ValueError as exc:
-            logging.getLogger("iceduck").error("x", exc_info=exc)
+            logging.getLogger("ducklake_iceberg").error("x", exc_info=exc)
         return stream.getvalue()
 
     stream = _json_logging("INFO")
@@ -199,7 +199,7 @@ def test_inner_pools_propagate_metrics_and_table_binding() -> None:
         with lock:
             seen.append(current())
         add_work("deletes", items=1, byte_count=10)
-        logging.getLogger("iceduck.deletes").info("file written")
+        logging.getLogger("ducklake_iceberg.deletes").info("file written")
 
     with (
         bind(table="main.t"),
@@ -315,7 +315,7 @@ def test_aws_calls_are_attributed_to_the_open_phase(
 ) -> None:
     from moto import mock_aws
 
-    from iceduck import aws
+    from ducklake_iceberg import aws
 
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
@@ -337,7 +337,7 @@ def test_aws_calls_are_attributed_to_the_open_phase(
 
 def _logged_events() -> list[tuple[str, int, str | None]]:
     found: list[tuple[str, int, str | None]] = []
-    for path in sorted((ROOT / "src/iceduck").rglob("*.py")):
+    for path in sorted((ROOT / "src/ducklake_iceberg").rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if (

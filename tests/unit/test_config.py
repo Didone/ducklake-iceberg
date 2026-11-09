@@ -8,13 +8,13 @@ from typing import Any
 import pytest
 import yaml
 
-from iceduck.config import (
+from ducklake_iceberg.config import (
     CONFIG_FILE_ENV,
-    IceduckSettings,
+    DuckLakeIcebergSettings,
     load_settings,
     resolve_config_file,
 )
-from iceduck.errors import ConfigError
+from ducklake_iceberg.errors import ConfigError
 
 _BASE: dict[str, Any] = {
     "catalog_dsn": "ducklake:postgres:dbname=lake host=pg.internal port=5432",
@@ -28,17 +28,17 @@ _BASE: dict[str, Any] = {
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Remove any ICEDUCK_* variable from the environment to isolate precedence."""
+    """Remove any DUCKLAKE_ICEBERG_* variable to isolate precedence."""
     import os
 
     for key in list(os.environ):
-        if key.startswith("ICEDUCK_"):
+        if key.startswith("DUCKLAKE_ICEBERG_"):
             monkeypatch.delenv(key, raising=False)
     monkeypatch.delenv(CONFIG_FILE_ENV, raising=False)
 
 
 def _write_yaml(
-    tmp_path: Path, data: dict[str, Any], name: str = "iceduck.yaml"
+    tmp_path: Path, data: dict[str, Any], name: str = "ducklake-iceberg.yaml"
 ) -> Path:
     path = tmp_path / name
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
@@ -56,14 +56,14 @@ def test_yaml_only_uses_defaults(tmp_path: Path) -> None:
 
 # --- env beats YAML --------------------------------------------------------
 def test_env_overrides_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ICEDUCK_AWS_PROFILE", "envprof")
+    monkeypatch.setenv("DUCKLAKE_ICEBERG_AWS_PROFILE", "envprof")
     settings = load_settings(config_file=_write_yaml(tmp_path, _BASE))
     assert settings.aws_profile == "envprof"
 
 
 # --- flag beats env --------------------------------------------------------
 def test_flag_overrides_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ICEDUCK_AWS_PROFILE", "envprof")
+    monkeypatch.setenv("DUCKLAKE_ICEBERG_AWS_PROFILE", "envprof")
     settings = load_settings(
         config_file=_write_yaml(tmp_path, _BASE),
         overrides={"aws_profile": "cliprof"},
@@ -170,16 +170,16 @@ def test_unknown_key_rejected(tmp_path: Path) -> None:
 
 # --- environment only, no file ---------------------------------------------
 def test_env_only_no_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    import iceduck.config as cfg
+    import ducklake_iceberg.config as cfg
 
     for key, value in _BASE.items():
-        monkeypatch.setenv(f"ICEDUCK_{key.upper()}", value)
-    # cwd without iceduck.yaml and a restricted search so no real config is found
+        monkeypatch.setenv(f"DUCKLAKE_ICEBERG_{key.upper()}", value)
+    # cwd without ducklake-iceberg.yaml and a restricted search: no real config
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         cfg,
         "CONFIG_SEARCH_PATH",
-        (Path("iceduck.yaml"), Path("iceduck.yml")),
+        (Path("ducklake-iceberg.yaml"), Path("ducklake-iceberg.yml")),
     )
     settings = load_settings(config_file=None)
     assert settings.glue_database == "analytics"
@@ -241,7 +241,7 @@ def test_local_absolute_path_accepted(tmp_path: Path) -> None:
 
 
 def test_malformed_yaml(tmp_path: Path) -> None:
-    path = tmp_path / "iceduck.yaml"
+    path = tmp_path / "ducklake-iceberg.yaml"
     path.write_text("catalog_dsn: [unclosed\n", encoding="utf-8")
     with pytest.raises(ConfigError) as exc:
         load_settings(config_file=path)
@@ -249,7 +249,7 @@ def test_malformed_yaml(tmp_path: Path) -> None:
 
 
 def test_yaml_not_a_mapping(tmp_path: Path) -> None:
-    path = tmp_path / "iceduck.yaml"
+    path = tmp_path / "ducklake-iceberg.yaml"
     path.write_text("- one\n- two\n", encoding="utf-8")
     with pytest.raises(ConfigError) as exc:
         load_settings(config_file=path)
@@ -275,35 +275,35 @@ def test_resolve_config_file_env_missing(
 def test_resolve_config_file_search_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import iceduck.config as cfg
+    import ducklake_iceberg.config as cfg
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         cfg,
         "CONFIG_SEARCH_PATH",
-        (Path("iceduck.yaml"), Path("iceduck.yml")),
+        (Path("ducklake-iceberg.yaml"), Path("ducklake-iceberg.yml")),
     )
-    found = _write_yaml(tmp_path, _BASE, name="iceduck.yaml")
-    assert resolve_config_file(None) == Path("iceduck.yaml")
+    found = _write_yaml(tmp_path, _BASE, name="ducklake-iceberg.yaml")
+    assert resolve_config_file(None) == Path("ducklake-iceberg.yaml")
     assert found.exists()
 
 
 def test_resolve_config_file_none(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import iceduck.config as cfg
+    import ducklake_iceberg.config as cfg
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         cfg,
         "CONFIG_SEARCH_PATH",
-        (Path("iceduck.yaml"), Path("iceduck.yml")),
+        (Path("ducklake-iceberg.yaml"), Path("ducklake-iceberg.yml")),
     )
     assert resolve_config_file(None) is None
 
 
 def test_env_prefix_and_fields_declared() -> None:
-    assert IceduckSettings.model_config["env_prefix"] == "ICEDUCK_"
+    assert DuckLakeIcebergSettings.model_config["env_prefix"] == "DUCKLAKE_ICEBERG_"
     expected = {
         "catalog_dsn",
         "catalog_alias",
@@ -326,24 +326,24 @@ def test_env_prefix_and_fields_declared() -> None:
         "snapshot_retention_hours",
         "retention",
     }
-    assert set(IceduckSettings.model_fields) == expected
+    assert set(DuckLakeIcebergSettings.model_fields) == expected
 
 
 def test_snapshot_retention_hours(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert IceduckSettings(**_BASE).snapshot_retention_hours is None
-    monkeypatch.setenv("ICEDUCK_SNAPSHOT_RETENTION_HOURS", "24")
-    assert IceduckSettings(**_BASE).snapshot_retention_hours == 24
+    assert DuckLakeIcebergSettings(**_BASE).snapshot_retention_hours is None
+    monkeypatch.setenv("DUCKLAKE_ICEBERG_SNAPSHOT_RETENTION_HOURS", "24")
+    assert DuckLakeIcebergSettings(**_BASE).snapshot_retention_hours == 24
     with pytest.raises(ValueError, match="greater than or equal to 1"):
-        IceduckSettings(**_BASE, snapshot_retention_hours=0)
+        DuckLakeIcebergSettings(**_BASE, snapshot_retention_hours=0)
 
 
 def test_pyiceberg_max_workers_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
     """No flag; ``PYICEBERG_MAX_WORKERS`` > YAML > default 8."""
     monkeypatch.delenv("PYICEBERG_MAX_WORKERS", raising=False)
-    monkeypatch.delenv("ICEDUCK_PYICEBERG_MAX_WORKERS", raising=False)
-    assert IceduckSettings(**_BASE).pyiceberg_max_workers == 8
+    monkeypatch.delenv("DUCKLAKE_ICEBERG_PYICEBERG_MAX_WORKERS", raising=False)
+    assert DuckLakeIcebergSettings(**_BASE).pyiceberg_max_workers == 8
     monkeypatch.setenv("PYICEBERG_MAX_WORKERS", "3")
-    assert IceduckSettings(**_BASE).pyiceberg_max_workers == 3
+    assert DuckLakeIcebergSettings(**_BASE).pyiceberg_max_workers == 3
     monkeypatch.delenv("PYICEBERG_MAX_WORKERS")
-    monkeypatch.setenv("ICEDUCK_PYICEBERG_MAX_WORKERS", "5")
-    assert IceduckSettings(**_BASE).pyiceberg_max_workers == 5
+    monkeypatch.setenv("DUCKLAKE_ICEBERG_PYICEBERG_MAX_WORKERS", "5")
+    assert DuckLakeIcebergSettings(**_BASE).pyiceberg_max_workers == 5

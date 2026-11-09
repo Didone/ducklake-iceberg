@@ -21,9 +21,9 @@ from pathlib import Path
 import duckdb
 import pytest
 
-from iceduck.config import IceduckSettings
+from ducklake_iceberg.config import DuckLakeIcebergSettings
 
-SettingsFactory = Callable[..., IceduckSettings]
+SettingsFactory = Callable[..., DuckLakeIcebergSettings]
 Writer = Callable[[str], None]
 
 
@@ -52,7 +52,7 @@ class CatalogHarness:
         finally:
             con.close()
 
-    def settings(self, **overrides: object) -> IceduckSettings:
+    def settings(self, **overrides: object) -> DuckLakeIcebergSettings:
         base: dict[str, object] = {
             "catalog_dsn": self.dsn,
             "data_path": self.data_path,
@@ -61,7 +61,7 @@ class CatalogHarness:
             "aws_region": "sa-east-1",
         }
         base.update(overrides)
-        return IceduckSettings(**base)  # type: ignore[arg-type]
+        return DuckLakeIcebergSettings(**base)  # type: ignore[arg-type]
 
     def meta_exec(self, sql: str) -> None:
         """Run SQL directly against the metadata database, to forge states.
@@ -223,11 +223,11 @@ def aws_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def cli_env_for(harness: CatalogHarness) -> dict[str, str]:
-    """ICEDUCK_* variables for the CLI, with data_path equal to the catalog's."""
+    """DUCKLAKE_ICEBERG_* variables for the CLI; data_path equals the catalog's."""
     return {
-        "ICEDUCK_CATALOG_DSN": harness.dsn,
-        "ICEDUCK_DATA_PATH": harness.data_path,
-        "ICEDUCK_ICEBERG_METADATA_PREFIX": "/local/iceberg",
-        "ICEDUCK_GLUE_DATABASE": "analytics",
-        "ICEDUCK_AWS_REGION": "sa-east-1",
+        "DUCKLAKE_ICEBERG_CATALOG_DSN": harness.dsn,
+        "DUCKLAKE_ICEBERG_DATA_PATH": harness.data_path,
+        "DUCKLAKE_ICEBERG_ICEBERG_METADATA_PREFIX": "/local/iceberg",
+        "DUCKLAKE_ICEBERG_GLUE_DATABASE": "analytics",
+        "DUCKLAKE_ICEBERG_AWS_REGION": "sa-east-1",
     }

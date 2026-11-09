@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from iceduck.sync.state import (
+from ducklake_iceberg.sync.state import (
     PROP_DATA_PATH,
     PROP_ICEBERG_SNAPSHOT_ID,
     PROP_SNAPSHOT_ID,

@@ -10,9 +10,9 @@ from datetime import datetime
 
 import pytest
 
-from iceduck.catalog import reader as rdr
-from iceduck.catalog.connection import open_catalog
-from iceduck.errors import CatalogError, IdentityError
+from ducklake_iceberg.catalog import reader as rdr
+from ducklake_iceberg.catalog.connection import open_catalog
+from ducklake_iceberg.errors import CatalogError, IdentityError
 from tests.integration.conftest import CatalogHarness
 
 pytestmark = pytest.mark.integration

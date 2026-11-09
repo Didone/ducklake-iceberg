@@ -21,9 +21,9 @@ from moto import mock_aws
 from pyiceberg.catalog.glue import GlueCatalog
 from pyiceberg.io.pyarrow import PyArrowFileIO
 
-from iceduck import s3
-from iceduck.errors import ExitCode
-from iceduck.maintenance import (
+from ducklake_iceberg import s3
+from ducklake_iceberg.errors import ExitCode
+from ducklake_iceberg.maintenance import (
     CleanError,
     OrphanKind,
     Reachable,
@@ -33,8 +33,8 @@ from iceduck.maintenance import (
     reachable_from,
     validate_grace,
 )
-from iceduck.maintenance.orphans import CleanReport, OrphanCandidate
-from iceduck.s3 import (
+from ducklake_iceberg.maintenance.orphans import CleanReport, OrphanCandidate
+from ducklake_iceberg.s3 import (
     LocalStore,
     PrefixGuardError,
     PrefixOverlapError,
@@ -75,7 +75,7 @@ def test_canonical_and_is_under() -> None:
         ("s3://b/t/metadata/x-m0.avro", OrphanKind.MANIFEST),
         (f"s3://b/t/deletes/{KEY}-{UUID}-deletes.parquet", OrphanKind.POSITION_DELETE),
         ("s3://b/t/data/x.parquet", OrphanKind.UNKNOWN),
-        ("s3://b/t/_iceduck_last_export.json", OrphanKind.UNKNOWN),
+        ("s3://b/t/_ducklake_iceberg_last_export.json", OrphanKind.UNKNOWN),
         ("s3://b/t/_locks/sync.lock.json", OrphanKind.UNKNOWN),
         ("/x/t/metadata/v1.metadata.json.crc", OrphanKind.UNKNOWN),
     ],
@@ -184,7 +184,7 @@ def test_find_orphans_decisions() -> None:
         _obj("s3://b/t/metadata/v2.metadata.json"),
         _obj("s3://b/t/metadata/v3.metadata.json", age=timedelta(minutes=10)),
         _obj("s3://b/t/metadata/v4.metadata.json", age=-DAY),
-        _obj("s3://b/t/_iceduck_last_export.json", age=10 * DAY),
+        _obj("s3://b/t/_ducklake_iceberg_last_export.json", age=10 * DAY),
     ]
     out = find_orphans(objs, reachable, grace=DAY, now=NOW)
     by_name = {c.obj.key.rsplit("/", 1)[-1]: c for c in out}
@@ -193,8 +193,8 @@ def test_find_orphans_decisions() -> None:
     assert by_name["v2.metadata.json"].deletable
     assert by_name["v3.metadata.json"].reason.startswith("within the grace period")
     assert "future" in by_name["v4.metadata.json"].reason
-    assert not by_name["_iceduck_last_export.json"].deletable
-    assert out[0].obj.key.endswith("_iceduck_last_export.json")
+    assert not by_name["_ducklake_iceberg_last_export.json"].deletable
+    assert out[0].obj.key.endswith("_ducklake_iceberg_last_export.json")
 
 
 # -- S3Store (moto) -------------------------------------------------------------

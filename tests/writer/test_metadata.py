@@ -39,10 +39,10 @@ from pyiceberg.types import (
     StringType,
 )
 
-from iceduck.writer.avro import manifest_list_name, manifest_name
-from iceduck.writer.manifest import write_manifest
-from iceduck.writer.manifest_list import write_manifest_list
-from iceduck.writer.metadata import (
+from ducklake_iceberg.writer.avro import manifest_list_name, manifest_name
+from ducklake_iceberg.writer.manifest import write_manifest
+from ducklake_iceberg.writer.manifest_list import write_manifest_list
+from ducklake_iceberg.writer.metadata import (
     DuckLakeProvenance,
     InvalidLocationError,
     MetadataError,
@@ -52,7 +52,7 @@ from iceduck.writer.metadata import (
     validate_counters,
     write_metadata_json,
 )
-from iceduck.writer.stats import FileToExport, build_data_file
+from ducklake_iceberg.writer.stats import FileToExport, build_data_file
 
 
 def _schema() -> Schema:
@@ -285,7 +285,7 @@ def test_ducklake_properties(tmp_path: Path) -> None:
     assert props["ducklake.schema-version"] == "0"
     assert props["ducklake.table"] == "orders"
     assert props["write.format.default"] == "parquet"
-    assert "iceduck.version" in props
+    assert "ducklake_iceberg.version" in props
 
 
 def test_iceberg_snapshot_id_differs_from_ducklake(tmp_path: Path) -> None:

@@ -8,14 +8,14 @@ import logging
 import pyarrow as pa
 import pytest
 
-from iceduck.deletes import visibility as vis
-from iceduck.deletes.reader import (
+from ducklake_iceberg.deletes import visibility as vis
+from ducklake_iceberg.deletes.reader import (
     POSITIONS_SCHEMA,
     DeleteOrigin,
     DeleteSet,
     DuckLakeDeleteFile,
 )
-from iceduck.errors import ExitCode
+from ducklake_iceberg.errors import ExitCode
 
 _A = "/d/a.parquet"
 _B = "/d/b.parquet"
@@ -157,7 +157,7 @@ def test_dangling_drop_reports_data_file_ids(caplog: pytest.LogCaptureFixture) -
         ],
         (live, gone),
     )
-    with caplog.at_level(logging.WARNING, logger="iceduck.deletes.visibility"):
+    with caplog.at_level(logging.WARNING, logger="ducklake_iceberg.deletes.visibility"):
         t, report = vis.filter_visible(ds, snapshot_id=6, live_data_files={_A})
     assert t.num_rows == 1
     assert report.rows_dropped_dangling == 2
@@ -200,7 +200,7 @@ def test_dedupe_keeps_smallest_snapshot(caplog: pytest.LogCaptureFixture) -> Non
         ],
         (f,),
     )
-    with caplog.at_level(logging.INFO, logger="iceduck.deletes.visibility"):
+    with caplog.at_level(logging.INFO, logger="ducklake_iceberg.deletes.visibility"):
         t, report = vis.filter_visible(ds, snapshot_id=6, live_data_files={_A, _B})
     assert [
         (r["data_file_path"], r["pos"], r["snapshot_id"]) for r in t.to_pylist()

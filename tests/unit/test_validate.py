@@ -1,12 +1,12 @@
-"""Pure rules of ``iceduck.validate``."""
+"""Pure rules of ``ducklake_iceberg.validate``."""
 
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
 
-from iceduck.errors import ExitCode
-from iceduck.validate import (
+from ducklake_iceberg.errors import ExitCode
+from ducklake_iceberg.validate import (
     CheckId,
     CheckResult,
     CheckStatus,
@@ -87,9 +87,9 @@ def test_sample_classification_row_missing_and_row_extra() -> None:
 
 
 def test_inlined_hint_points_to_checkpoint() -> None:
-    """Rows in DuckLake and an empty manifest point to ``iceduck checkpoint``."""
+    """Rows in DuckLake and an empty manifest point to the checkpoint command."""
     hints = _row_count_hints(10, 0, 0, None)
-    assert any("iceduck checkpoint" in hint for hint in hints)
+    assert any("ducklake-iceberg checkpoint" in hint for hint in hints)
     assert not any("--deep" in hint for hint in hints)
 
 

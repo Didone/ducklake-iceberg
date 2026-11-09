@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from iceduck.errors import (
+from ducklake_iceberg.errors import (
     AwsError,
     CatalogError,
     CompatibilityError,
     ConfigError,
     DivergenceError,
+    DuckLakeIcebergError,
     ExitCode,
-    IceduckError,
     IdentityError,
     NothingToDo,
 )
@@ -28,7 +28,7 @@ def test_exit_code_values() -> None:
 @pytest.mark.parametrize(
     ("exc_type", "expected"),
     [
-        (IceduckError, ExitCode.ERROR),
+        (DuckLakeIcebergError, ExitCode.ERROR),
         (ConfigError, ExitCode.ERROR),
         (CatalogError, ExitCode.ERROR),
         (IdentityError, ExitCode.ERROR),
@@ -39,7 +39,7 @@ def test_exit_code_values() -> None:
     ],
 )
 def test_exit_code_per_exception(
-    exc_type: type[IceduckError], expected: ExitCode
+    exc_type: type[DuckLakeIcebergError], expected: ExitCode
 ) -> None:
     exc = exc_type("boom")
     assert exc.exit_code == expected
@@ -53,7 +53,7 @@ def test_message_and_hint() -> None:
 
 
 def test_hint_defaults_to_none() -> None:
-    assert IceduckError("x").hint is None
+    assert DuckLakeIcebergError("x").hint is None
 
 
 def test_identity_is_a_catalog_error() -> None:
@@ -61,7 +61,7 @@ def test_identity_is_a_catalog_error() -> None:
 
 
 def test_new_subclass_without_exit_code_inherits_error() -> None:
-    class BrandNewError(IceduckError):
+    class BrandNewError(DuckLakeIcebergError):
         pass
 
     assert BrandNewError("x").exit_code == ExitCode.ERROR

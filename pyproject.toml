@@ -1,5 +1,5 @@
 [project]
-name = "iceduck"
+name = "ducklake-iceberg"
 version = "0.1.0"
 description = "Publish DuckLake tables as Apache Iceberg v2 tables in AWS Glue, without copying data"
 readme = "README.md"
@@ -39,7 +39,7 @@ dependencies = [
     "rich (>=15.0.0,<16.0.0)",
     # Exact versions: DuckDB extensions are published per DuckDB version and
     # the writer relies on internal PyIceberg constructors. Bumping either one
-    # also requires updating `iceduck.deps` (tests marked `pins`).
+    # also requires updating `ducklake_iceberg.deps` (tests marked `pins`).
     "duckdb (==2.0.0)",
     "pyiceberg[glue,s3fs] (==0.12.0)",
     "fastavro (>=1.13.1,<2.0.0)",
@@ -49,19 +49,19 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Didone/iceduck"
-Repository = "https://github.com/Didone/iceduck"
-Issues = "https://github.com/Didone/iceduck/issues"
-Changelog = "https://github.com/Didone/iceduck/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/Didone/ducklake-iceberg"
+Repository = "https://github.com/Didone/ducklake-iceberg"
+Issues = "https://github.com/Didone/ducklake-iceberg/issues"
+Changelog = "https://github.com/Didone/ducklake-iceberg/blob/main/CHANGELOG.md"
 
 [project.scripts]
-iceduck = "iceduck.cli:app"
+ducklake-iceberg = "ducklake_iceberg.cli:app"
 
 [tool.poetry]
-packages = [{ include = "iceduck", from = "src" }]
+packages = [{ include = "ducklake_iceberg", from = "src" }]
 include = [
-    { path = "src/iceduck/py.typed", format = ["sdist", "wheel"] },
-    { path = "src/iceduck/schemas/*.json", format = ["sdist", "wheel"] },
+    { path = "src/ducklake_iceberg/py.typed", format = ["sdist", "wheel"] },
+    { path = "src/ducklake_iceberg/schemas/*.json", format = ["sdist", "wheel"] },
     { path = "CHANGELOG.md", format = "sdist" },
 ]
 
@@ -118,38 +118,38 @@ ignore = ["S101"]  # assert is legitimate in tests
 # `UnsupportedFormatVersion`, `TableAlreadyRegistered`, `LakeFormationBlocked`
 # and `RegisterDiverged` are part of the documented public contract; the
 # "Error" suffix required by N818 would break it.
-"src/iceduck/errors.py" = ["N818"]
-"src/iceduck/writer/stats.py" = ["N818"]
-"src/iceduck/writer/avro.py" = ["N818"]
-"src/iceduck/glue.py" = ["N818"]
+"src/ducklake_iceberg/errors.py" = ["N818"]
+"src/ducklake_iceberg/writer/stats.py" = ["N818"]
+"src/ducklake_iceberg/writer/avro.py" = ["N818"]
+"src/ducklake_iceberg/glue.py" = ["N818"]
 # S105: `S3_SECRET` is the *name* of a DuckDB secret, not a credential.
 # S608: DuckDB cannot bind identifiers, so the queries interpolate only
 # `metadata_catalog`/`catalog_alias`, which are validated as SQL identifiers
 # when the configuration is loaded (or quoted with `quote_ident`).
-"src/iceduck/catalog/connection.py" = ["S105", "S608"]
+"src/ducklake_iceberg/catalog/connection.py" = ["S105", "S608"]
 # S608 (all entries below): the modules interpolate only identifiers that are
 # validated at configuration load time or escaped with `quote_ident` (the
 # metadata catalog alias, schema/table names read from the DuckLake catalog and
 # fixed maintenance function names). User-provided values always travel as
 # named parameters.
-"src/iceduck/catalog/reader.py" = ["S608"]
-"src/iceduck/catalog/files.py" = ["S608"]
-"src/iceduck/doctor/rules/*.py" = ["S608"]
-"src/iceduck/checkpoint/command.py" = ["S608"]
-"src/iceduck/checkpoint/detect.py" = ["S608"]
-"src/iceduck/checkpoint/revalidate.py" = ["S608"]
-"src/iceduck/checkpoint/variant.py" = ["S608"]
-"src/iceduck/checkpoint/dry_run.py" = ["S608"]
-"src/iceduck/checkpoint/report.py" = ["S608"]
-"src/iceduck/checkpoint/partitions.py" = ["S608"]
+"src/ducklake_iceberg/catalog/reader.py" = ["S608"]
+"src/ducklake_iceberg/catalog/files.py" = ["S608"]
+"src/ducklake_iceberg/doctor/rules/*.py" = ["S608"]
+"src/ducklake_iceberg/checkpoint/command.py" = ["S608"]
+"src/ducklake_iceberg/checkpoint/detect.py" = ["S608"]
+"src/ducklake_iceberg/checkpoint/revalidate.py" = ["S608"]
+"src/ducklake_iceberg/checkpoint/variant.py" = ["S608"]
+"src/ducklake_iceberg/checkpoint/dry_run.py" = ["S608"]
+"src/ducklake_iceberg/checkpoint/report.py" = ["S608"]
+"src/ducklake_iceberg/checkpoint/partitions.py" = ["S608"]
 # S105: `pass` is a validation status, not a credential.
-"src/iceduck/validate.py" = ["S105", "S608"]
-"src/iceduck/retention.py" = ["S608"]
-"src/iceduck/maintenance/ducklake_cleanup.py" = ["S608"]
-"src/iceduck/deletes/reader.py" = ["S608"]
-"src/iceduck/deletes/materialize.py" = ["S608"]
-"src/iceduck/export.py" = ["S608"]
-"src/iceduck/writer/catalog_stats.py" = ["S608"]
+"src/ducklake_iceberg/validate.py" = ["S105", "S608"]
+"src/ducklake_iceberg/retention.py" = ["S608"]
+"src/ducklake_iceberg/maintenance/ducklake_cleanup.py" = ["S608"]
+"src/ducklake_iceberg/deletes/reader.py" = ["S608"]
+"src/ducklake_iceberg/deletes/materialize.py" = ["S608"]
+"src/ducklake_iceberg/export.py" = ["S608"]
+"src/ducklake_iceberg/writer/catalog_stats.py" = ["S608"]
 # E501, SIM102: end-to-end tests may use long lines and nested ifs for clarity.
 "tests/e2e/*.py" = ["E501", "SIM102"]
 
@@ -181,7 +181,7 @@ addopts = [
     "--strict-markers",
     "--strict-config",
     "-ra",
-    "--cov=iceduck",
+    "--cov=ducklake_iceberg",
     "--cov-report=term-missing",
     "--cov-fail-under=85",
 ]
@@ -191,7 +191,7 @@ markers = [
     "minio: requires a MinIO container (testcontainers + Docker; skipped without Docker)",
     "aws: requires simulated S3/Glue (moto)",
     "e2e: requires a real AWS account; never runs in CI",
-    "roundtrip: iceduck writer output read back by the PyIceberg reader",
+    "roundtrip: ducklake-iceberg writer output read back by the PyIceberg reader",
     "pins: pinned versions of DuckDB, its extensions and PyIceberg",
 ]
 filterwarnings = ["error"]

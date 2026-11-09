@@ -14,14 +14,14 @@ from __future__ import annotations
 
 import pytest
 
-from iceduck.catalog.connection import open_catalog
-from iceduck.catalog.reader import (
+from ducklake_iceberg.catalog.connection import open_catalog
+from ducklake_iceberg.catalog.reader import (
     current_snapshot,
     parse_table_ref,
     resolve_table,
 )
-from iceduck.doctor.model import DoctorContext, DoctorTarget, Finding
-from iceduck.doctor.rules import (
+from ducklake_iceberg.doctor.model import DoctorContext, DoctorTarget, Finding
+from ducklake_iceberg.doctor.rules import (
     calendar_transform,
     inlined_data,
     partial_files,
@@ -234,7 +234,7 @@ def test_calendar_transform_identity_passes(catalog: CatalogHarness) -> None:
 # mapping-divergence / encryption-key: negative path (known syntax)
 # --------------------------------------------------------------------------
 def test_mapping_divergence_clean_passes(catalog: CatalogHarness) -> None:
-    from iceduck.doctor.rules import mapping_divergence
+    from ducklake_iceberg.doctor.rules import mapping_divergence
 
     catalog.write("CREATE SCHEMA IF NOT EXISTS lake.main")
     catalog.write("CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR)")
@@ -249,7 +249,7 @@ def test_mapping_divergence_clean_passes(catalog: CatalogHarness) -> None:
 
 
 def test_encryption_key_clean_passes(catalog: CatalogHarness) -> None:
-    from iceduck.doctor.rules import encryption_key
+    from ducklake_iceberg.doctor.rules import encryption_key
 
     catalog.write("CREATE SCHEMA IF NOT EXISTS lake.main")
     catalog.write("CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR)")

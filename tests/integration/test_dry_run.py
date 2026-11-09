@@ -14,11 +14,11 @@ import duckdb
 import pytest
 from typer.testing import CliRunner
 
-from iceduck.catalog.connection import open_catalog
-from iceduck.checkpoint.command import run_checkpoint
-from iceduck.checkpoint.dry_run import DryRunReport
-from iceduck.cli import app
-from iceduck.errors import ExitCode
+from ducklake_iceberg.catalog.connection import open_catalog
+from ducklake_iceberg.checkpoint.command import run_checkpoint
+from ducklake_iceberg.checkpoint.dry_run import DryRunReport
+from ducklake_iceberg.cli import app
+from ducklake_iceberg.errors import ExitCode
 from tests.integration.conftest import CatalogHarness, cli_env_for
 
 pytestmark = [pytest.mark.integration]
@@ -85,7 +85,7 @@ def test_dry_run_executes_no_write_sql(
 def test_dry_run_never_opens_write_connection(
     seeded_catalog: CatalogHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from iceduck.catalog.connection import open_catalog as real
+    from ducklake_iceberg.catalog.connection import open_catalog as real
 
     modes: list[bool] = []
 
@@ -94,8 +94,8 @@ def test_dry_run_never_opens_write_connection(
         return real(cfg, read_only=read_only, s3=s3)
 
     # the READ_ONLY phase opens via `metadata_catalog`; the write phase directly
-    monkeypatch.setattr("iceduck.catalog.connection.open_catalog", spy)
-    monkeypatch.setattr("iceduck.checkpoint.command.open_catalog", spy)
+    monkeypatch.setattr("ducklake_iceberg.catalog.connection.open_catalog", spy)
+    monkeypatch.setattr("ducklake_iceberg.checkpoint.command.open_catalog", spy)
     run_checkpoint(seeded_catalog.settings(), table="main.pedidos", dry_run=True)
     assert modes == [True]  # a single connection, and READ_ONLY
 

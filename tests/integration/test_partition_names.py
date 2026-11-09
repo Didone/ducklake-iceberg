@@ -1,6 +1,6 @@
 """Partition field names follow the Iceberg convention, end to end.
 
-Real DuckLake -> ``iceduck sync`` -> moto Glue, metadata under a local prefix
+Real DuckLake -> ``ducklake-iceberg sync`` -> moto Glue, metadata under a local prefix
 (same setup as ``test_validate``). Checks the name published in the
 ``metadata.json`` and that the names of already published specs are preserved.
 """
@@ -25,7 +25,7 @@ from pyiceberg.catalog.glue import GlueCatalog
 from pyiceberg.table import Table
 from typer.testing import CliRunner
 
-from iceduck.cli import app
+from ducklake_iceberg.cli import app
 
 from .conftest import CatalogHarness
 
@@ -37,15 +37,15 @@ REGION = "us-east-1"
 
 @pytest.fixture
 def glue_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    monkeypatch.setenv("ICEDUCK_STATE_DIR", str(tmp_path / "state"))
-    with mock_aws(), mock.patch("iceduck.glue._validate_metadata_location"):
+    monkeypatch.setenv("DUCKLAKE_ICEBERG_STATE_DIR", str(tmp_path / "state"))
+    with mock_aws(), mock.patch("ducklake_iceberg.glue._validate_metadata_location"):
         yield
 
 
 @pytest.fixture
 def config(catalog: CatalogHarness, tmp_path: Path) -> Path:
     catalog.write("CALL lake.set_option('data_inlining_row_limit', 0)")
-    path = tmp_path / "iceduck.yaml"
+    path = tmp_path / "ducklake-iceberg.yaml"
     path.write_text(
         f"catalog_dsn: '{catalog.dsn}'\n"
         f"data_path: '{catalog.data_path}'\n"

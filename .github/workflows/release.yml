@@ -43,10 +43,10 @@ jobs:
         run: |
           python -m venv /tmp/wheel-venv
           /tmp/wheel-venv/bin/pip install dist/*.whl
-          /tmp/wheel-venv/bin/iceduck --version
+          /tmp/wheel-venv/bin/ducklake-iceberg --version
       - uses: actions/upload-artifact@v4
         with:
-          name: iceduck-${{ github.ref_name }}
+          name: ducklake-iceberg-${{ github.ref_name }}
           path: dist/*
           if-no-files-found: error
 
@@ -65,10 +65,10 @@ jobs:
             --build-arg REVISION="$GITHUB_SHA" \
             --build-arg SOURCE="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             --build-arg CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            -t "iceduck:$VERSION" .
+            -t "ducklake-iceberg:$VERSION" .
       - name: Smoke test (offline, non-root, labels)
         run: |
-          image="iceduck:$VERSION"
+          image="ducklake-iceberg:$VERSION"
           docker run --rm --network none "$image" doctor --help
           docker run --rm --network none "$image" --version
           test "$(docker run --rm --network none --entrypoint id "$image" -u)" = 10001
@@ -81,13 +81,13 @@ jobs:
     needs: [build, container-smoke]
     environment:
       name: pypi
-      url: https://pypi.org/project/iceduck/${{ needs.build.outputs.version }}/
+      url: https://pypi.org/project/ducklake-iceberg/${{ needs.build.outputs.version }}/
     permissions:
       id-token: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: iceduck-${{ github.ref_name }}
+          name: ducklake-iceberg-${{ github.ref_name }}
           path: dist
       - uses: pypa/gh-action-pypi-publish@release/v1
 
@@ -101,7 +101,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v4
         with:
-          name: iceduck-${{ github.ref_name }}
+          name: ducklake-iceberg-${{ github.ref_name }}
           path: dist
       - name: Create the release
         env:

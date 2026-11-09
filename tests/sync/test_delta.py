@@ -8,9 +8,9 @@ from typing import Any
 
 import pytest
 
-from iceduck.catalog.connection import DuckLakeConnection, open_catalog
-from iceduck.catalog.files import PathLayers, read_path_layers
-from iceduck.sync.delta import (
+from ducklake_iceberg.catalog.connection import DuckLakeConnection, open_catalog
+from ducklake_iceberg.catalog.files import PathLayers, read_path_layers
+from ducklake_iceberg.sync.delta import (
     CatalogRewoundError,
     CompatibilityBlockerError,
     CrossCheckError,

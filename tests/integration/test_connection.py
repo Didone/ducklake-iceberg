@@ -12,14 +12,14 @@ from pathlib import Path
 import pyarrow as pa
 import pytest
 
-from iceduck.catalog.connection import (
+from ducklake_iceberg.catalog.connection import (
     DuckLakeConnection,
     _backend_of,
     _escape,
     _quote,
     open_catalog,
 )
-from iceduck.errors import AwsError, CatalogError
+from ducklake_iceberg.errors import AwsError, CatalogError
 from tests.integration.conftest import CatalogHarness, _make_sqlite
 
 pytestmark = pytest.mark.integration
@@ -144,7 +144,7 @@ def test_missing_aws_profile_fails(catalog: CatalogHarness) -> None:
     settings = catalog.settings(
         data_path="s3://bucket/ducklake/data/",
         iceberg_metadata_prefix="s3://bucket/iceberg/",
-        aws_profile="nonexistent_profile_iceduck_xyz",
+        aws_profile="nonexistent_profile_ducklake_iceberg_xyz",
     )
     with pytest.raises(AwsError) as exc:
         open_catalog(settings)
@@ -186,7 +186,7 @@ def test_secret_created_for_s3(catalog: CatalogHarness) -> None:
         aws_profile=profile,
     )
     with open_catalog(settings) as con:
-        assert "iceduck_s3" in con.environment().secrets
+        assert "ducklake_iceberg_s3" in con.environment().secrets
 
 
 def test_secret_chain_includes_sso(
@@ -224,7 +224,7 @@ def test_secret_chain_includes_sso(
 
 def test_no_secret_without_s3(catalog: CatalogHarness) -> None:
     with open_catalog(catalog.settings()) as con:
-        assert "iceduck_s3" not in con.environment().secrets
+        assert "ducklake_iceberg_s3" not in con.environment().secrets
 
 
 # --- pure helpers (backend independent) --------------------------------------

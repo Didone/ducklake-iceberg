@@ -1,11 +1,11 @@
-# iceduck
+# ducklake-iceberg
 
-[![CI](https://github.com/Didone/iceduck/actions/workflows/ci.yml/badge.svg)](https://github.com/Didone/iceduck/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/iceduck.svg)](https://pypi.org/project/iceduck/)
-[![Python](https://img.shields.io/pypi/pyversions/iceduck.svg)](https://pypi.org/project/iceduck/)
+[![CI](https://github.com/Didone/ducklake-iceberg/actions/workflows/ci.yml/badge.svg)](https://github.com/Didone/ducklake-iceberg/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/ducklake-iceberg.svg)](https://pypi.org/project/ducklake-iceberg/)
+[![Python](https://img.shields.io/pypi/pyversions/ducklake-iceberg.svg)](https://pypi.org/project/ducklake-iceberg/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**iceduck** is a command-line tool that publishes
+**ducklake-iceberg** is a command-line tool that publishes
 [DuckLake](https://ducklake.select/) tables as **Apache Iceberg v2** tables in
 the **AWS Glue Data Catalog**, **without copying any data**. The Iceberg
 manifests point directly at the Parquet files DuckLake already wrote, so
@@ -14,7 +14,7 @@ Spark, ...) can query tables that are managed by DuckDB.
 
 ```text
 ┌──────────┐      ┌──────────┐      ┌───────────────┐      ┌──────────┐
-│ DuckLake │─────▶│ iceduck  │─────▶│ S3 (Iceberg   │─────▶│   Glue   │
+│ DuckLake │─────▶│ ducklake-iceberg  │─────▶│ S3 (Iceberg   │─────▶│   Glue   │
 │ catalog  │      │   CLI    │      │   metadata)   │      │ catalog  │
 └──────────┘      └──────────┘      └───────────────┘      └──────────┘
       │                                                          │
@@ -24,7 +24,7 @@ Spark, ...) can query tables that are managed by DuckDB.
 ## Features
 
 - **Zero-copy.** Only Iceberg metadata is written. Data Parquet files are
-  never copied, moved or deleted by iceduck.
+  never copied, moved or deleted by ducklake-iceberg.
 - **Incremental sync.** Each `sync` publishes one new Iceberg snapshot
   (`append`, `delete`, `overwrite` or `replace`) and reuses the manifests that
   did not change. When nothing changed, it exits with code 4 and writes
@@ -55,24 +55,24 @@ relies on internal PyIceberg constructors.
 ## Installation
 
 ```bash
-pip install iceduck
+pip install ducklake-iceberg
 # or, as an isolated command-line tool
-pipx install iceduck
-uv tool install iceduck
+pipx install ducklake-iceberg
+uv tool install ducklake-iceberg
 ```
 
 Check the installation:
 
 ```bash
-iceduck --version
+ducklake-iceberg --version
 ```
 
 ## Configuration
 
-Settings are resolved in this order: **CLI flag > `ICEDUCK_*` environment
+Settings are resolved in this order: **CLI flag > `DUCKLAKE_ICEBERG_*` environment
 variable > YAML file > default**. The YAML file is the one given by `--config`,
-then `ICEDUCK_CONFIG_FILE`, then `./iceduck.yaml` or the user config
-directory (`~/.config/iceduck/config.yaml`).
+then `DUCKLAKE_ICEBERG_CONFIG_FILE`, then `./ducklake-iceberg.yaml` or the user config
+directory (`~/.config/ducklake-iceberg/config.yaml`).
 
 ```yaml
 # DuckLake catalog. Never put credentials in the DSN: use the libpq PG*
@@ -104,41 +104,41 @@ duckdb_memory_limit: null         # DuckDB memory limit
 duckdb_extension_directory: null  # pre-installed extensions (read-only HOME)
 ```
 
-The same keys are available as environment variables with the `ICEDUCK_`
+The same keys are available as environment variables with the `DUCKLAKE_ICEBERG_`
 prefix:
 
 ```bash
-export ICEDUCK_CATALOG_DSN="ducklake:postgres:dbname=lake host=pg.internal"
-export ICEDUCK_DATA_PATH="s3://my-bucket/ducklake/data/"
-export ICEDUCK_ICEBERG_METADATA_PREFIX="s3://my-bucket/iceberg/"
-export ICEDUCK_GLUE_DATABASE="my_database"
-export ICEDUCK_AWS_REGION="us-east-1"
+export DUCKLAKE_ICEBERG_CATALOG_DSN="ducklake:postgres:dbname=lake host=pg.internal"
+export DUCKLAKE_ICEBERG_DATA_PATH="s3://my-bucket/ducklake/data/"
+export DUCKLAKE_ICEBERG_ICEBERG_METADATA_PREFIX="s3://my-bucket/iceberg/"
+export DUCKLAKE_ICEBERG_GLUE_DATABASE="my_database"
+export DUCKLAKE_ICEBERG_AWS_REGION="us-east-1"
 ```
 
 ## Quick start
 
 ```bash
 # Run the whole pipeline for one table: doctor + checkpoint + export + register
-iceduck sync --table sales.orders
+ducklake-iceberg sync --table sales.orders
 
 # Inspect the result
-iceduck status --table sales.orders
+ducklake-iceberg status --table sales.orders
 ```
 
 Or step by step:
 
 ```bash
-iceduck doctor     --table sales.orders   # Iceberg v2 compatibility pre-flight
-iceduck checkpoint --table sales.orders   # flush inlined data (DuckLake)
-iceduck export     --table sales.orders   # write Iceberg metadata to S3
-iceduck register   --table sales.orders   # create/update the table in Glue
+ducklake-iceberg doctor     --table sales.orders   # Iceberg v2 compatibility pre-flight
+ducklake-iceberg checkpoint --table sales.orders   # flush inlined data (DuckLake)
+ducklake-iceberg export     --table sales.orders   # write Iceberg metadata to S3
+ducklake-iceberg register   --table sales.orders   # create/update the table in Glue
 ```
 
 ## Commands
 
 Every command accepts `--table schema.table` or `--all-tables` (optionally
 restricted with `--schema`), `--json`, `--profile`, `--config`, `--log-level`
-and `--log-format`. Use `iceduck <command> --help` for the full option list.
+and `--log-format`. Use `ducklake-iceberg <command> --help` for the full option list.
 
 | Command      | What it does |
 | ------------ | ------------ |
@@ -155,29 +155,29 @@ and `--log-format`. Use `iceduck <command> --help` for the full option list.
 
 ```bash
 # Dry run: show what would happen without writing anything
-iceduck sync --table sales.orders --dry-run
+ducklake-iceberg sync --table sales.orders --dry-run
 
 # All tables of a schema, no confirmation prompt
-iceduck sync --all-tables --schema sales --yes
+ducklake-iceberg sync --all-tables --schema sales --yes
 
 # Full checkpoint (expire + merge + rewrite) before exporting
-iceduck sync --table sales.orders --compact
+ducklake-iceberg sync --table sales.orders --compact
 
 # Publish Glue column statistics for the query planner
-iceduck sync --table sales.orders --glue-stats on
+ducklake-iceberg sync --table sales.orders --glue-stats on
 
 # Concurrency limits and fail-fast
-iceduck sync --all-tables --yes --max-table-workers 4 --fail-fast
+ducklake-iceberg sync --all-tables --yes --max-table-workers 4 --fail-fast
 
 # Remove unreachable Iceberg metadata older than 48 hours
-iceduck clean --table sales.orders --grace 48h --apply
+ducklake-iceberg clean --table sales.orders --grace 48h --apply
 ```
 
 By default `sync` only flushes pending inlined data to DuckLake. The full
-compaction (expire + merge + rewrite) runs with `iceduck checkpoint` or
-`iceduck sync --compact`.
+compaction (expire + merge + rewrite) runs with `ducklake-iceberg checkpoint` or
+`ducklake-iceberg sync --compact`.
 
-With `--glue-stats on`, iceduck scans the published DuckLake snapshot and
+With `--glue-stats on`, ducklake-iceberg scans the published DuckLake snapshot and
 sends column statistics to Glue. The scan can read all the data; use
 `--glue-stats-sample 5` to sample 5% of it. Distinct-value counts come from
 `approx_count_distinct` (HyperLogLog), so they are **estimates**.
@@ -191,13 +191,13 @@ Exit codes are part of the public contract.
 | `0`  | Success |
 | `1`  | Error |
 | `2`  | Blocked by the compatibility pre-flight (a command-line usage error also exits with 2; use `--json` to tell them apart) |
-| `3`  | Diverged: the Iceberg table was modified outside of iceduck |
+| `3`  | Diverged: the Iceberg table was modified outside of ducklake-iceberg |
 | `4`  | Nothing to do |
 
 ## JSON output and logs
 
 Any command accepts `--json` and prints a versioned envelope on stdout. The
-schema ships with the package (`iceduck/schemas/envelope-v1.json`). Consumers
+schema ships with the package (`ducklake-iceberg/schemas/envelope-v1.json`). Consumers
 should ignore unknown keys, should not rely on the order of `results[]` or
 `problems[]`, and should decide on `status`, `exit_code` and `problems[].code`
 instead of parsing message text.
@@ -212,7 +212,7 @@ Logs go to stderr, one JSON object per event with `--log-format json`.
 `--metrics` adds per-phase timings and counters (DuckDB connections, boto3
 sessions, AWS calls and retries) to each result, and `sync` includes them by
 default. Credentials, full DSNs and encryption keys are redacted from logs,
-envelopes and terminal output. Setting `ICEDUCK_TIMINGS=1` adds a `timings` key
+envelopes and terminal output. Setting `DUCKLAKE_ICEBERG_TIMINGS=1` adds a `timings` key
 to the `--json` envelope.
 
 ## How it works
@@ -234,8 +234,8 @@ catalog is accessed only through DuckDB, attached read-only except for
 ## Development
 
 ```bash
-git clone https://github.com/Didone/iceduck.git
-cd iceduck
+git clone https://github.com/Didone/ducklake-iceberg.git
+cd ducklake-iceberg
 poetry install
 poetry run pytest -m "not postgres and not e2e and not minio"
 poetry run ruff check .
@@ -248,7 +248,7 @@ and the release process.
 
 ## Releasing
 
-Releases are published to [PyPI](https://pypi.org/project/iceduck/) by the
+Releases are published to [PyPI](https://pypi.org/project/ducklake-iceberg/) by the
 `release` GitHub Actions workflow when a `vX.Y.Z` tag is pushed. The tag must
 match the version in `pyproject.toml`, and `CHANGELOG.md` must contain a
 `## [X.Y.Z]` section. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing).

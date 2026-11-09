@@ -6,9 +6,9 @@ from collections.abc import Iterator
 
 import pytest
 
-from iceduck import aws, concurrency, register, retention, timing
-from iceduck.obs.logging import reset_logging
-from iceduck.obs.redaction import reset_redaction_failures
+from ducklake_iceberg import aws, concurrency, register, retention, timing
+from ducklake_iceberg.obs.logging import reset_logging
+from ducklake_iceberg.obs.redaction import reset_redaction_failures
 
 
 @pytest.fixture(autouse=True)

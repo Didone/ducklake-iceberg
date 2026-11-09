@@ -22,10 +22,10 @@ from pyiceberg.manifest import ManifestContent
 from pyiceberg.table import StaticTable
 from pyiceberg.transforms import BucketTransform, DayTransform
 
-from iceduck.config import IceduckSettings
-from iceduck.errors import CompatibilityError, DivergenceError, ExitCode
-from iceduck.export import ExportResult, run_export
-from iceduck.writer.commit import referenced_data_file
+from ducklake_iceberg.config import DuckLakeIcebergSettings
+from ducklake_iceberg.errors import CompatibilityError, DivergenceError, ExitCode
+from ducklake_iceberg.export import ExportResult, run_export
+from ducklake_iceberg.writer.commit import referenced_data_file
 
 from .conftest import CatalogHarness
 
@@ -38,7 +38,7 @@ class Lake:
     def __init__(self, catalog: CatalogHarness, prefix: Path) -> None:
         self.catalog = catalog
         self.prefix = prefix
-        self.settings: IceduckSettings = catalog.settings(
+        self.settings: DuckLakeIcebergSettings = catalog.settings(
             iceberg_metadata_prefix=str(prefix)
         )
         catalog.write("CALL lake.set_option('data_inlining_row_limit', 0)")
@@ -439,8 +439,8 @@ def test_pointer_tracks_last_export(lake: Lake) -> None:
     assert pointer["metadata_location"] == second.plan.metadata_location
     props = lake.iceberg(second).metadata.properties
     assert props["ducklake.snapshot-id"] == str(second.plan.ducklake_snapshot_id)
-    assert props["iceduck.iceberg-snapshot-id"] == str(second.snapshot_id)
-    assert props["iceduck.sync-mode"] == "incremental"
+    assert props["ducklake_iceberg.iceberg-snapshot-id"] == str(second.snapshot_id)
+    assert props["ducklake_iceberg.sync-mode"] == "incremental"
 
 
 def test_orphan_successor_metadata_is_adopted(lake: Lake) -> None:

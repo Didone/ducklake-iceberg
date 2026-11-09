@@ -1,7 +1,7 @@
 """Acceptance: `doctor` classifies rules per table, with rich output and --json.
 
 `doctor` must correctly classify a set of test tables covering each rule, with
-readable output and --json. These tests exercise the `iceduck doctor` command
+readable output and --json. These tests exercise the `ducklake-iceberg doctor` command
 end to end (CliRunner + SQLite catalog + moto), covering the three verdicts:
 clean (0), inlined-data blocker (2) and type blocker (2).
 """
@@ -15,7 +15,7 @@ import pytest
 from moto import mock_aws
 from typer.testing import CliRunner
 
-from iceduck.cli import app
+from ducklake_iceberg.cli import app
 from tests.integration.conftest import CatalogHarness, cli_env_for
 
 pytestmark = [pytest.mark.integration, pytest.mark.aws]

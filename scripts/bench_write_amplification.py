@@ -4,7 +4,7 @@ Simulates the shape of the PoC S1 CDC load (table ``pedidos``, 85/13/2 mix of
 inserts/updates/deletes, updates concentrated on recent ids, batches applied
 with DELETE + MERGE like ``lambda/consumer.py``, inlining on) against a local
 DuckLake (SQLite catalog, local ``data_path``) and publishes with the real
-``iceduck sync`` to a local Iceberg prefix, using moto's Glue (as in
+``ducklake-iceberg sync`` to a local Iceberg prefix, using moto's Glue (as in
 ``tests/integration/test_sync_e2e.py``). No call goes out to AWS.
 
 Each variant runs in its own process (clean process caches and mock) and
@@ -20,7 +20,7 @@ combines:
 The bytes counted are those of every new file that shows up under the
 ``data_path`` and the Iceberg prefix after the initial load and the first sync
 (nothing is deleted during the run: there is no ``cleanup_old_files`` or
-``iceduck clean``), by class: DuckLake Parquet data, DuckLake delete files,
+``ducklake-iceberg clean``), by class: DuckLake Parquet data, DuckLake delete files,
 Iceberg metadata (``*.metadata.json`` and Avro) and Iceberg position deletes.
 The denominator is the number of generated changes (rows affected by the
 generator's intent).
@@ -344,7 +344,7 @@ def run_variant(name: str, params: Params, root: Path) -> Result:
     from moto import mock_aws
     from typer.testing import CliRunner
 
-    from iceduck.cli import app
+    from ducklake_iceberg.cli import app
 
     compression, materialize, parquet_version = VARIANTS[name]
     result = Result(
@@ -356,7 +356,7 @@ def run_variant(name: str, params: Params, root: Path) -> Result:
     started = time.perf_counter()
     lake = Lake(root)
     iceberg = root / "iceberg"
-    config = root / "iceduck.yaml"
+    config = root / "ducklake-iceberg.yaml"
     config.write_text(
         f"catalog_dsn: '{lake.dsn}'\n"
         f"data_path: '{lake.data_path}'\n"
@@ -368,22 +368,23 @@ def run_variant(name: str, params: Params, root: Path) -> Result:
     roots = (data_root, iceberg)
     runner = CliRunner()
 
-    def iceduck(*args: str) -> int:
+    def run_cli(*args: str) -> int:
         cmd = [*args[:1], "--table", TABLE, "--config", str(config), "--json"]
         out = runner.invoke(app, [*cmd, *args[1:]])
         if out.exit_code not in (0, 4):
             raise SystemExit(
-                f"iceduck {' '.join(args)} exited with {out.exit_code}:\n{out.stdout}"
+                f"ducklake-iceberg {' '.join(args)} exited with "
+                f"{out.exit_code}:\n{out.stdout}"
             )
         key = f"{' '.join(args)}={out.exit_code}"
         result.exit_codes[key] = result.exit_codes.get(key, 0) + 1
         return out.exit_code
 
-    with mock_aws(), mock.patch("iceduck.glue._validate_metadata_location"):
+    with mock_aws(), mock.patch("ducklake_iceberg.glue._validate_metadata_location"):
         lake.setup(
             compression, parquet_version, params.inlining_row_limit, params.initial_rows
         )
-        iceduck("sync")
+        run_cli("sync")
         seen = walk(roots)
 
         def account() -> None:
@@ -416,12 +417,12 @@ def run_variant(name: str, params: Params, root: Path) -> Result:
             result.syncs += 1
             if result.syncs % params.syncs_per_checkpoint == 0:
                 result.checkpoints += 1
-                iceduck(*maintenance)
+                run_cli(*maintenance)
             else:
-                iceduck("sync")
+                run_cli("sync")
             account()
         if params.batches % params.batches_per_sync:
-            iceduck("sync")
+            run_cli("sync")
             result.syncs += 1
             account()
 
@@ -528,7 +529,7 @@ def main() -> None:
     unknown = set(names) - set(VARIANTS)
     if unknown:
         raise SystemExit(f"unknown variants: {sorted(unknown)}")
-    workdir = ns.workdir or Path(tempfile.mkdtemp(prefix="iceduck-wa-"))
+    workdir = ns.workdir or Path(tempfile.mkdtemp(prefix="ducklake-iceberg-wa-"))
     results: list[Result] = []
     forwarded = [
         f"--initial-rows={params.initial_rows}",

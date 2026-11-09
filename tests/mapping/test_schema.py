@@ -18,8 +18,8 @@ from pyiceberg.types import (
     StructType,
 )
 
-from iceduck.doctor.model import Severity
-from iceduck.mapping.schema import (
+from ducklake_iceberg.doctor.model import Severity
+from ducklake_iceberg.mapping.schema import (
     BlockedTypeError,
     DuckLakeColumn,
     SchemaMapping,

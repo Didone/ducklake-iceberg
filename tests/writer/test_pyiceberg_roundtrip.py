@@ -1,6 +1,6 @@
 """Round-trip of the complete writer against PyIceberg's reader.
 
-Version-change gate: using only iceduck's writer, it builds an Iceberg v2
+Version-change gate: using only ducklake-iceberg's writer, it builds an Iceberg v2
 table with **all** the artifacts the export writes (data parquet, position
 delete file, data manifest, delete manifest, manifest list and
 ``metadata.json``) and re-reads each one with PyIceberg's reference reader,
@@ -38,12 +38,12 @@ from pyiceberg.transforms import IdentityTransform
 from pyiceberg.typedef import Record
 from pyiceberg.types import IntegerType, NestedField, StringType
 
-from iceduck.deletes.manifest import write_delete_manifest
-from iceduck.deletes.writer import PositionDelete, write_position_delete_file
-from iceduck.writer.avro import manifest_list_name, manifest_name
-from iceduck.writer.manifest import write_manifest
-from iceduck.writer.manifest_list import write_manifest_list
-from iceduck.writer.metadata import (
+from ducklake_iceberg.deletes.manifest import write_delete_manifest
+from ducklake_iceberg.deletes.writer import PositionDelete, write_position_delete_file
+from ducklake_iceberg.writer.avro import manifest_list_name, manifest_name
+from ducklake_iceberg.writer.manifest import write_manifest
+from ducklake_iceberg.writer.manifest_list import write_manifest_list
+from ducklake_iceberg.writer.metadata import (
     DuckLakeProvenance,
     SnapshotCounters,
     build_table_metadata,
@@ -51,7 +51,7 @@ from iceduck.writer.metadata import (
     validate_counters,
     write_metadata_json,
 )
-from iceduck.writer.stats import FileToExport, build_data_file
+from ducklake_iceberg.writer.stats import FileToExport, build_data_file
 
 pytestmark = pytest.mark.roundtrip
 
@@ -244,7 +244,7 @@ def test_full_table_roundtrip_with_position_deletes(
         assert data_entries[0].data_file.partition[0] == "SP"
         assert delete_entry.data_file.partition[0] == "SP"
 
-    # The scan applies the position delete file written by iceduck
+    # The scan applies the position delete file written by ducklake-iceberg
     tasks = list(table.scan().plan_files())
     assert len(tasks) == 1
     assert [d.file_path for d in tasks[0].delete_files] == [

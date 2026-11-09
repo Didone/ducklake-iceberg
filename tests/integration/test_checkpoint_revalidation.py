@@ -13,15 +13,15 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from iceduck.checkpoint import revalidate as rv
-from iceduck.checkpoint.command import run_checkpoint
-from iceduck.checkpoint.revalidate import (
+from ducklake_iceberg.checkpoint import revalidate as rv
+from ducklake_iceberg.checkpoint.command import run_checkpoint
+from ducklake_iceberg.checkpoint.revalidate import (
     REVALIDATION_RULES,
     revalidate_after_checkpoint,
 )
-from iceduck.cli import app
-from iceduck.doctor.model import Severity
-from iceduck.errors import ExitCode
+from ducklake_iceberg.cli import app
+from ducklake_iceberg.doctor.model import Severity
+from ducklake_iceberg.errors import ExitCode
 from tests.integration.conftest import CatalogHarness, cli_env_for
 
 pytestmark = [pytest.mark.integration]
@@ -163,7 +163,7 @@ def test_inlined_rows_after_the_flush_move_the_export_target(
 def test_revalidation_opens_new_read_only_connection(
     seeded_catalog: CatalogHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from iceduck.catalog.connection import open_catalog as real_open
+    from ducklake_iceberg.catalog.connection import open_catalog as real_open
 
     opened: list[bool] = []
 
@@ -171,7 +171,7 @@ def test_revalidation_opens_new_read_only_connection(
         opened.append(read_only)
         return real_open(cfg, read_only=read_only, s3=s3)
 
-    monkeypatch.setattr("iceduck.checkpoint.revalidate.open_catalog", spy)
+    monkeypatch.setattr("ducklake_iceberg.checkpoint.revalidate.open_catalog", spy)
     report = run_checkpoint(seeded_catalog.settings(), table="main.pedidos")
     assert opened == [True]
     rev = report.results[0].revalidation
@@ -184,7 +184,7 @@ def test_revalidation_opens_new_read_only_connection(
 def test_no_rollback_wording(
     catalog: CatalogHarness, scenario: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from iceduck.errors import CatalogError
+    from ducklake_iceberg.errors import CatalogError
 
     catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
     catalog.write("INSERT INTO lake.main.t VALUES (1), (2), (3)")
@@ -195,7 +195,7 @@ def test_no_rollback_wording(
         def fail(*_: Any, **__: Any) -> Any:
             raise CatalogError("connection dropped")
 
-        monkeypatch.setattr("iceduck.checkpoint.command.revalidate_many", fail)
+        monkeypatch.setattr("ducklake_iceberg.checkpoint.command.revalidate_many", fail)
     env = {**cli_env_for(catalog), "COLUMNS": "200"}
     outputs = [
         runner.invoke(app, ["checkpoint", "--table", "main.t"], env=env).stdout,
@@ -211,12 +211,12 @@ def test_no_rollback_wording(
 def test_revalidation_failure_keeps_checkpoint(
     seeded_catalog: CatalogHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from iceduck.errors import CatalogError
+    from ducklake_iceberg.errors import CatalogError
 
     def fail(*_: Any, **__: Any) -> Any:
         raise CatalogError("catalog unreachable")
 
-    monkeypatch.setattr("iceduck.checkpoint.command.revalidate_many", fail)
+    monkeypatch.setattr("ducklake_iceberg.checkpoint.command.revalidate_many", fail)
     report = run_checkpoint(seeded_catalog.settings(), table="main.pedidos")
     result = report.results[0]
     assert report.exit_code == ExitCode.ERROR
@@ -231,7 +231,7 @@ def test_all_tables_aggregates_blocker(
 ) -> None:
     # without the position-deletes capability, the parquet delete file is a
     # blocker again: the simplest blocker to produce to test the aggregation
-    from iceduck.doctor.rules import delete_parquet
+    from ducklake_iceberg.doctor.rules import delete_parquet
 
     class _NoCapability:
         POSITION_DELETES = object()

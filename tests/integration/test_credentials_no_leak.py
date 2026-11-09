@@ -29,10 +29,10 @@ from moto import mock_aws
 from pyiceberg.io import S3_SECRET_ACCESS_KEY
 from typer.testing import CliRunner
 
-import iceduck.register
-from iceduck.catalog.connection import DuckLakeConnection, open_catalog
-from iceduck.cli import app
-from iceduck.errors import AwsError
+import ducklake_iceberg.register
+from ducklake_iceberg.catalog.connection import DuckLakeConnection, open_catalog
+from ducklake_iceberg.cli import app
+from ducklake_iceberg.errors import AwsError
 
 from .conftest import CatalogHarness
 
@@ -40,7 +40,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.aws]
 
 runner = CliRunner()
 REGION = "us-east-1"
-PROFILE = "iceduck_leak"
+PROFILE = "ducklake_iceberg_leak"
 KEY = "AKIALEAKMARKER000001"
 SECRET = "SECRET-LEAK-0123456789"
 TOKEN = "TOKEN-LEAK-9876543210"
@@ -77,14 +77,14 @@ def fake_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def glue_env(fake_profile: None) -> Iterator[None]:
-    with mock_aws(), mock.patch("iceduck.glue._validate_metadata_location"):
+    with mock_aws(), mock.patch("ducklake_iceberg.glue._validate_metadata_location"):
         yield
 
 
 @pytest.fixture
 def config(catalog: CatalogHarness, tmp_path: Path) -> Path:
     catalog.write("CALL lake.set_option('data_inlining_row_limit', 0)")
-    path = tmp_path / "iceduck.yaml"
+    path = tmp_path / "ducklake-iceberg.yaml"
     path.write_text(
         f"catalog_dsn: '{catalog.dsn}'\n"
         f"data_path: '{catalog.data_path}'\n"
@@ -133,7 +133,7 @@ def test_profile_credentials_never_leak(
 
     catalog.write("CREATE TABLE lake.main.t (id INTEGER, v VARCHAR)")
     catalog.write("INSERT INTO lake.main.t SELECT i, 'v' || i FROM range(20) r(i)")
-    with mock.patch.object(iceduck.register, "load_file_io", spy):
+    with mock.patch.object(ducklake_iceberg.register, "load_file_io", spy):
         assert cli("sync", "--table", "main.t") == 0
         catalog.write("DELETE FROM lake.main.t WHERE id < 5")
         catalog.write("INSERT INTO lake.main.t VALUES (100, 'x')")
@@ -210,7 +210,7 @@ def test_duckdb_secret_uses_profile_credentials(
     with open_catalog(settings) as con:
         provider, key_id = con.raw.execute(
             "SELECT provider, regexp_extract(secret_string, 'key_id=([^;]*)', 1) "
-            "FROM duckdb_secrets() WHERE name = 'iceduck_s3'"
+            "FROM duckdb_secrets() WHERE name = 'ducklake_iceberg_s3'"
         ).fetchone() or (None, None)
         selected = con.raw.execute(
             "SELECT name FROM which_secret('s3://bucket/ducklake/data/x.parquet', 's3')"
@@ -218,7 +218,7 @@ def test_duckdb_secret_uses_profile_credentials(
         environment = repr(con.environment())
     assert provider == "config"
     assert key_id == KEY  # the profile credential, not the C++ chain
-    assert selected == ("iceduck_s3",)
+    assert selected == ("ducklake_iceberg_s3",)
     _assert_clean("environment()", environment)
     _assert_clean("logs", caplog.text)
 

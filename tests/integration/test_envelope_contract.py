@@ -30,9 +30,9 @@ from jsonschema import Draft202012Validator
 from moto import mock_aws
 from typer.testing import CliRunner
 
-from iceduck import cli
-from iceduck.errors import AwsError, CatalogError
-from iceduck.obs.logging import EVENTS, log_event
+from ducklake_iceberg import cli
+from ducklake_iceberg.errors import AwsError, CatalogError
+from ducklake_iceberg.obs.logging import EVENTS, log_event
 
 from .conftest import CatalogHarness
 
@@ -41,23 +41,23 @@ pytestmark = [pytest.mark.integration, pytest.mark.aws]
 runner = CliRunner()
 REGION = "us-east-1"
 SCHEMA = json.loads(
-    (Path(__file__).parents[2] / "src/iceduck/schemas/envelope-v1.json").read_text(
-        encoding="utf-8"
-    )
+    (
+        Path(__file__).parents[2] / "src/ducklake_iceberg/schemas/envelope-v1.json"
+    ).read_text(encoding="utf-8")
 )
 
 
 @pytest.fixture
 def glue_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    monkeypatch.setenv("ICEDUCK_STATE_DIR", str(tmp_path / "state"))
-    with mock_aws(), mock.patch("iceduck.glue._validate_metadata_location"):
+    monkeypatch.setenv("DUCKLAKE_ICEBERG_STATE_DIR", str(tmp_path / "state"))
+    with mock_aws(), mock.patch("ducklake_iceberg.glue._validate_metadata_location"):
         yield
 
 
 @pytest.fixture
 def config(catalog: CatalogHarness, tmp_path: Path) -> Path:
     catalog.write("CALL lake.set_option('data_inlining_row_limit', 0)")
-    path = tmp_path / "iceduck.yaml"
+    path = tmp_path / "ducklake-iceberg.yaml"
     path.write_text(
         f"catalog_dsn: '{catalog.dsn}'\n"
         f"data_path: '{catalog.data_path}'\n"
@@ -328,7 +328,7 @@ MARKERS = (
 )
 LEAKY_MESSAGE = (
     f'IO Error: Unable to connect to Postgres at "host={HOST} port=5432 '
-    f'user=iceduck password={PASSWORD} dbname=lake": refused; '
+    f'user=ducklake-iceberg password={PASSWORD} dbname=lake": refused; '
     f"aws_access_key_id={ACCESS_KEY} {SESSION_KEY} "
     f"https://b.s3.amazonaws.com/k?X-Amz-Signature={SIGNATURE}"
     f"&X-Amz-Security-Token={STS_TOKEN}"
@@ -364,7 +364,7 @@ def test_password_forced_by_env_never_surfaces(
 ) -> None:
     """A DSN with a literal password is rejected without echoing it."""
     monkeypatch.setenv(
-        "ICEDUCK_CATALOG_DSN",
+        "DUCKLAKE_ICEBERG_CATALOG_DSN",
         f"ducklake:postgres:dbname=lake host={HOST} password={PASSWORD}",
     )
     outputs = _surfaces(config, "doctor", "--table", "main.t")
@@ -448,7 +448,7 @@ def test_closed_stderr_keeps_the_exit_code(
     catalog: CatalogHarness, config: Path
 ) -> None:
     _seed(catalog)
-    executable = Path(sys.executable).with_name("iceduck")
+    executable = Path(sys.executable).with_name("ducklake-iceberg")
     args = [str(executable), "checkpoint", "--table", "main.t", "--dry-run"]
     args += ["--json", "--config", str(config)]
 

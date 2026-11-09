@@ -13,25 +13,25 @@ from pathlib import Path
 import pytest
 from pyiceberg.io import S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, S3_SESSION_TOKEN
 
-from iceduck.aws import s3_credential_properties
-from iceduck.config import IceduckSettings
-from iceduck.errors import AwsError
-from iceduck.glue import GlueTarget, _catalog_file_io, build_catalog
-from iceduck.register import build_file_io
+from ducklake_iceberg.aws import s3_credential_properties
+from ducklake_iceberg.config import DuckLakeIcebergSettings
+from ducklake_iceberg.errors import AwsError
+from ducklake_iceberg.glue import GlueTarget, _catalog_file_io, build_catalog
+from ducklake_iceberg.register import build_file_io
 
-_KEY = "AKIAICEDUCKTESTKEY01"
+_KEY = "AKIADUCKLAKE_ICEBERGTESTKEY01"
 _SECRET = "test-secret"
 _TOKEN = "test-token"
 
 
 @pytest.fixture
 def fake_aws(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Profile ``iceduck_test`` with static keys; nothing in the environment."""
+    """Profile ``ducklake_iceberg_test`` with static keys; empty environment."""
     config = tmp_path / "config"
-    config.write_text("[profile iceduck_test]\nregion = us-east-2\n")
+    config.write_text("[profile ducklake_iceberg_test]\nregion = us-east-2\n")
     credentials = tmp_path / "credentials"
     credentials.write_text(
-        "[iceduck_test]\n"
+        "[ducklake_iceberg_test]\n"
         f"aws_access_key_id = {_KEY}\n"
         f"aws_secret_access_key = {_SECRET}\n"
         f"aws_session_token = {_TOKEN}\n"
@@ -50,9 +50,9 @@ def fake_aws(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
-def _settings(profile: str | None) -> IceduckSettings:
-    return IceduckSettings(
-        catalog_dsn="ducklake:sqlite:/tmp/iceduck-test.sqlite",
+def _settings(profile: str | None) -> DuckLakeIcebergSettings:
+    return DuckLakeIcebergSettings(
+        catalog_dsn="ducklake:sqlite:/tmp/ducklake-iceberg-test.sqlite",
         data_path="s3://bucket/ducklake/data/",
         iceberg_metadata_prefix="s3://bucket/iceberg/",
         glue_database="analytics",
@@ -69,7 +69,7 @@ def _assert_profile_credentials(props: dict[str, str]) -> None:
 
 @pytest.mark.usefixtures("fake_aws")
 def test_build_file_io_uses_profile_credentials() -> None:
-    io = build_file_io(_settings("iceduck_test"))
+    io = build_file_io(_settings("ducklake_iceberg_test"))
     _assert_profile_credentials(dict(io.properties))
 
 
@@ -79,7 +79,7 @@ def test_glue_catalog_file_io_uses_profile_credentials() -> None:
         database="analytics",
         table="pedidos",
         region="us-east-2",
-        profile="iceduck_test",
+        profile="ducklake_iceberg_test",
         catalog_id=None,
     )
     catalog = build_catalog(target)
@@ -98,7 +98,7 @@ def test_no_profile_without_credentials_keeps_default_chain() -> None:
 @pytest.mark.usefixtures("fake_aws")
 def test_no_profile_uses_boto3_default_chain(monkeypatch: pytest.MonkeyPatch) -> None:
     """Without ``aws_profile``, boto3 picks up ``AWS_PROFILE`` from the environment."""
-    monkeypatch.setenv("AWS_PROFILE", "iceduck_test")
+    monkeypatch.setenv("AWS_PROFILE", "ducklake_iceberg_test")
     _assert_profile_credentials(s3_credential_properties("us-east-2", None))
     _assert_profile_credentials(dict(build_file_io(_settings(None)).properties))
 
@@ -113,7 +113,7 @@ def test_no_profile_uses_env_keys(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.usefixtures("fake_aws")
 def test_missing_env_profile_is_aws_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AWS_PROFILE", "nonexistent_profile_iceduck_xyz")
+    monkeypatch.setenv("AWS_PROFILE", "nonexistent_profile_ducklake_iceberg_xyz")
     with pytest.raises(AwsError) as exc:
         s3_credential_properties("us-east-2", None)
     assert "AWS profile not found" in exc.value.message
@@ -122,5 +122,7 @@ def test_missing_env_profile_is_aws_error(monkeypatch: pytest.MonkeyPatch) -> No
 @pytest.mark.usefixtures("fake_aws")
 def test_missing_profile_is_aws_error() -> None:
     with pytest.raises(AwsError) as exc:
-        s3_credential_properties("us-east-2", "nonexistent_profile_iceduck_xyz")
+        s3_credential_properties(
+            "us-east-2", "nonexistent_profile_ducklake_iceberg_xyz"
+        )
     assert "AWS profile not found" in exc.value.message

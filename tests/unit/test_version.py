@@ -6,7 +6,7 @@ import tomllib
 from importlib.metadata import version
 from pathlib import Path
 
-import iceduck
+import ducklake_iceberg
 
 _PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
 
@@ -17,9 +17,9 @@ def _pyproject_version() -> str:
 
 
 def test_package_imports_and_exposes_version() -> None:
-    assert iceduck.__version__
-    assert iceduck.__version__ == version("iceduck")
+    assert ducklake_iceberg.__version__
+    assert ducklake_iceberg.__version__ == version("ducklake-iceberg")
 
 
 def test_version_matches_pyproject() -> None:
-    assert iceduck.__version__ == _pyproject_version()
+    assert ducklake_iceberg.__version__ == _pyproject_version()

@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from iceduck.checkpoint.render import render_checkpoint
+from ducklake_iceberg.checkpoint.render import render_checkpoint
 
 
 @pytest.fixture(autouse=True)
@@ -72,7 +72,7 @@ def _report(**over: Any) -> dict[str, Any]:
 def test_render_real(capsys: pytest.CaptureFixture[str]) -> None:
     render_checkpoint(_report())
     out = capsys.readouterr().out
-    assert "iceduck checkpoint" in out
+    assert "ducklake-iceberg checkpoint" in out
     assert "lake_meta" in out
     assert "41 -> 43" in out
     assert "4 → 1" in out

@@ -37,7 +37,7 @@ dmypy.json
 .env
 .env.*
 !.env.example
-iceduck.local.yaml
+ducklake-iceberg.local.yaml
 *.local.yaml
 
 # IDE / editor

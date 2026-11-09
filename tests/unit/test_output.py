@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
-from iceduck.errors import ExitCode
-from iceduck.output import (
+from ducklake_iceberg.errors import ExitCode
+from ducklake_iceberg.output import (
     ENVELOPE_VERSION,
     STATUS_BY_EXIT,
     Envelope,
@@ -99,7 +99,7 @@ def _doctor_result(table: str, *, glue_exists: bool, s3: object) -> dict[str, ob
 
 
 def test_emit_human_single(capsys: pytest.CaptureFixture[str]) -> None:
-    from iceduck.output import emit
+    from ducklake_iceberg.output import emit
 
     env = Envelope(command="doctor", dry_run=False)
     env.results.append(_doctor_result("vendas.pedidos", glue_exists=False, s3=True))
@@ -111,7 +111,7 @@ def test_emit_human_single(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_emit_human_multi(capsys: pytest.CaptureFixture[str]) -> None:
-    from iceduck.output import emit
+    from ducklake_iceberg.output import emit
 
     env = Envelope(command="doctor", dry_run=False)
     env.results.append(_doctor_result("a.x", glue_exists=True, s3=None))
@@ -124,7 +124,7 @@ def test_emit_human_multi(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_emit_human_problem(capsys: pytest.CaptureFixture[str]) -> None:
-    from iceduck.output import emit
+    from ducklake_iceberg.output import emit
 
     env = Envelope(command="doctor", dry_run=False)
     env.problems.append(Problem(code="x", message="failed", hint="tip", table="a.b"))
@@ -139,7 +139,7 @@ def test_emit_human_problem(capsys: pytest.CaptureFixture[str]) -> None:
 def test_emit_json_writes_single_object(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from iceduck.output import emit
+    from ducklake_iceberg.output import emit
 
     env = Envelope(command="doctor", dry_run=False)
     emit(env, json_out=True)
@@ -173,7 +173,7 @@ def _rules_report(exit_code: int, rules: list[dict[str, Any]]) -> dict[str, Any]
 def test_render_doctor_with_rules_all_states(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from iceduck.output import render_doctor
+    from ducklake_iceberg.output import render_doctor
 
     result = _doctor_result("vendas.pedidos", glue_exists=True, s3=True)
     result["rules"] = _rules_report(
@@ -187,7 +187,7 @@ def test_render_doctor_with_rules_all_states(
                         "severity": "blocker",
                         "subject": "vendas.pedidos",
                         "detail": "3 inlined rows",
-                        "remediation": "iceduck checkpoint",
+                        "remediation": "ducklake-iceberg checkpoint",
                     }
                 ],
                 "skipped_by": [],
@@ -220,7 +220,7 @@ def test_render_doctor_with_rules_all_states(
 def test_render_doctor_table_preflight_verdicts(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from iceduck.output import Envelope, emit
+    from ducklake_iceberg.output import Envelope, emit
 
     env = Envelope(command="doctor", dry_run=False)
     clean = _doctor_result("a.clean", glue_exists=True, s3=True)
@@ -268,14 +268,16 @@ def test_problem_level_is_optional_key_of_envelope_v1() -> None:
 
     assert "level" not in payload["problems"][0]
     assert payload["problems"][1]["level"] == "warning"
-    schema_path = Path(__file__).parents[2] / "src/iceduck/schemas/envelope-v1.json"
+    schema_path = (
+        Path(__file__).parents[2] / "src/ducklake_iceberg/schemas/envelope-v1.json"
+    )
     Draft202012Validator(json.loads(schema_path.read_text("utf-8"))).validate(payload)
 
 
 def test_warning_problem_is_not_rendered_as_error(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from iceduck.output import emit
+    from ducklake_iceberg.output import emit
 
     env = Envelope(command="sync", dry_run=False)
     env.problems.append(
@@ -296,7 +298,7 @@ def test_render_sync_table_sorted_with_mandatory_footer(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """One row per table, sorted by name, and the footer."""
-    from iceduck.output import emit
+    from ducklake_iceberg.output import emit
 
     env = Envelope(command="sync", dry_run=False)
     env.results = [
@@ -346,7 +348,7 @@ def test_render_sync_table_sorted_with_mandatory_footer(
 def test_render_sync_footer_all_nothing_to_do(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from iceduck.output import emit
+    from ducklake_iceberg.output import emit
 
     env = Envelope(command="sync", dry_run=False)
     env.results = [_sync_row("a.t", 4, 120)]
@@ -370,6 +372,6 @@ def test_render_sync_footer_all_nothing_to_do(
     ],
 )
 def test_human_bytes(value: Any, expected: str) -> None:
-    from iceduck.output import _human_bytes
+    from ducklake_iceberg.output import _human_bytes
 
     assert _human_bytes(value) == expected

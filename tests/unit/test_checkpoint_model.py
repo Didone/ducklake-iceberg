@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from iceduck.checkpoint.model import (
+from ducklake_iceberg.checkpoint.model import (
     CatalogFingerprint,
     CheckpointError,
     CheckpointRunReport,
@@ -15,8 +15,8 @@ from iceduck.checkpoint.model import (
     TableCheckpointResult,
     TableRef,
 )
-from iceduck.checkpoint.partitions import _compaction_snapshots, _sort_key
-from iceduck.errors import ExitCode
+from ducklake_iceberg.checkpoint.partitions import _compaction_snapshots, _sort_key
+from ducklake_iceberg.errors import ExitCode
 
 T1 = TableRef("vendas", "pedidos", 5)
 T2 = TableRef("vendas", "itens", 6)

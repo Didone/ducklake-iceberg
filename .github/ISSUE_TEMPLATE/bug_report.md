@@ -4,7 +4,7 @@ about: Something does not work as documented
 labels: bug
 ---
 
-**iceduck version** (`iceduck --version`):
+**ducklake-iceberg version** (`ducklake-iceberg --version`):
 
 **Python version and OS:**
 

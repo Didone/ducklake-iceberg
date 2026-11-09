@@ -19,8 +19,8 @@ from pyiceberg.exceptions import (
     NoSuchTableError,
 )
 
-from iceduck.errors import DivergenceError
-from iceduck.retry import (
+from ducklake_iceberg.errors import DivergenceError
+from ducklake_iceberg.retry import (
     CommitExhausted,
     RetryClass,
     RetryPolicy,
@@ -89,7 +89,7 @@ def test_extract_error_code() -> None:
 
 
 def test_compute_delay_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("iceduck.retry.random.uniform", lambda a, b: b)
+    monkeypatch.setattr("ducklake_iceberg.retry.random.uniform", lambda a, b: b)
     assert _compute_delay(1, base=0.5, factor=2, max_delay=8) == 0.5
     assert _compute_delay(4, base=0.5, factor=2, max_delay=8) == 4.0
     assert _compute_delay(6, base=0.5, factor=2, max_delay=8) == 8.0
@@ -114,9 +114,9 @@ class _Clock:
 @pytest.fixture
 def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
     c = _Clock()
-    monkeypatch.setattr("iceduck.retry.time.monotonic", c.monotonic)
-    monkeypatch.setattr("iceduck.retry.time.sleep", c.sleep)
-    monkeypatch.setattr("iceduck.retry.random.uniform", lambda a, b: b)
+    monkeypatch.setattr("ducklake_iceberg.retry.time.monotonic", c.monotonic)
+    monkeypatch.setattr("ducklake_iceberg.retry.time.sleep", c.sleep)
+    monkeypatch.setattr("ducklake_iceberg.retry.random.uniform", lambda a, b: b)
     return c
 
 
@@ -170,7 +170,7 @@ def test_always_conflict_exhausts_with_five_logs(
 ) -> None:
     stub = _Stub([_client_error("ConcurrentModificationException")] * 10)
     with (
-        caplog.at_level(logging.INFO, logger="iceduck"),
+        caplog.at_level(logging.INFO, logger="ducklake_iceberg"),
         pytest.raises(CommitExhausted) as info,
     ):
         stub.run()

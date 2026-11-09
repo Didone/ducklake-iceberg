@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from iceduck.catalog.reader import DEFAULT_SCHEMA, TableRef, parse_table_ref
-from iceduck.errors import ConfigError
+from ducklake_iceberg.catalog.reader import DEFAULT_SCHEMA, TableRef, parse_table_ref
+from ducklake_iceberg.errors import ConfigError
 
 
 @pytest.mark.parametrize(
@@ -46,7 +46,7 @@ def test_name_comparison_is_case_sensitive() -> None:
 
 
 def test_int_coercion() -> None:
-    from iceduck.catalog.reader import _int
+    from ducklake_iceberg.catalog.reader import _int
 
     assert _int(5) == 5
     assert _int(True) == 1
@@ -54,16 +54,16 @@ def test_int_coercion() -> None:
 
 
 def test_int_coercion_rejects_non_numeric() -> None:
-    from iceduck.catalog.reader import _int
-    from iceduck.errors import CatalogError
+    from ducklake_iceberg.catalog.reader import _int
+    from ducklake_iceberg.errors import CatalogError
 
     with pytest.raises(CatalogError, match="numeric"):
         _int(object())
 
 
 def test_as_datetime_rejects_non_datetime() -> None:
-    from iceduck.catalog.reader import _as_datetime
-    from iceduck.errors import CatalogError
+    from ducklake_iceberg.catalog.reader import _as_datetime
+    from ducklake_iceberg.errors import CatalogError
 
     with pytest.raises(CatalogError, match="snapshot_time"):
         _as_datetime("not a datetime")

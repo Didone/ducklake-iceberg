@@ -14,8 +14,8 @@ import pyarrow.parquet as pq
 import pytest
 from pyiceberg.io.pyarrow import PyArrowFileIO
 
-from iceduck import concurrency
-from iceduck.concurrency import (
+from ducklake_iceberg import concurrency
+from ducklake_iceberg.concurrency import (
     CANCELLED,
     INTERRUPTED,
     ConsolidatedReport,
@@ -239,7 +239,7 @@ def test_metadata_upload_pool_uses_max_io_workers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Pools formerly fixed at 8 follow ``max_io_workers``."""
-    from iceduck.writer import avro
+    from ducklake_iceberg.writer import avro
 
     sizes: list[int] = []
 
@@ -247,7 +247,7 @@ def test_metadata_upload_pool_uses_max_io_workers(
         sizes.append(max_workers)
         return concurrency.ContextThreadPoolExecutor(max_workers=max_workers)
 
-    monkeypatch.setattr("iceduck.writer.avro.ContextThreadPoolExecutor", spy)
+    monkeypatch.setattr("ducklake_iceberg.writer.avro.ContextThreadPoolExecutor", spy)
     monkeypatch.setattr(avro, "upload", lambda *args, **kwargs: None)
     concurrency.apply_limits(Limits(max_io_workers=3))
 
@@ -343,7 +343,7 @@ def test_parallel_footer_phase_is_not_slower_than_serial(tmp_path: Path) -> None
     from pyiceberg.typedef import Record
     from pyiceberg.types import LongType, NestedField
 
-    from iceduck.writer.stats import FileToExport, build_data_files
+    from ducklake_iceberg.writer.stats import FileToExport, build_data_files
 
     schema = Schema(NestedField(1, "id", LongType(), required=False))
     arrow_schema = pa.schema(

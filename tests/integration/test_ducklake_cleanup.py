@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from iceduck.catalog.connection import open_catalog
-from iceduck.maintenance.ducklake_cleanup import (
+from ducklake_iceberg.catalog.connection import open_catalog
+from ducklake_iceberg.maintenance.ducklake_cleanup import (
     apply_cleanup_plan,
     plan_scheduled_files,
 )
-from iceduck.s3 import LocalStore
+from ducklake_iceberg.s3 import LocalStore
 
 from .conftest import CatalogHarness
 

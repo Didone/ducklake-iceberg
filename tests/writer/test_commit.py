@@ -33,8 +33,8 @@ from pyiceberg.types import (
     StringType,
 )
 
-from iceduck.catalog.files import LiveDeleteFile
-from iceduck.deletes.convert import (
+from ducklake_iceberg.catalog.files import LiveDeleteFile
+from ducklake_iceberg.deletes.convert import (
     DeleteConversionError,
     convert_delete_file,
     delete_file_path,
@@ -42,10 +42,10 @@ from iceduck.deletes.convert import (
     read_visible_positions,
     source_key,
 )
-from iceduck.deletes.writer import InvalidDeletePositionError
-from iceduck.errors import CompatibilityError
-from iceduck.export import _evolve_schema
-from iceduck.writer.commit import (
+from ducklake_iceberg.deletes.writer import InvalidDeletePositionError
+from ducklake_iceberg.errors import CompatibilityError
+from ducklake_iceberg.export import _evolve_schema
+from ducklake_iceberg.writer.commit import (
     BaseSnapshot,
     CommitError,
     ContentChange,
@@ -57,7 +57,7 @@ from iceduck.writer.commit import (
     referenced_data_file,
     write_snapshot,
 )
-from iceduck.writer.metadata import (
+from ducklake_iceberg.writer.metadata import (
     DuckLakeProvenance,
     SnapshotCounters,
     build_next_metadata,

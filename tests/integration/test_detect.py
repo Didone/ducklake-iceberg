@@ -9,10 +9,14 @@ from __future__ import annotations
 
 import pytest
 
-from iceduck.catalog.connection import open_catalog
-from iceduck.catalog.reader import current_snapshot, parse_table_ref, resolve_table
-from iceduck.checkpoint.detect import detect_inlined, detect_inlined_many
-from iceduck.checkpoint.model import TableRef
+from ducklake_iceberg.catalog.connection import open_catalog
+from ducklake_iceberg.catalog.reader import (
+    current_snapshot,
+    parse_table_ref,
+    resolve_table,
+)
+from ducklake_iceberg.checkpoint.detect import detect_inlined, detect_inlined_many
+from ducklake_iceberg.checkpoint.model import TableRef
 from tests.integration.conftest import CatalogHarness
 
 pytestmark = pytest.mark.integration

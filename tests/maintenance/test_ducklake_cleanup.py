@@ -5,7 +5,7 @@ from typing import cast
 
 from pyiceberg.catalog.glue import GlueCatalog
 
-from iceduck.cli import _iceberg_references
+from ducklake_iceberg.cli import _iceberg_references
 
 
 def test_iceberg_references_include_historical_snapshot_data_and_deletes() -> None:

@@ -31,14 +31,14 @@ from pyiceberg.transforms import IdentityTransform
 from pyiceberg.typedef import Record
 from pyiceberg.types import IntegerType, NestedField, StringType, StructType
 
-from iceduck.deletes import manifest as dm
-from iceduck.deletes.writer import (
+from ducklake_iceberg.deletes import manifest as dm
+from ducklake_iceberg.deletes.writer import (
     DeleteFileResult,
     PositionDelete,
     write_position_delete_file,
 )
-from iceduck.errors import ExitCode
-from iceduck.writer.manifest_list import write_manifest_list
+from ducklake_iceberg.errors import ExitCode
+from ducklake_iceberg.writer.manifest_list import write_manifest_list
 
 _SCHEMA = Schema(
     NestedField(1, "id", IntegerType(), required=False),

@@ -24,7 +24,7 @@ from moto import mock_aws
 from pyiceberg.table import StaticTable
 from typer.testing import CliRunner
 
-from iceduck.cli import app
+from ducklake_iceberg.cli import app
 
 from .conftest import CatalogHarness
 
@@ -40,7 +40,7 @@ def config(catalog: CatalogHarness, tmp_path: Path) -> Path:
     catalog.write(
         "CREATE TABLE lake.main.t_part (id INTEGER, category VARCHAR, data DATE)"
     )
-    path = tmp_path / "iceduck.yaml"
+    path = tmp_path / "ducklake-iceberg.yaml"
     path.write_text(
         f"catalog_dsn: '{catalog.dsn}'\n"
         f"data_path: '{catalog.data_path}'\n"
@@ -113,7 +113,7 @@ def test_sync_json_reports_degraded_partition(
         "ALTER TABLE lake.main.t_part SET PARTITIONED BY (category, year(data))"
     )
     _insert(catalog)
-    with mock_aws(), mock.patch("iceduck.glue._validate_metadata_location"):
+    with mock_aws(), mock.patch("ducklake_iceberg.glue._validate_metadata_location"):
         code, doc = _cli(config, "sync", "--table", "main.t_part")
     assert code == 0
     assert doc["problems"] == []

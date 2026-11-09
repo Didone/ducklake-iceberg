@@ -9,12 +9,16 @@ from __future__ import annotations
 
 import pytest
 
-from iceduck.catalog.connection import open_catalog
-from iceduck.catalog.reader import current_snapshot, parse_table_ref, resolve_table
-from iceduck.doctor import rules as real_rules
-from iceduck.doctor.model import DoctorContext, DoctorTarget
-from iceduck.doctor.report import DoctorReport, Revalidation
-from iceduck.doctor.runner import run
+from ducklake_iceberg.catalog.connection import open_catalog
+from ducklake_iceberg.catalog.reader import (
+    current_snapshot,
+    parse_table_ref,
+    resolve_table,
+)
+from ducklake_iceberg.doctor import rules as real_rules
+from ducklake_iceberg.doctor.model import DoctorContext, DoctorTarget
+from ducklake_iceberg.doctor.report import DoctorReport, Revalidation
+from ducklake_iceberg.doctor.runner import run
 from tests.integration.conftest import CatalogHarness
 
 pytestmark = pytest.mark.integration

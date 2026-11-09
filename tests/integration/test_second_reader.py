@@ -25,9 +25,9 @@ from typing import Any
 import duckdb
 import pytest
 
-from iceduck.deletes import materialize as mt
-from iceduck.errors import ExitCode
-from iceduck.export import ExportResult
+from ducklake_iceberg.deletes import materialize as mt
+from ducklake_iceberg.errors import ExitCode
+from ducklake_iceberg.export import ExportResult
 
 from .conftest import CatalogHarness
 from .test_incremental import Lake

@@ -12,10 +12,10 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
-from iceduck.catalog.connection import open_catalog
-from iceduck.catalog.reader import TableRef, current_snapshot, resolve_table
-from iceduck.deletes import materialize as mt
-from iceduck.errors import ExitCode
+from ducklake_iceberg.catalog.connection import open_catalog
+from ducklake_iceberg.catalog.reader import TableRef, current_snapshot, resolve_table
+from ducklake_iceberg.deletes import materialize as mt
+from ducklake_iceberg.errors import ExitCode
 from tests.integration.conftest import CatalogHarness
 
 pytestmark = [pytest.mark.integration]

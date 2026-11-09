@@ -11,14 +11,14 @@ from pathlib import Path
 
 import pytest
 
-from iceduck.config import IceduckSettings
-from iceduck.errors import ExitCode
-from iceduck.export import plan_export, run_export
+from ducklake_iceberg.config import DuckLakeIcebergSettings
+from ducklake_iceberg.errors import ExitCode
+from ducklake_iceberg.export import plan_export, run_export
 
 from .conftest import CatalogHarness
 
 
-def _settings(harness: CatalogHarness, tmp_path: Path) -> IceduckSettings:
+def _settings(harness: CatalogHarness, tmp_path: Path) -> DuckLakeIcebergSettings:
     prefix = tmp_path / "iceberg"
     prefix.mkdir(exist_ok=True)
     return harness.settings(iceberg_metadata_prefix=str(prefix))
@@ -36,7 +36,7 @@ def test_export_end_to_end(flushed_catalog: CatalogHarness, tmp_path: Path) -> N
     meta = Path(result.plan.metadata_location.removeprefix("file://"))
     assert meta.exists()
     pointer = Path(result.pointer_path.removeprefix("file://"))
-    assert pointer.name == "_iceduck_last_export.json"
+    assert pointer.name == "_ducklake_iceberg_last_export.json"
     assert pointer.exists()
 
 
@@ -85,7 +85,7 @@ def test_export_inlined_pending_blocks(
     seeded_catalog: CatalogHarness, tmp_path: Path
 ) -> None:
     # seeded_catalog has inlined rows -> exit 2 before any enumeration
-    from iceduck.errors import CompatibilityError
+    from ducklake_iceberg.errors import CompatibilityError
 
     settings = _settings(seeded_catalog, tmp_path)
     with pytest.raises(CompatibilityError, match="inlined") as exc:
@@ -101,14 +101,14 @@ def test_cli_export_json(flushed_catalog: CatalogHarness, tmp_path: Path) -> Non
 
     from typer.testing import CliRunner
 
-    from iceduck.cli import app
+    from ducklake_iceberg.cli import app
     from tests.integration.conftest import cli_env_for
 
     prefix = tmp_path / "iceberg"
     prefix.mkdir(exist_ok=True)
     env = {
         **cli_env_for(flushed_catalog),
-        "ICEDUCK_ICEBERG_METADATA_PREFIX": str(prefix),
+        "DUCKLAKE_ICEBERG_ICEBERG_METADATA_PREFIX": str(prefix),
     }
     runner = CliRunner()
     result = runner.invoke(
@@ -126,14 +126,14 @@ def test_cli_export_dry_run_writes_nothing(
 ) -> None:
     from typer.testing import CliRunner
 
-    from iceduck.cli import app
+    from ducklake_iceberg.cli import app
     from tests.integration.conftest import cli_env_for
 
     prefix = tmp_path / "iceberg"
     prefix.mkdir(exist_ok=True)
     env = {
         **cli_env_for(flushed_catalog),
-        "ICEDUCK_ICEBERG_METADATA_PREFIX": str(prefix),
+        "DUCKLAKE_ICEBERG_ICEBERG_METADATA_PREFIX": str(prefix),
     }
     runner = CliRunner()
     result = runner.invoke(
@@ -148,12 +148,12 @@ def test_cli_export_requires_qualified_table(
 ) -> None:
     from typer.testing import CliRunner
 
-    from iceduck.cli import app
+    from ducklake_iceberg.cli import app
     from tests.integration.conftest import cli_env_for
 
     env = {
         **cli_env_for(flushed_catalog),
-        "ICEDUCK_ICEBERG_METADATA_PREFIX": str(tmp_path / "iceberg"),
+        "DUCKLAKE_ICEBERG_ICEBERG_METADATA_PREFIX": str(tmp_path / "iceberg"),
     }
     runner = CliRunner()
     result = runner.invoke(app, ["export", "--table", "pedidos", "--json"], env=env)

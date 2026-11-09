@@ -36,14 +36,17 @@ from pyiceberg.types import (
 )
 from typer.testing import CliRunner
 
-from iceduck import aws, concurrency, glue_stats
-from iceduck.catalog.connection import open_catalog
-from iceduck.catalog.reader import current_snapshot
-from iceduck.cli import app
-from iceduck.concurrency import Interrupted, Outcome
-from iceduck.errors import ExitCode
-from iceduck.glue_stats import collect_column_statistics, plan_column_statistics
-from iceduck.output import Envelope, Problem
+from ducklake_iceberg import aws, concurrency, glue_stats
+from ducklake_iceberg.catalog.connection import open_catalog
+from ducklake_iceberg.catalog.reader import current_snapshot
+from ducklake_iceberg.cli import app
+from ducklake_iceberg.concurrency import Interrupted, Outcome
+from ducklake_iceberg.errors import ExitCode
+from ducklake_iceberg.glue_stats import (
+    collect_column_statistics,
+    plan_column_statistics,
+)
+from ducklake_iceberg.output import Envelope, Problem
 
 from .conftest import CatalogHarness
 
@@ -148,13 +151,13 @@ def test_collect_sample_is_deterministic(catalog: CatalogHarness) -> None:
 
 @pytest.fixture
 def glue_env() -> Iterator[None]:
-    with mock_aws(), mock.patch("iceduck.glue._validate_metadata_location"):
+    with mock_aws(), mock.patch("ducklake_iceberg.glue._validate_metadata_location"):
         yield
 
 
 def _config(catalog: CatalogHarness, tmp_path: Path, **extra: str) -> Path:
     catalog.write("CALL lake.set_option('data_inlining_row_limit', 0)")
-    path = tmp_path / "iceduck.yaml"
+    path = tmp_path / "ducklake-iceberg.yaml"
     lines = [
         f"catalog_dsn: '{catalog.dsn}'",
         f"data_path: '{catalog.data_path}'",
@@ -422,7 +425,7 @@ def test_sync_all_tables_partial_failure_does_not_stop_others(
     _three_tables(catalog)
     seen: list[str] = []
     monkeypatch.setattr(
-        "iceduck.cli._sync_table",
+        "ducklake_iceberg.cli._sync_table",
         _fake_sync_table({"main.a": ExitCode.ERROR}, seen, lambda _: None),
     )
 
@@ -449,7 +452,7 @@ def test_sync_all_tables_fail_fast_cancels_not_started(
             time.sleep(0.1)
 
     monkeypatch.setattr(
-        "iceduck.cli._sync_table",
+        "ducklake_iceberg.cli._sync_table",
         _fake_sync_table({"main.a": ExitCode.ERROR}, seen, probe),
     )
 
@@ -489,8 +492,10 @@ def test_sync_workers_capped_is_warning_and_limits_reach_pools(
             )
         )
 
-    monkeypatch.setattr("iceduck.cli._sync_table", _fake_sync_table({}, [], probe))
-    monkeypatch.setenv("ICEDUCK_MAX_TOTAL_WORKERS", "16")
+    monkeypatch.setattr(
+        "ducklake_iceberg.cli._sync_table", _fake_sync_table({}, [], probe)
+    )
+    monkeypatch.setenv("DUCKLAKE_ICEBERG_MAX_TOTAL_WORKERS", "16")
     config = _config(catalog, tmp_path, max_io_workers="3")
 
     code, doc = _sync(
@@ -528,7 +533,7 @@ def test_sync_interrupted_reports_problem_and_exit_1(
             ]
         )
 
-    monkeypatch.setattr("iceduck.cli.map_parallel", interrupted)
+    monkeypatch.setattr("ducklake_iceberg.cli.map_parallel", interrupted)
 
     code, doc = _sync(_config(catalog, tmp_path), "--all-tables")
 

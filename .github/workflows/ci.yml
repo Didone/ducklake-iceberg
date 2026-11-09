@@ -61,8 +61,8 @@ jobs:
         run: |
           python -m venv /tmp/wheel-venv
           /tmp/wheel-venv/bin/pip install dist/*.whl
-          /tmp/wheel-venv/bin/iceduck --version
-          /tmp/wheel-venv/bin/iceduck doctor --help > /dev/null
+          /tmp/wheel-venv/bin/ducklake-iceberg --version
+          /tmp/wheel-venv/bin/ducklake-iceberg doctor --help > /dev/null
 
   container-smoke:
     name: container (offline smoke)
@@ -76,13 +76,13 @@ jobs:
             --build-arg REVISION="$GITHUB_SHA" \
             --build-arg SOURCE="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             --build-arg CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            -t iceduck:ci .
+            -t ducklake-iceberg:ci .
       - name: Verify offline CLI and non-root runtime
         run: |
-          docker run --rm --network none iceduck:ci doctor --help
-          test "$(docker run --rm --network none --entrypoint id iceduck:ci -u)" = 10001
-          test "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' iceduck:ci)" = "$GITHUB_SHA"
-          test "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.created" }}' iceduck:ci)" != unknown
+          docker run --rm --network none ducklake-iceberg:ci doctor --help
+          test "$(docker run --rm --network none --entrypoint id ducklake-iceberg:ci -u)" = 10001
+          test "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' ducklake-iceberg:ci)" = "$GITHUB_SHA"
+          test "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.created" }}' ducklake-iceberg:ci)" != unknown
 
   test:
     name: tests (py${{ matrix.python }})

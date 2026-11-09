@@ -12,7 +12,7 @@ import dataclasses
 
 import pytest
 
-from iceduck.catalog.files import (
+from ducklake_iceberg.catalog.files import (
     FileEnumerationError,
     FileSetDivergence,
     LiveDataFile,
@@ -23,7 +23,7 @@ from iceduck.catalog.files import (
     compose_path,
     reconcile_files,
 )
-from iceduck.doctor.model import Severity
+from ducklake_iceberg.doctor.model import Severity
 
 
 def _layers(
@@ -331,7 +331,7 @@ def test_parquet_delete_file_is_not_a_blocker() -> None:
 
 
 def _with_delete(fmt: str) -> LiveDataFile:
-    from iceduck.catalog.files import LiveDeleteFile
+    from ducklake_iceberg.catalog.files import LiveDeleteFile
 
     return dataclasses.replace(
         _live(),

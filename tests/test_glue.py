@@ -28,8 +28,8 @@ import boto3
 from botocore.exceptions import ClientError
 from moto import mock_aws
 
-from iceduck.errors import ExitCode
-from iceduck.glue import (
+from ducklake_iceberg.errors import ExitCode
+from ducklake_iceberg.glue import (
     GlueError,
     GlueTarget,
     LakeFormationBlocked,
@@ -116,7 +116,7 @@ class _StubCatalog:
 
 
 def _patch_catalog(catalog: _StubCatalog) -> Any:
-    return mock.patch("iceduck.glue.build_catalog", return_value=catalog)
+    return mock.patch("ducklake_iceberg.glue.build_catalog", return_value=catalog)
 
 
 def _create_hive_table(database: str, table: str) -> None:
@@ -259,7 +259,9 @@ def test_register_updates_from_ancestor(aws: None) -> None:
         register(_target(), v0, create_database=True)
     with (
         _patch_catalog(_StubCatalog()),
-        mock.patch("iceduck.glue._read_metadata", return_value=_metadata_with_log(v0)),
+        mock.patch(
+            "ducklake_iceberg.glue._read_metadata", return_value=_metadata_with_log(v0)
+        ),
         mock.patch("pyiceberg.catalog.glue._to_columns", return_value=[]),
     ):
         result = register(_target(), METADATA, create_database=True)
@@ -279,7 +281,9 @@ def test_register_update_dry_run_writes_nothing(aws: None) -> None:
         register(_target(), v0, create_database=True)
     with (
         _patch_catalog(_StubCatalog()),
-        mock.patch("iceduck.glue._read_metadata", return_value=_metadata_with_log(v0)),
+        mock.patch(
+            "ducklake_iceberg.glue._read_metadata", return_value=_metadata_with_log(v0)
+        ),
     ):
         result = register(_target(), METADATA, create_database=True, dry_run=True)
     assert result.outcome is RegisterOutcome.DRY_RUN
@@ -294,7 +298,9 @@ def test_register_not_ancestor_is_divergence(aws: None) -> None:
         register(_target(), other, create_database=True)
     with (
         _patch_catalog(_StubCatalog()),
-        mock.patch("iceduck.glue._read_metadata", return_value=_metadata_with_log()),
+        mock.patch(
+            "ducklake_iceberg.glue._read_metadata", return_value=_metadata_with_log()
+        ),
         pytest.raises(RegisterDiverged) as exc,
     ):
         register(_target(), METADATA, create_database=True)
@@ -461,7 +467,7 @@ def test_no_create_table_in_module() -> None:
     import ast
     import pathlib
 
-    import iceduck.glue as g
+    import ducklake_iceberg.glue as g
 
     tree = ast.parse(pathlib.Path(g.__file__).read_text())
     # No CALL to `.create_table(...)` / `create_table(...)` in the module
@@ -479,7 +485,7 @@ def test_no_create_table_in_module() -> None:
 
 
 def test_retry_succeeds_after_transient_failures() -> None:
-    from iceduck.glue import _call_with_retry
+    from ducklake_iceberg.glue import _call_with_retry
 
     calls = {"n": 0}
 
@@ -492,7 +498,7 @@ def test_retry_succeeds_after_transient_failures() -> None:
             )
         return "ok"
 
-    with mock.patch("iceduck.glue.time.sleep") as sleep:
+    with mock.patch("ducklake_iceberg.glue.time.sleep") as sleep:
         assert _call_with_retry(flaky, "CreateTable") == "ok"
     assert calls["n"] == 3
     assert sleep.call_count == 2  # slept between the 3 attempts
@@ -502,7 +508,7 @@ def test_retry_succeeds_after_transient_failures() -> None:
 
 
 def test_retry_exhausts_on_persistent_throttling() -> None:
-    from iceduck.glue import _call_with_retry
+    from ducklake_iceberg.glue import _call_with_retry
 
     def always_throttle() -> str:
         raise ClientError(
@@ -512,7 +518,7 @@ def test_retry_exhausts_on_persistent_throttling() -> None:
 
     sleeps: list[float] = []
     with (
-        mock.patch("iceduck.glue.time.sleep", side_effect=sleeps.append),
+        mock.patch("ducklake_iceberg.glue.time.sleep", side_effect=sleeps.append),
         pytest.raises(GlueError, match="5 attempts"),
     ):
         _call_with_retry(always_throttle, "CreateTable")
@@ -525,7 +531,7 @@ def test_retry_exhausts_on_persistent_throttling() -> None:
 
 
 def test_retry_does_not_cover_access_denied() -> None:
-    from iceduck.glue import _call_with_retry
+    from ducklake_iceberg.glue import _call_with_retry
 
     def denied() -> str:
         raise ClientError(
@@ -533,7 +539,10 @@ def test_retry_does_not_cover_access_denied() -> None:
             "CreateTable",
         )
 
-    with mock.patch("iceduck.glue.time.sleep") as sleep, pytest.raises(ClientError):
+    with (
+        mock.patch("ducklake_iceberg.glue.time.sleep") as sleep,
+        pytest.raises(ClientError),
+    ):
         _call_with_retry(denied, "CreateTable")
     assert sleep.call_count == 0
 
@@ -542,7 +551,7 @@ def test_retry_does_not_cover_access_denied() -> None:
 
 
 def test_lake_formation_flag_on_existing(aws: None) -> None:
-    from iceduck.glue import _lake_formation_flag
+    from ducklake_iceberg.glue import _lake_formation_flag
 
     table = {
         "Parameters": {"table_type": "ICEBERG", "metadata_location": METADATA},

@@ -27,10 +27,10 @@ from pyiceberg.partitioning import PartitionSpec
 from pyiceberg.schema import Schema
 from pyiceberg.types import IntegerType, NestedField, StringType
 
-from iceduck.cli import aggregate_exit_code
-from iceduck.config import IceduckSettings, load_settings
-from iceduck.errors import DivergenceError, ExitCode
-from iceduck.register import (
+from ducklake_iceberg.cli import aggregate_exit_code
+from ducklake_iceberg.config import DuckLakeIcebergSettings, load_settings
+from ducklake_iceberg.errors import DivergenceError, ExitCode
+from ducklake_iceberg.register import (
     POINTER_NAME,
     ExportPointer,
     PointerError,
@@ -40,7 +40,7 @@ from iceduck.register import (
     run_register,
     write_pointer,
 )
-from iceduck.writer.metadata import (
+from ducklake_iceberg.writer.metadata import (
     DuckLakeProvenance,
     SnapshotCounters,
     build_table_metadata,
@@ -111,18 +111,18 @@ def _pointer(
         ducklake_snapshot_id=snapshot_id,
         schema_version=3,
         exported_at="2025-10-26T11:02:48Z",
-        iceduck_version="0.1.0",
+        ducklake_iceberg_version="0.1.0",
     )
 
 
 def test_pointer_name_is_not_version_hint() -> None:
-    assert POINTER_NAME == "_iceduck_last_export.json"
+    assert POINTER_NAME == "_ducklake_iceberg_last_export.json"
     assert "version-hint" not in POINTER_NAME
 
 
 def test_pointer_path_outside_metadata() -> None:
     path = pointer_path("file:///x/t")
-    assert path.endswith("/_iceduck_last_export.json")
+    assert path.endswith("/_ducklake_iceberg_last_export.json")
     assert "/metadata/" not in path
 
 
@@ -174,11 +174,11 @@ def test_read_pointer_unknown_version(tmp_path: pathlib.Path) -> None:
         read_pointer(io, "file://" + str(tmp_path))
 
 
-# -- register.py imports neither duckdb nor iceduck.catalog -----------------
+# -- register.py imports neither duckdb nor ducklake_iceberg.catalog -----------------
 
 
 def test_register_module_architecture() -> None:
-    import iceduck.register as r
+    import ducklake_iceberg.register as r
 
     tree = ast.parse(pathlib.Path(r.__file__).read_text())
     forbidden: list[str] = []
@@ -187,12 +187,15 @@ def test_register_module_architecture() -> None:
             forbidden += [
                 n.name
                 for n in node.names
-                if n.name == "duckdb" or n.name.startswith("iceduck.catalog")
+                if n.name == "duckdb" or n.name.startswith("ducklake_iceberg.catalog")
             ]
         if (
             isinstance(node, ast.ImportFrom)
             and node.module
-            and (node.module == "duckdb" or node.module.startswith("iceduck.catalog"))
+            and (
+                node.module == "duckdb"
+                or node.module.startswith("ducklake_iceberg.catalog")
+            )
         ):
             forbidden.append(node.module)
     assert forbidden == [], f"register.py importa {forbidden}"
@@ -202,17 +205,17 @@ def test_register_module_architecture() -> None:
 
 
 @pytest.fixture
-def settings(tmp_path: pathlib.Path) -> Iterator[IceduckSettings]:
+def settings(tmp_path: pathlib.Path) -> Iterator[DuckLakeIcebergSettings]:
     data = tmp_path / "data"
     iceberg = tmp_path / "iceberg"
     data.mkdir()
     iceberg.mkdir()
     env = {
-        "ICEDUCK_CATALOG_DSN": "ducklake:sqlite:/tmp/x.db",
-        "ICEDUCK_DATA_PATH": str(data),
-        "ICEDUCK_ICEBERG_METADATA_PREFIX": str(iceberg),
-        "ICEDUCK_GLUE_DATABASE": "analytics",
-        "ICEDUCK_AWS_REGION": REGION,
+        "DUCKLAKE_ICEBERG_CATALOG_DSN": "ducklake:sqlite:/tmp/x.db",
+        "DUCKLAKE_ICEBERG_DATA_PATH": str(data),
+        "DUCKLAKE_ICEBERG_ICEBERG_METADATA_PREFIX": str(iceberg),
+        "DUCKLAKE_ICEBERG_GLUE_DATABASE": "analytics",
+        "DUCKLAKE_ICEBERG_AWS_REGION": REGION,
     }
     old = {k: os.environ.get(k) for k in env}
     os.environ.update(env)
@@ -227,10 +230,10 @@ def settings(tmp_path: pathlib.Path) -> Iterator[IceduckSettings]:
 
 
 def _write_table_metadata(
-    settings_obj: IceduckSettings, table: str, *, snapshot_id: int
+    settings_obj: DuckLakeIcebergSettings, table: str, *, snapshot_id: int
 ) -> str:
     """Write a local metadata.json and the pointer; return the location."""
-    from iceduck.glue import normalize_table_name
+    from ducklake_iceberg.glue import normalize_table_name
 
     prefix = settings_obj.iceberg_metadata_prefix.rstrip("/")
     location = f"{prefix}/{settings_obj.glue_database}/{normalize_table_name(table)}"
@@ -281,13 +284,13 @@ def _write_table_metadata(
         ducklake_snapshot_id=snapshot_id,
         schema_version=0,
         exported_at="2025-10-26T11:02:48Z",
-        iceduck_version="0.1.0",
+        ducklake_iceberg_version="0.1.0",
     )
     write_pointer(io, pointer)
     return loc_uri
 
 
-def test_resolve_prefers_explicit(settings: IceduckSettings) -> None:
+def test_resolve_prefers_explicit(settings: DuckLakeIcebergSettings) -> None:
     loc, pointer = resolve_metadata_location(
         settings, "sales", "orders", explicit="s3://x/m.json"
     )
@@ -295,7 +298,7 @@ def test_resolve_prefers_explicit(settings: IceduckSettings) -> None:
     assert pointer is None
 
 
-def test_resolve_uses_pointer(settings: IceduckSettings) -> None:
+def test_resolve_uses_pointer(settings: DuckLakeIcebergSettings) -> None:
     loc_uri = _write_table_metadata(settings, "orders", snapshot_id=42)
     resolved, pointer = resolve_metadata_location(settings, "sales", "orders")
     assert resolved == f"{loc_uri}/metadata/v1.metadata.json"
@@ -304,9 +307,9 @@ def test_resolve_uses_pointer(settings: IceduckSettings) -> None:
 
 
 @mock_aws
-def test_register_coherence_ok(settings: IceduckSettings) -> None:
+def test_register_coherence_ok(settings: DuckLakeIcebergSettings) -> None:
     # _check_coherence accepts when the metadata snapshot matches the pointer.
-    from iceduck.register import _check_coherence
+    from ducklake_iceberg.register import _check_coherence
 
     pointer = _pointer("file:///x/t", snapshot_id=42)
     _check_coherence(
@@ -320,7 +323,7 @@ def test_register_coherence_ok(settings: IceduckSettings) -> None:
 
 def test_register_coherence_divergence() -> None:
     # pointer says snapshot 99, metadata says 42 -> DivergenceError (exit 3)
-    from iceduck.register import _check_coherence
+    from ducklake_iceberg.register import _check_coherence
 
     pointer = _pointer("file:///x/t", snapshot_id=99)
     with pytest.raises(DivergenceError, match="snapshot"):
@@ -335,7 +338,7 @@ def test_register_coherence_divergence() -> None:
 
 def test_register_explicit_wrong_table() -> None:
     # --metadata-location of another table -> DivergenceError
-    from iceduck.register import _check_coherence
+    from ducklake_iceberg.register import _check_coherence
 
     with pytest.raises(DivergenceError, match="table"):
         _check_coherence(
@@ -347,6 +350,6 @@ def test_register_explicit_wrong_table() -> None:
         )
 
 
-def test_register_no_export(settings: IceduckSettings) -> None:
+def test_register_no_export(settings: DuckLakeIcebergSettings) -> None:
     with pytest.raises(PointerError, match="no export found"):
         run_register(settings, "sales", "orders")

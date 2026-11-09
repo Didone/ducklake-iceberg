@@ -16,11 +16,11 @@ import pytest
 from pyiceberg.conversions import from_bytes
 from pyiceberg.manifest import DataFile, ManifestContent
 
-from iceduck.errors import ExitCode
-from iceduck.export import run_export
-from iceduck.register import build_file_io, read_pointer
-from iceduck.writer.commit import load_base_snapshot
-from iceduck.writer.metadata import read_metadata_json
+from ducklake_iceberg.errors import ExitCode
+from ducklake_iceberg.export import run_export
+from ducklake_iceberg.register import build_file_io, read_pointer
+from ducklake_iceberg.writer.commit import load_base_snapshot
+from ducklake_iceberg.writer.metadata import read_metadata_json
 
 from .conftest import CatalogHarness
 

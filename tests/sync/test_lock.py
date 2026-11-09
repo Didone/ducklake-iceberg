@@ -13,12 +13,18 @@ from pathlib import Path
 
 import pytest
 
-from iceduck.sync.lock import LockError, LockHeld, _lock_dir, _lock_key, table_lock
+from ducklake_iceberg.sync.lock import (
+    LockError,
+    LockHeld,
+    _lock_dir,
+    _lock_key,
+    table_lock,
+)
 
 
 @pytest.fixture
 def state_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setenv("ICEDUCK_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DUCKLAKE_ICEBERG_STATE_DIR", str(tmp_path / "state"))
     return tmp_path / "state" / "locks"
 
 
@@ -31,13 +37,16 @@ def test_lock_key_is_stable_and_scoped() -> None:
 
 
 def test_lock_dir_resolution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("ICEDUCK_STATE_DIR", raising=False)
+    monkeypatch.delenv("DUCKLAKE_ICEBERG_STATE_DIR", raising=False)
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg"))
-    assert _lock_dir() == tmp_path / "xdg" / "iceduck" / "locks"
+    assert _lock_dir() == tmp_path / "xdg" / "ducklake-iceberg" / "locks"
 
     monkeypatch.delenv("XDG_STATE_HOME")
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    assert _lock_dir() == tmp_path / "home" / ".local" / "state" / "iceduck" / "locks"
+    assert (
+        _lock_dir()
+        == tmp_path / "home" / ".local" / "state" / "ducklake-iceberg" / "locks"
+    )
 
     monkeypatch.delenv("HOME")
     with pytest.raises(LockError):
@@ -47,7 +56,7 @@ def test_lock_dir_resolution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
 def test_lock_dir_unwritable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     blocker = tmp_path / "file"
     blocker.write_text("x")
-    monkeypatch.setenv("ICEDUCK_STATE_DIR", str(blocker))
+    monkeypatch.setenv("DUCKLAKE_ICEBERG_STATE_DIR", str(blocker))
     with pytest.raises(LockError, match="Could not create"), table_lock("k"):
         pass
 
@@ -55,8 +64,8 @@ def test_lock_dir_unwritable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
 def test_network_dir_warns(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    monkeypatch.setattr("iceduck.sync.lock.Path.mkdir", lambda *a, **k: None)
-    monkeypatch.setenv("ICEDUCK_STATE_DIR", "/mnt/share/state")
+    monkeypatch.setattr("ducklake_iceberg.sync.lock.Path.mkdir", lambda *a, **k: None)
+    monkeypatch.setenv("DUCKLAKE_ICEBERG_STATE_DIR", "/mnt/share/state")
     _lock_dir()
     assert "network" in caplog.text
 
@@ -142,8 +151,8 @@ def test_wait_times_out_with_holder_info(
         sleeps.append(s)
         now[0] += s
 
-    monkeypatch.setattr("iceduck.sync.lock.time.monotonic", lambda: now[0])
-    monkeypatch.setattr("iceduck.sync.lock.time.sleep", sleep)
+    monkeypatch.setattr("ducklake_iceberg.sync.lock.time.monotonic", lambda: now[0])
+    monkeypatch.setattr("ducklake_iceberg.sync.lock.time.sleep", sleep)
     with (
         table_lock("k6"),
         pytest.raises(LockHeld) as exc,
@@ -167,8 +176,8 @@ def test_wait_acquires_when_released(
             raise OSError(errno.EWOULDBLOCK, "busy")
         real_flock(fd, op)
 
-    monkeypatch.setattr("iceduck.sync.lock.fcntl.flock", flaky)
-    monkeypatch.setattr("iceduck.sync.lock.time.sleep", lambda s: None)
+    monkeypatch.setattr("ducklake_iceberg.sync.lock.fcntl.flock", flaky)
+    monkeypatch.setattr("ducklake_iceberg.sync.lock.time.sleep", lambda s: None)
     with table_lock("k7", wait_s=5) as info:
         assert info is not None
     assert calls[0] >= 2
@@ -180,7 +189,7 @@ def test_unexpected_flock_error(
     def broken(fd: int, op: int) -> None:
         raise OSError(errno.EBADF, "bad")
 
-    monkeypatch.setattr("iceduck.sync.lock.fcntl.flock", broken)
+    monkeypatch.setattr("ducklake_iceberg.sync.lock.fcntl.flock", broken)
     with pytest.raises(LockError, match="Error acquiring"), table_lock("k8"):
         pass
 
@@ -189,7 +198,7 @@ def test_open_error(state_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def fail(*a: object, **k: object) -> int:
         raise OSError(errno.EACCES, "denied")
 
-    monkeypatch.setattr("iceduck.sync.lock.os.open", fail)
+    monkeypatch.setattr("ducklake_iceberg.sync.lock.os.open", fail)
     with pytest.raises(LockError, match="Error opening"), table_lock("k9"):
         pass
 
@@ -200,7 +209,7 @@ def test_metadata_write_error_is_only_a_warning(
     def fail(fd: int, length: int) -> None:
         raise OSError(errno.EIO, "io")
 
-    monkeypatch.setattr("iceduck.sync.lock.os.ftruncate", fail)
+    monkeypatch.setattr("ducklake_iceberg.sync.lock.os.ftruncate", fail)
     with table_lock("k10") as info:
         assert info is not None
     assert "lock metadata" in caplog.text
@@ -216,7 +225,7 @@ def test_unlock_error_is_only_a_warning(
             raise OSError(errno.EIO, "io")
         real_flock(fd, op)
 
-    monkeypatch.setattr("iceduck.sync.lock.fcntl.flock", flock)
+    monkeypatch.setattr("ducklake_iceberg.sync.lock.fcntl.flock", flock)
     with table_lock("k11"):
         pass
     assert "releasing lock" in caplog.text
@@ -227,7 +236,7 @@ def test_lock_held_by_other_process_and_released_on_kill(state_dir: Path) -> Non
     script = textwrap.dedent(
         """
         import sys, time
-        from iceduck.sync.lock import table_lock
+        from ducklake_iceberg.sync.lock import table_lock
         with table_lock("kp", metadata={"table": "s.t"}):
             print("ok", flush=True)
             time.sleep(60)

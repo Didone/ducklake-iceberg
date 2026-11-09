@@ -13,13 +13,20 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from iceduck.catalog.connection import open_catalog
-from iceduck.catalog.reader import current_snapshot, parse_table_ref, resolve_table
-from iceduck.checkpoint.command import run_checkpoint
-from iceduck.checkpoint.model import NestedVariantError, TableRef
-from iceduck.checkpoint.variant import find_nested_variants, find_variant_columns
-from iceduck.cli import app
-from iceduck.errors import ExitCode
+from ducklake_iceberg.catalog.connection import open_catalog
+from ducklake_iceberg.catalog.reader import (
+    current_snapshot,
+    parse_table_ref,
+    resolve_table,
+)
+from ducklake_iceberg.checkpoint.command import run_checkpoint
+from ducklake_iceberg.checkpoint.model import NestedVariantError, TableRef
+from ducklake_iceberg.checkpoint.variant import (
+    find_nested_variants,
+    find_variant_columns,
+)
+from ducklake_iceberg.cli import app
+from ducklake_iceberg.errors import ExitCode
 from tests.integration.conftest import CatalogHarness, cli_env_for
 
 pytestmark = [pytest.mark.integration]
@@ -50,13 +57,13 @@ def test_nested_variant_in_struct_blocks(
     catalog.write("INSERT INTO lake.main.t VALUES (1, {'attrs': NULL})")
 
     opened_write: list[bool] = []
-    from iceduck.catalog.connection import open_catalog as real
+    from ducklake_iceberg.catalog.connection import open_catalog as real
 
     def spy(cfg: Any, *, read_only: bool = True, s3: bool = True) -> Any:
         opened_write.append(read_only)
         return real(cfg, read_only=read_only, s3=s3)
 
-    monkeypatch.setattr("iceduck.checkpoint.command.open_catalog", spy)
+    monkeypatch.setattr("ducklake_iceberg.checkpoint.command.open_catalog", spy)
     report, error = _error(catalog, "main.t")
     assert report.exit_code == ExitCode.BLOCKED
     assert isinstance(error, NestedVariantError)

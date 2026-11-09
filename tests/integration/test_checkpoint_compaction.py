@@ -18,11 +18,11 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from iceduck.catalog.connection import open_catalog
-from iceduck.checkpoint.command import run_checkpoint
-from iceduck.checkpoint.model import PartitionSizeReport
-from iceduck.cli import app
-from iceduck.errors import ExitCode
+from ducklake_iceberg.catalog.connection import open_catalog
+from ducklake_iceberg.checkpoint.command import run_checkpoint
+from ducklake_iceberg.checkpoint.model import PartitionSizeReport
+from ducklake_iceberg.cli import app
+from ducklake_iceberg.errors import ExitCode
 from tests.integration.conftest import CatalogHarness, cli_env_for
 
 pytestmark = [pytest.mark.integration]

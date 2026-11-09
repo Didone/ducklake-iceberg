@@ -3,7 +3,7 @@
 The ``-m pins`` tests fail loudly on an accidental upgrade: a package outside the
 ``==`` pin in ``pyproject.toml`` or an extension with a different build in the
 DuckDB ``core`` repository. The CI ``compat-latest`` job excludes them (there,
-drift is the goal) and only reports ``python -m iceduck.deps --report-only``.
+drift is the goal) and only reports ``python -m ducklake_iceberg.deps --report-only``.
 """
 
 from __future__ import annotations
@@ -18,8 +18,8 @@ import pyiceberg
 import pytest
 import yaml
 
-from iceduck import deps
-from iceduck.catalog.connection import CONNECT_CONFIG, EXTENSIONS
+from ducklake_iceberg import deps
+from ducklake_iceberg.catalog.connection import CONNECT_CONFIG, EXTENSIONS
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -52,7 +52,7 @@ def test_pinned_extensions_are_the_ones_the_image_installs() -> None:
         EXTENSIONS[n] for n in ("ducklake", "postgres", "httpfs", "aws")
     }
     dockerfile = (ROOT / "Dockerfile").read_text("utf-8")
-    assert "python -m iceduck.deps" in dockerfile
+    assert "python -m ducklake_iceberg.deps" in dockerfile
 
 
 @pytest.mark.pins
@@ -66,10 +66,12 @@ def test_installed_extensions_match_pins() -> None:
     finally:
         con.close()
     drift = [p for p in pins if not p.ok]
-    assert not drift, f"extensions differ from the pins in iceduck.deps: {drift}"
+    assert not drift, (
+        f"extensions differ from the pins in ducklake_iceberg.deps: {drift}"
+    )
 
 
-# -- CLI ``python -m iceduck.deps`` (no network: only what is already installed) ------
+# -- CLI ``python -m ducklake_iceberg.deps`` (no network; only installed items) --
 
 
 def _fake_check(*pins: deps.Pin) -> Callable[[str | None], list[deps.Pin]]:
@@ -122,4 +124,4 @@ def test_compat_workflow_is_scheduled_manual_and_non_blocking() -> None:
     assert "FORCE INSTALL" in runs
     assert "pytest -m roundtrip" in runs
     assert "not pins" in runs
-    assert "iceduck.deps --report-only" in runs
+    assert "ducklake_iceberg.deps --report-only" in runs

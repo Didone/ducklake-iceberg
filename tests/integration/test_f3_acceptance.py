@@ -21,9 +21,9 @@ import duckdb
 import pytest
 from pyiceberg.table import StaticTable
 
-from iceduck.cli import aggregate_exit_code
-from iceduck.errors import ExitCode
-from iceduck.export import run_export
+from ducklake_iceberg.cli import aggregate_exit_code
+from ducklake_iceberg.errors import ExitCode
+from ducklake_iceberg.export import run_export
 
 from .conftest import CatalogHarness
 
@@ -150,11 +150,15 @@ def test_partitioned_sync_roundtrip(
     settings = partitioned_catalog.settings(iceberg_metadata_prefix=str(prefix))
 
     # 1. Doctor (preflight) - there are no blockers
-    from iceduck.catalog.connection import open_catalog
-    from iceduck.catalog.reader import current_snapshot, parse_table_ref, resolve_table
-    from iceduck.doctor.model import DoctorContext, DoctorTarget
-    from iceduck.doctor.rules import RULES
-    from iceduck.doctor.runner import run as run_rules
+    from ducklake_iceberg.catalog.connection import open_catalog
+    from ducklake_iceberg.catalog.reader import (
+        current_snapshot,
+        parse_table_ref,
+        resolve_table,
+    )
+    from ducklake_iceberg.doctor.model import DoctorContext, DoctorTarget
+    from ducklake_iceberg.doctor.rules import RULES
+    from ducklake_iceberg.doctor.runner import run as run_rules
 
     with open_catalog(settings, read_only=True) as con, con.read_transaction():
         snapshot = current_snapshot(con)

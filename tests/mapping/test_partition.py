@@ -25,8 +25,8 @@ from pyiceberg.types import (
     TimestampType,
 )
 
-from iceduck.doctor.model import Severity
-from iceduck.mapping.partition import (
+from ducklake_iceberg.doctor.model import Severity
+from ducklake_iceberg.mapping.partition import (
     PARTITION_FIELD_ID_START,
     UNPARTITIONED_SPEC_ID,
     DuckLakePartitionColumn,
@@ -446,7 +446,7 @@ def test_unknown_creation_name_keeps_synthetic_name() -> None:
 def test_published_names_are_kept_for_existing_specs() -> None:
     from pyiceberg.partitioning import PartitionField, PartitionSpec
 
-    from iceduck.mapping.partition import with_published_names
+    from ducklake_iceberg.mapping.partition import with_published_names
 
     old = _info(5, (_named(5, 0, 2, "epoch_day", "dt"),), begin=1, end=50)
     new = _info(6, (_named(6, 0, 3, "bucket(8)", "state"),), begin=50)

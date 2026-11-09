@@ -1,6 +1,6 @@
-"""``iceduck status`` and ``iceduck clean`` end to end.
+"""``ducklake-iceberg status`` and ``ducklake-iceberg clean`` end to end.
 
-Real DuckLake (SQLite) -> ``iceduck sync`` -> moto Glue, with the metadata
+Real DuckLake (SQLite) -> ``ducklake-iceberg sync`` -> moto Glue, with the metadata
 under a **local** prefix (PyArrow S3 is not intercepted by moto); that is why
 the ``s3://`` check on registration is relaxed here, as in ``test_sync_e2e``.
 """
@@ -27,7 +27,7 @@ from moto import mock_aws
 from pyiceberg.catalog.glue import GlueCatalog
 from typer.testing import CliRunner
 
-from iceduck.cli import app
+from ducklake_iceberg.cli import app
 
 from .conftest import CatalogHarness
 
@@ -40,15 +40,15 @@ OLD = 3 * 86400  # older than the default grace period (24 h)
 
 @pytest.fixture
 def glue_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    monkeypatch.setenv("ICEDUCK_STATE_DIR", str(tmp_path / "state"))
-    with mock_aws(), mock.patch("iceduck.glue._validate_metadata_location"):
+    monkeypatch.setenv("DUCKLAKE_ICEBERG_STATE_DIR", str(tmp_path / "state"))
+    with mock_aws(), mock.patch("ducklake_iceberg.glue._validate_metadata_location"):
         yield
 
 
 @pytest.fixture
 def config(catalog: CatalogHarness, tmp_path: Path) -> Path:
     catalog.write("CALL lake.set_option('data_inlining_row_limit', 0)")
-    path = tmp_path / "iceduck.yaml"
+    path = tmp_path / "ducklake-iceberg.yaml"
     path.write_text(
         f"catalog_dsn: '{catalog.dsn}'\n"
         f"data_path: '{catalog.data_path}'\n"
@@ -163,7 +163,7 @@ def test_status_lifecycle(
     assert pending["added_records"] == 1
     assert pending["added_delete_files"] == 1
     assert pending["removed_files"] == 0
-    assert table["findings"][0]["remediation"] == "iceduck sync --table main.t"
+    assert table["findings"][0]["remediation"] == "ducklake-iceberg sync --table main.t"
 
     code, doc = _status(config, "--table", "main.t", "--no-delta")
     assert code == 3
@@ -313,7 +313,7 @@ def test_status_schema_drift_and_rich_output(
     )
     assert result.exit_code == 3
     assert "SCHEMA_DRIFT" in result.stdout
-    assert "Run: iceduck sync --table main.t" in result.stdout
+    assert "Run: ducklake-iceberg sync --table main.t" in result.stdout
 
 
 def test_status_external_write_and_diverged_both(
@@ -452,7 +452,7 @@ def test_clean_dry_run_then_apply(
     os.utime(future, (ts, ts))
     orphans = _orphans(location)
 
-    with mock.patch("iceduck.s3.LocalStore.delete_objects") as delete:
+    with mock.patch("ducklake_iceberg.s3.LocalStore.delete_objects") as delete:
         code, doc = _clean(config)
         delete.assert_not_called()  # dry run never deletes
     assert code == 0
@@ -462,7 +462,7 @@ def test_clean_dry_run_then_apply(
     reasons = {Path(c["key"]).name: c["reason"] for c in result["candidates"]}
     assert reasons["v8.metadata.json"].startswith("within the grace period")
     assert "future" in reasons["v7.metadata.json"]
-    assert reasons["_iceduck_last_export.json"].startswith("unknown type")
+    assert reasons["_ducklake_iceberg_last_export.json"].startswith("unknown type")
 
     code, doc = _clean(config, "--apply", "--max-deletes", "2")
     assert code == 0, doc["problems"]
@@ -571,7 +571,7 @@ def test_clean_aborts_on_parquet_missing_and_unreadable(
 
 
 def test_clean_lock_held(catalog: CatalogHarness, config: Path, glue_env: None) -> None:
-    from iceduck.sync.lock import _lock_key, table_lock
+    from ducklake_iceberg.sync.lock import _lock_key, table_lock
 
     catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
     catalog.write("INSERT INTO lake.main.t VALUES (1)")

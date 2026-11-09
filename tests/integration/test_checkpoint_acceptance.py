@@ -12,9 +12,9 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from iceduck.checkpoint.command import run_checkpoint
-from iceduck.cli import app
-from iceduck.errors import ExitCode, OperationAborted
+from ducklake_iceberg.checkpoint.command import run_checkpoint
+from ducklake_iceberg.cli import app
+from ducklake_iceberg.errors import ExitCode, OperationAborted
 from tests.integration.conftest import CatalogHarness, cli_env_for
 
 pytestmark = [pytest.mark.integration]
@@ -30,7 +30,7 @@ def _seed_all_tables(catalog: CatalogHarness) -> None:
 
 
 def _max_snapshot(catalog: CatalogHarness) -> int:
-    from iceduck.catalog.connection import open_catalog
+    from ducklake_iceberg.catalog.connection import open_catalog
 
     with open_catalog(catalog.settings(), read_only=True) as con:
         return int(
@@ -116,8 +116,8 @@ def test_exit_4_message_in_rich(catalog: CatalogHarness) -> None:
 def _force_degraded_inlined(catalog: CatalogHarness) -> None:
     """Recreate the physical inlining table without the visibility columns,
     forcing the degraded detection mode."""
-    from iceduck.catalog.connection import open_catalog
-    from iceduck.catalog.reader import current_snapshot
+    from ducklake_iceberg.catalog.connection import open_catalog
+    from ducklake_iceberg.catalog.reader import current_snapshot
 
     catalog.write("CREATE TABLE lake.main.deg (id INTEGER)")
     with open_catalog(catalog.settings(), read_only=True) as con:

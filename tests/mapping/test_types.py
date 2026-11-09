@@ -20,7 +20,7 @@ from pyiceberg.types import (
     UUIDType,
 )
 
-from iceduck.mapping.types import (
+from ducklake_iceberg.mapping.types import (
     ATHENA_MS_NOTE,
     BLOCKED_TYPES,
     NESTED_TYPES,

@@ -2,8 +2,9 @@
 
 DuckLake with an ``s3://`` ``DATA_PATH`` on an ephemeral MinIO (testcontainers),
 moto Glue and Iceberg metadata under a local prefix. moto lets S3 pass through
-(``passthrough``) and iceduck's boto3 reaches MinIO via ``AWS_ENDPOINT_URL_S3``;
-iceduck's DuckDB does not touch S3 in this flow (the plan comes from the
+(``passthrough``) and ducklake-iceberg's boto3 reaches MinIO via
+``AWS_ENDPOINT_URL_S3``;
+ducklake-iceberg's DuckDB does not touch S3 in this flow (the plan comes from the
 official dry-run and the export statistics come from the catalog).
 
 It also pins the upstream bug behind the workaround: with the ``aws``
@@ -34,7 +35,7 @@ import duckdb
 import pytest
 from typer.testing import CliRunner
 
-from iceduck.cli import app
+from ducklake_iceberg.cli import app
 
 pytestmark = [pytest.mark.integration, pytest.mark.aws, pytest.mark.minio]
 
@@ -43,7 +44,7 @@ REGION = "us-east-1"
 KEY_ID = "minioadmin"
 SECRET = "minioadmin"
 #: MinIO stopped publishing images on Docker Hub; the pgsty fork keeps the same
-#: CLI (``minio server``). Override with ICEDUCK_MINIO_IMAGE.
+#: CLI (``minio server``). Override with DUCKLAKE_ICEBERG_MINIO_IMAGE.
 DEFAULT_IMAGE = "pgsty/minio:RELEASE.2026-08-04T00-00-00Z"
 
 
@@ -85,7 +86,7 @@ def minio() -> Iterator[MinIO]:
     from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 
     container = (
-        DockerContainer(os.environ.get("ICEDUCK_MINIO_IMAGE", DEFAULT_IMAGE))
+        DockerContainer(os.environ.get("DUCKLAKE_ICEBERG_MINIO_IMAGE", DEFAULT_IMAGE))
         .with_env("MINIO_ROOT_USER", KEY_ID)
         .with_env("MINIO_ROOT_PASSWORD", SECRET)
         .with_command("server /data")
@@ -189,11 +190,11 @@ def lake(
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", KEY_ID)
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", SECRET)
     monkeypatch.setenv("AWS_DEFAULT_REGION", REGION)
-    # iceduck's boto3 (S3Store) goes to MinIO; Glue stays on moto
+    # ducklake-iceberg's boto3 (S3Store) goes to MinIO; Glue stays on moto
     monkeypatch.setenv("AWS_ENDPOINT_URL_S3", minio.url)
-    monkeypatch.setenv("ICEDUCK_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DUCKLAKE_ICEBERG_STATE_DIR", str(tmp_path / "state"))
 
-    config = tmp_path / "iceduck.yaml"
+    config = tmp_path / "ducklake-iceberg.yaml"
     dsn = f"ducklake:sqlite:{tmp_path / 'catalog.sqlite'}"
     data_path = f"s3://{bucket}/lake/"
     config.write_text(
@@ -213,7 +214,7 @@ def lake(
     }
     with (
         mock_aws(config=moto_config),
-        mock.patch("iceduck.glue._validate_metadata_location"),
+        mock.patch("ducklake_iceberg.glue._validate_metadata_location"),
     ):
         import boto3
 

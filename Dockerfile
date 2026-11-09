@@ -24,7 +24,7 @@ ARG REVISION=unknown
 ARG SOURCE=unknown
 ARG CREATED=unknown
 
-LABEL org.opencontainers.image.title="iceduck" \
+LABEL org.opencontainers.image.title="ducklake-iceberg" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}" \
       org.opencontainers.image.source="${SOURCE}" \
@@ -33,21 +33,21 @@ LABEL org.opencontainers.image.title="iceduck" \
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    HOME=/home/iceduck \
+    HOME=/home/ducklake-iceberg \
     VIRTUAL_ENV=/opt/venv \
     PATH="/opt/venv/bin:${PATH}" \
-    ICEDUCK_LOG_LEVEL=INFO \
-    ICEDUCK_DUCKDB_EXTENSION_DIRECTORY=/home/iceduck/.duckdb/extensions
+    DUCKLAKE_ICEBERG_LOG_LEVEL=INFO \
+    DUCKLAKE_ICEBERG_DUCKDB_EXTENSION_DIRECTORY=/home/ducklake-iceberg/.duckdb/extensions
 
-RUN groupadd --gid 10001 iceduck \
+RUN groupadd --gid 10001 ducklake-iceberg \
  && useradd --uid 10001 --gid 10001 --create-home \
-      --shell /usr/sbin/nologin iceduck
+      --shell /usr/sbin/nologin ducklake-iceberg
 
 COPY --from=builder /opt/venv /opt/venv
 
 USER 10001:10001
 # Extensions are embedded in $HOME/.duckdb/extensions/v<duckdb>/<platform>/; the
-# ICEDUCK_DUCKDB_EXTENSION_DIRECTORY setting (above) points to the same place,
+# DUCKLAKE_ICEBERG_DUCKDB_EXTENSION_DIRECTORY setting (above) points to the same place,
 # which keeps LOAD working with a different or read-only HOME.
 RUN python -c "import duckdb; c = duckdb.connect(); \
 [c.execute(f'INSTALL {e}') for e in ('ducklake', 'postgres', 'httpfs', 'aws')]; \
@@ -55,7 +55,7 @@ print(c.execute(\"SELECT extension_name, installed FROM duckdb_extensions() \
 WHERE extension_name IN ('ducklake', 'postgres_scanner', 'httpfs', 'aws') \
 ORDER BY extension_name\").fetchall())"
 
-WORKDIR /home/iceduck
+WORKDIR /home/ducklake-iceberg
 RUN --network=none python -c "import duckdb; \
 c = duckdb.connect(':memory:', config={'autoinstall_known_extensions': False, \
 'autoload_known_extensions': False}); \
@@ -67,9 +67,9 @@ print(sorted(loaded))"
 # Pinned versions: DuckDB and PyIceberg come from poetry.lock (== in
 # pyproject), but the core repository may replace an extension build without
 # changing the DuckDB version. The build fails if the hash of any extension (or
-# the duckdb/pyiceberg version) differs from iceduck.deps.
-RUN --network=none python -m iceduck.deps
-RUN --network=none iceduck --version && iceduck doctor --help >/dev/null
+# the duckdb/pyiceberg version) differs from ducklake_iceberg.deps.
+RUN --network=none python -m ducklake_iceberg.deps
+RUN --network=none ducklake-iceberg --version && ducklake-iceberg doctor --help >/dev/null
 
-ENTRYPOINT ["iceduck"]
+ENTRYPOINT ["ducklake-iceberg"]
 CMD ["--help"]

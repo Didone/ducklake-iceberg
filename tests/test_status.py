@@ -9,8 +9,8 @@ from datetime import UTC, datetime
 import pytest
 from rich.console import Console
 
-from iceduck import report
-from iceduck.status import (
+from ducklake_iceberg import report
+from ducklake_iceberg.status import (
     Finding,
     GlueSide,
     Observed,
@@ -21,7 +21,7 @@ from iceduck.status import (
     build_snapshot_path,
     classify,
 )
-from iceduck.sync.state import StateMismatch
+from ducklake_iceberg.sync.state import StateMismatch
 
 I_HAT = 7714
 SNAPS: dict[int, tuple[int | None, str | None, dict[str, str]]] = {
@@ -45,7 +45,7 @@ def _ok(**kw: object) -> Observed:
         p_schema_version=1,
         snapshots=SNAPS,
         pending=ZERO,
-        remediation="iceduck sync --table s.t",
+        remediation="ducklake-iceberg sync --table s.t",
     )
     return replace(base, **kw)  # type: ignore[arg-type]
 
@@ -78,7 +78,11 @@ def _codes(findings: list[Finding]) -> list[StatusCode]:
         (
             _ok(
                 state_mismatch=StateMismatch(
-                    "STATE_VERSION_AHEAD", "iceduck.state-version", "<= 1", "2", "v2"
+                    "STATE_VERSION_AHEAD",
+                    "ducklake_iceberg.state-version",
+                    "<= 1",
+                    "2",
+                    "v2",
                 )
             ),
             StatusCode.UNREADABLE,
@@ -293,7 +297,7 @@ def test_render_rich_single_behind() -> None:
     assert "✓ equal to I" in text
     assert "-2 files" in text
     assert "delete files +1/-0" in text
-    assert "Run: iceduck sync --table s.t" in text
+    assert "Run: ducklake-iceberg sync --table s.t" in text
 
 
 def test_render_rich_single_mismatch_markers() -> None:

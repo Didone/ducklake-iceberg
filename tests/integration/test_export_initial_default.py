@@ -15,11 +15,11 @@ from unittest import mock
 import pytest
 from pyiceberg.table import StaticTable
 
-import iceduck.export
-from iceduck.checkpoint.command import run_checkpoint
-from iceduck.config import IceduckSettings
-from iceduck.errors import CompatibilityError, ExitCode
-from iceduck.export import run_export
+import ducklake_iceberg.export
+from ducklake_iceberg.checkpoint.command import run_checkpoint
+from ducklake_iceberg.config import DuckLakeIcebergSettings
+from ducklake_iceberg.errors import CompatibilityError, ExitCode
+from ducklake_iceberg.export import run_export
 
 from .conftest import CatalogHarness
 
@@ -34,7 +34,7 @@ def harness(catalog: CatalogHarness) -> CatalogHarness:
     return catalog
 
 
-def _settings(harness: CatalogHarness, tmp_path: Path) -> IceduckSettings:
+def _settings(harness: CatalogHarness, tmp_path: Path) -> DuckLakeIcebergSettings:
     prefix = tmp_path / "iceberg"
     prefix.mkdir(exist_ok=True)
     return harness.settings(iceberg_metadata_prefix=str(prefix))
@@ -130,9 +130,11 @@ def test_compacted_files_with_default_are_published(
 def _export_counting_footers(
     harness: CatalogHarness, tmp_path: Path
 ) -> tuple[list[dict[str, Any]], int]:
-    from iceduck.writer.stats import file_field_ids as real
+    from ducklake_iceberg.writer.stats import file_field_ids as real
 
-    with mock.patch.object(iceduck.export, "file_field_ids", wraps=real) as spy:
+    with mock.patch.object(
+        ducklake_iceberg.export, "file_field_ids", wraps=real
+    ) as spy:
         result = run_export(_settings(harness, tmp_path), "main", "t")
     assert result.exit_code is ExitCode.SUCCESS
     return _iceberg_rows(result.plan.metadata_location), spy.call_count

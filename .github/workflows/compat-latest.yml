@@ -66,9 +66,9 @@ jobs:
       - name: Found versus pinned versions
         run: |
           {
-            echo '### Versions (iceduck.deps)'
+            echo '### Versions (ducklake_iceberg.deps)'
             echo '```json'
-            poetry run python -m iceduck.deps --report-only
+            poetry run python -m ducklake_iceberg.deps --report-only
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Writer round trip through the PyIceberg reader

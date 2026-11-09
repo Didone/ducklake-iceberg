@@ -28,7 +28,7 @@ from pyiceberg.types import (
     UUIDType,
 )
 
-from iceduck.writer.catalog_stats import STRING_TRUNCATE, column_bounds
+from ducklake_iceberg.writer.catalog_stats import STRING_TRUNCATE, column_bounds
 
 
 def _decoded(itype: PrimitiveType, low: str, high: str) -> tuple[object, object]:

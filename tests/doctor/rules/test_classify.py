@@ -12,8 +12,13 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
-from iceduck.doctor.model import Capability, DoctorContext, DoctorTarget, Severity
-from iceduck.doctor.rules import (
+from ducklake_iceberg.doctor.model import (
+    Capability,
+    DoctorContext,
+    DoctorTarget,
+    Severity,
+)
+from ducklake_iceberg.doctor.rules import (
     calendar_transform,
     delete_parquet,
     delete_puffin,

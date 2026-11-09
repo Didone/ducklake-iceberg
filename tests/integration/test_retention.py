@@ -1,7 +1,7 @@
-"""``iceduck validate --only retention`` end to end.
+"""``ducklake-iceberg validate --only retention`` end to end.
 
 Real DuckLake (SQLite on the fast path, Postgres with ``-m postgres``) ->
-``iceduck sync`` -> moto Glue, with the Iceberg metadata under a local prefix
+``ducklake-iceberg sync`` -> moto Glue, with the Iceberg metadata under a local prefix
 (PyArrow S3 is not intercepted by moto). States DuckLake does not produce on
 its own within seconds (old snapshot, old schedule) are forged with
 ``meta_exec`` directly on the metadata database.
@@ -30,10 +30,10 @@ from pyiceberg.schema import Schema
 from pyiceberg.types import IntegerType, NestedField
 from typer.testing import CliRunner
 
-from iceduck import aws
-from iceduck.catalog.connection import open_catalog
-from iceduck.cli import app
-from iceduck.retention import (
+from ducklake_iceberg import aws
+from ducklake_iceberg.catalog.connection import open_catalog
+from ducklake_iceberg.cli import app
+from ducklake_iceberg.retention import (
     IcebergFiles,
     RetentionPolicy,
     RetentionSource,
@@ -58,15 +58,15 @@ DECLARED = (
 
 @pytest.fixture
 def glue_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    monkeypatch.setenv("ICEDUCK_STATE_DIR", str(tmp_path / "state"))
-    with mock_aws(), mock.patch("iceduck.glue._validate_metadata_location"):
+    monkeypatch.setenv("DUCKLAKE_ICEBERG_STATE_DIR", str(tmp_path / "state"))
+    with mock_aws(), mock.patch("ducklake_iceberg.glue._validate_metadata_location"):
         yield
 
 
 @pytest.fixture
 def config(catalog: CatalogHarness, tmp_path: Path) -> Path:
     catalog.write("CALL lake.set_option('data_inlining_row_limit', 0)")
-    path = tmp_path / "iceduck.yaml"
+    path = tmp_path / "ducklake-iceberg.yaml"
     path.write_text(
         f"catalog_dsn: '{catalog.dsn}'\n"
         f"data_path: '{catalog.data_path}'\n"
@@ -541,7 +541,7 @@ def test_access_denied_on_head_object_exits_1(
         oldest_history_ms=None,
         expired_evidence=False,
     )
-    with mock.patch("iceduck.retention.iceberg_files", return_value=files):
+    with mock.patch("ducklake_iceberg.retention.iceberg_files", return_value=files):
         code, doc = _retention(declared, "--check-s3", "full")
 
     assert code == 1

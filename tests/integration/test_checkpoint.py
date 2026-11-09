@@ -1,4 +1,4 @@
-"""Integration tests for the `iceduck checkpoint` command.
+"""Integration tests for the `ducklake-iceberg checkpoint` command.
 
 The SAME suite runs against SQLite and Postgres via the fixtures in
 `tests/integration/conftest.py`. The checkpoint runs, in this order,
@@ -15,15 +15,15 @@ import duckdb
 import pytest
 from typer.testing import CliRunner
 
-from iceduck.catalog.connection import DuckLakeConnection, open_catalog
-from iceduck.checkpoint import command as cmd
-from iceduck.checkpoint.command import (
+from ducklake_iceberg.catalog.connection import DuckLakeConnection, open_catalog
+from ducklake_iceberg.checkpoint import command as cmd
+from ducklake_iceberg.checkpoint.command import (
     read_fingerprint,
     resolve_scope,
     run_checkpoint,
 )
-from iceduck.cli import app
-from iceduck.errors import DivergenceError, ExitCode
+from ducklake_iceberg.cli import app
+from ducklake_iceberg.errors import DivergenceError, ExitCode
 from tests.integration.conftest import CatalogHarness, cli_env_for
 
 pytestmark = [pytest.mark.integration]

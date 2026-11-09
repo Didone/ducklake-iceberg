@@ -20,9 +20,9 @@ from pyiceberg.types import (
     TimestampType,
 )
 
-from iceduck.catalog.connection import open_catalog
-from iceduck.mapping.schema import build_iceberg_schema, read_columns
-from iceduck.sync.schema_evolution import (
+from ducklake_iceberg.catalog.connection import open_catalog
+from ducklake_iceberg.mapping.schema import build_iceberg_schema, read_columns
+from ducklake_iceberg.sync.schema_evolution import (
     ChangeKind,
     IDReuseError,
     SchemaBlockerError,

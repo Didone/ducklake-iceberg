@@ -42,14 +42,17 @@ from pyiceberg.types import (
 )
 from pyiceberg.utils.schema_conversion import AvroSchemaConversion
 
-from iceduck.writer.avro import (
+from ducklake_iceberg.writer.avro import (
     UnsupportedFormatVersion,
     manifest_list_name,
     manifest_name,
     to_avro_value,
 )
-from iceduck.writer.manifest import verify_manifest, write_manifest
-from iceduck.writer.manifest_list import verify_manifest_list, write_manifest_list
+from ducklake_iceberg.writer.manifest import verify_manifest, write_manifest
+from ducklake_iceberg.writer.manifest_list import (
+    verify_manifest_list,
+    write_manifest_list,
+)
 
 
 def _io() -> PyArrowFileIO:

@@ -1,12 +1,12 @@
-"""Translation of DuckDB errors into iceduck errors, without opening a connection."""
+"""Translation of DuckDB errors into tool errors, without opening a connection."""
 
 from __future__ import annotations
 
 import duckdb
 import pytest
 
-from iceduck.catalog.connection import _translate
-from iceduck.errors import AwsError, CatalogError
+from ducklake_iceberg.catalog.connection import _translate
+from ducklake_iceberg.errors import AwsError, CatalogError
 
 
 @pytest.mark.parametrize(

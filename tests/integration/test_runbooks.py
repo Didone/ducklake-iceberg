@@ -1,6 +1,6 @@
 """Operational runbooks A, B and C exercised offline.
 
-Real DuckLake (SQLite) -> ``iceduck sync`` -> moto Glue, with metadata under a
+Real DuckLake (SQLite) -> ``ducklake-iceberg sync`` -> moto Glue, with metadata under a
 **local** prefix (PyArrow S3 is not intercepted by moto), as in
 ``test_status_clean``. Proves the limits the operational runbooks assume; a
 rehearsal in staging is still a separate acceptance criterion.
@@ -29,7 +29,7 @@ from pyiceberg.catalog.glue import GlueCatalog
 from pyiceberg.table import StaticTable
 from typer.testing import CliRunner
 
-from iceduck.cli import app
+from ducklake_iceberg.cli import app
 
 from .conftest import CatalogHarness
 
@@ -41,15 +41,15 @@ REGION = "us-east-1"
 
 @pytest.fixture
 def glue_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    monkeypatch.setenv("ICEDUCK_STATE_DIR", str(tmp_path / "state"))
-    with mock_aws(), mock.patch("iceduck.glue._validate_metadata_location"):
+    monkeypatch.setenv("DUCKLAKE_ICEBERG_STATE_DIR", str(tmp_path / "state"))
+    with mock_aws(), mock.patch("ducklake_iceberg.glue._validate_metadata_location"):
         yield
 
 
 @pytest.fixture
 def config(catalog: CatalogHarness, tmp_path: Path) -> Path:
     catalog.write("CALL lake.set_option('data_inlining_row_limit', 0)")
-    path = tmp_path / "iceduck.yaml"
+    path = tmp_path / "ducklake-iceberg.yaml"
     path.write_text(
         f"catalog_dsn: '{catalog.dsn}'\n"
         f"data_path: '{catalog.data_path}'\n"
@@ -254,8 +254,8 @@ def test_runbook_c_restore_after_external_write(
     """Write "via Athena" -> sync blocked -> UpdateTable to the last export.
 
     ``register`` alone does not restore (the external pointer is not an
-    ancestor of the iceduck export); the way is Runbook A step 4 pointing to
-    the ``metadata_location`` in ``_iceduck_last_export.json``.
+    ancestor of the ducklake-iceberg export); the way is Runbook A step 4 pointing to
+    the ``metadata_location`` in ``_ducklake_iceberg_last_export.json``.
     """
     catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
     catalog.write("INSERT INTO lake.main.t SELECT * FROM range(5)")
@@ -269,7 +269,7 @@ def test_runbook_c_restore_after_external_write(
     code, doc = _invoke(config, "validate", "--table", "main.t")
     assert code == 3
 
-    pointer = json.loads((location / "_iceduck_last_export.json").read_text())
+    pointer = json.loads((location / "_ducklake_iceberg_last_export.json").read_text())
     code, doc = _invoke(
         config,
         "register",

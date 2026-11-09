@@ -19,8 +19,8 @@ from pyiceberg.table.snapshots import (
     TOTAL_POSITION_DELETES,
 )
 
-from iceduck.errors import ExitCode
-from iceduck.writer import summary as sm
+from ducklake_iceberg.errors import ExitCode
+from ducklake_iceberg.writer import summary as sm
 
 
 def _entry(
@@ -177,7 +177,7 @@ def test_build_summary_with_deletes() -> None:
         data_part={"total-records": "10", "added-records": "0"},
         delete_delta=sm.DeleteDelta(2, 5, 1, 4),
         delete_totals=sm.DeleteTotals(3, 9),
-        extra={"iceduck.b": "2", "iceduck.a": "1"},
+        extra={"ducklake_iceberg.b": "2", "ducklake_iceberg.a": "1"},
     )
     assert next(iter(summary)) == OPERATION
     assert summary[OPERATION] == "delete"
@@ -190,7 +190,7 @@ def test_build_summary_with_deletes() -> None:
     assert summary[TOTAL_DELETE_FILES] == "3"
     assert summary[TOTAL_POSITION_DELETES] == "9"
     assert summary[TOTAL_EQUALITY_DELETES] == "0"
-    assert list(summary)[-2:] == ["iceduck.a", "iceduck.b"]
+    assert list(summary)[-2:] == ["ducklake_iceberg.a", "ducklake_iceberg.b"]
     assert all(isinstance(v, str) for v in summary.values())
 
 

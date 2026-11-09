@@ -18,10 +18,10 @@ from botocore.exceptions import ClientError
 from moto import mock_aws
 from pydantic import ValidationError
 
-from iceduck import aws
-from iceduck.config import RetentionSettings
-from iceduck.errors import AwsError, ExitCode
-from iceduck.retention import (
+from ducklake_iceberg import aws
+from ducklake_iceberg.config import RetentionSettings
+from ducklake_iceberg.errors import AwsError, ExitCode
+from ducklake_iceberg.retention import (
     DoomedFile,
     IcebergFiles,
     RetentionMessage,
@@ -110,7 +110,7 @@ def test_check_s3_is_missing_and_permission_errors_are_distinct() -> None:
 
     paths = ["s3://bucket/missing", "s3://bucket/forbidden"]
     with (
-        mock.patch("iceduck.retention.aws.client", return_value=FakeS3()),
+        mock.patch("ducklake_iceberg.retention.aws.client", return_value=FakeS3()),
         pytest.raises(AwsError, match="AccessDenied"),
     ):
         check_s3_existence(
@@ -120,7 +120,7 @@ def test_check_s3_is_missing_and_permission_errors_are_distinct() -> None:
         )
 
     with mock.patch(
-        "iceduck.retention.aws.client",
+        "ducklake_iceberg.retention.aws.client",
         return_value=mock.Mock(
             head_object=mock.Mock(
                 side_effect=ClientError(
@@ -450,7 +450,7 @@ def test_render_handles_no_snapshot_result(capsys: pytest.CaptureFixture[str]) -
     render_retention([result])
     out = capsys.readouterr().out
     assert "nothing to check: table has no published snapshot" in out
-    assert "iceduck sync" in out
+    assert "ducklake-iceberg sync" in out
 
 
 def test_render_prints_margin_in_readable_units(

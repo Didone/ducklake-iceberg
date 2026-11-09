@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from pyiceberg.manifest import DataFileContent, ManifestContent, ManifestEntryStatus
 
-from iceduck.writer import sequence as sq
+from ducklake_iceberg.writer import sequence as sq
 
 _ADDED = int(ManifestEntryStatus.ADDED)
 _EXISTING = int(ManifestEntryStatus.EXISTING)

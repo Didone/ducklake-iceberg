@@ -13,17 +13,17 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from iceduck.catalog.connection import DuckLakeConnection, open_catalog
-from iceduck.catalog.reader import (
+from ducklake_iceberg.catalog.connection import DuckLakeConnection, open_catalog
+from ducklake_iceberg.catalog.reader import (
     TableRef,
     catalog_data_path,
     current_snapshot,
     resolve_table,
     snapshot_at,
 )
-from iceduck.deletes import reader as rd
-from iceduck.deletes.visibility import DanglingPolicy, filter_visible
-from iceduck.errors import ExitCode, IceduckError
+from ducklake_iceberg.deletes import reader as rd
+from ducklake_iceberg.deletes.visibility import DanglingPolicy, filter_visible
+from ducklake_iceberg.errors import DuckLakeIcebergError, ExitCode
 from tests.integration.conftest import CatalogHarness
 
 pytestmark = [pytest.mark.integration]
@@ -197,7 +197,7 @@ def test_table_without_deletes_is_empty(catalog: CatalogHarness) -> None:
     ],
 )
 def test_unsupported_delete_files_block(
-    catalog: CatalogHarness, forge: str, error: type[IceduckError]
+    catalog: CatalogHarness, forge: str, error: type[DuckLakeIcebergError]
 ) -> None:
     _two_files(catalog)
     catalog.write("DELETE FROM lake.main.t WHERE id = 3")
@@ -298,7 +298,7 @@ def test_inlined_deletes_block_by_default(catalog: CatalogHarness) -> None:
     with pytest.raises(rd.InlinedDeletesPendingError) as exc_info:
         _read(catalog)
     assert exc_info.value.exit_code == ExitCode.BLOCKED
-    assert "iceduck checkpoint" in (exc_info.value.hint or "")
+    assert "ducklake-iceberg checkpoint" in (exc_info.value.hint or "")
 
 
 def test_inlined_deletes_on_file_without_delete_file(catalog: CatalogHarness) -> None:
@@ -369,7 +369,7 @@ def test_duplicate_and_orphan_inlined(catalog: CatalogHarness) -> None:
     assert report.dangling_data_file_ids == (999,)
     assert report.rows_applied == 2
     assert visible.num_rows == 2
-    with pytest.raises(IceduckError, match="999"):
+    with pytest.raises(DuckLakeIcebergError, match="999"):
         filter_visible(
             ds,
             snapshot_id=ds.snapshot_id,
@@ -466,9 +466,9 @@ def test_read_delete_file_validations(catalog: CatalogHarness, tmp_path: Path) -
         assert "file_path" in schema_err.value.message
         assert schema_err.value.exit_code == ExitCode.ERROR
 
-        with pytest.raises(IceduckError, match="null file_path"):
+        with pytest.raises(DuckLakeIcebergError, match="null file_path"):
             rd.read_delete_file(con, _forged(null_path, delete_count=1))
-        with pytest.raises(IceduckError, match="null pos"):
+        with pytest.raises(DuckLakeIcebergError, match="null pos"):
             rd.read_delete_file(con, _forged(null_pos, delete_count=1))
 
         # file_path differs from the catalog: warning, the catalog wins

@@ -33,7 +33,7 @@ from pyiceberg.types import (
     StructType,
 )
 
-from iceduck.writer.stats import (
+from ducklake_iceberg.writer.stats import (
     DUCKLAKE_INTERNAL_FIELD_IDS,
     FileToExport,
     RecordCountMismatch,

@@ -11,9 +11,9 @@ import re
 
 import pytest
 
-from iceduck.doctor.model import DoctorContext, DoctorTarget, Severity
-from iceduck.doctor.plan import PLAN_ORDER, execution_plan
-from iceduck.doctor.rules import (
+from ducklake_iceberg.doctor.model import DoctorContext, DoctorTarget, Severity
+from ducklake_iceberg.doctor.plan import PLAN_ORDER, execution_plan
+from ducklake_iceberg.doctor.rules import (
     RULES,
     calendar_transform,
     delete_parquet,

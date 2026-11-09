@@ -21,13 +21,13 @@ from pyiceberg.types import (
     TimestampType,
 )
 
-from iceduck.glue_stats import (
+from ducklake_iceberg.glue_stats import (
     GLUE_STATS_BATCH,
     ColumnStat,
     plan_column_statistics,
     publish_column_statistics,
 )
-from iceduck.obs.metrics import RunMetrics, collect
+from ducklake_iceberg.obs.metrics import RunMetrics, collect
 
 
 def test_plan_supported_and_unsupported_types() -> None:
@@ -249,7 +249,7 @@ def test_publish_retries_throttling_and_counts_calls(
 ) -> None:
     """A transient Glue error uses backoff; retries enter the metrics."""
     sleeps: list[float] = []
-    monkeypatch.setattr("iceduck.retry.time.sleep", sleeps.append)
+    monkeypatch.setattr("ducklake_iceberg.retry.time.sleep", sleeps.append)
     stubber = Stubber(glue_client)
     stubber.add_client_error(
         "update_column_statistics_for_table",
@@ -284,7 +284,7 @@ def test_publish_retries_throttling_and_counts_calls(
 def test_publish_fatal_error_is_not_retried(
     glue_client: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("iceduck.retry.time.sleep", lambda _: None)
+    monkeypatch.setattr("ducklake_iceberg.retry.time.sleep", lambda _: None)
     stubber = Stubber(glue_client)
     stubber.add_client_error(
         "update_column_statistics_for_table",

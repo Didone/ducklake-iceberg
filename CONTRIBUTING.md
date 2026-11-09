@@ -1,6 +1,6 @@
-# Contributing to iceduck
+# Contributing to ducklake-iceberg
 
-Thanks for your interest in improving `iceduck`! Bug reports, feature requests
+Thanks for your interest in improving `ducklake-iceberg`! Bug reports, feature requests
 and pull requests are welcome.
 
 By participating you agree that your contributions are licensed under the
@@ -12,8 +12,8 @@ The project uses [Poetry](https://python-poetry.org/) (2.x), a `src/` layout and
 supports Python 3.11 to 3.14.
 
 ```bash
-git clone https://github.com/Didone/iceduck.git
-cd iceduck
+git clone https://github.com/Didone/ducklake-iceberg.git
+cd ducklake-iceberg
 poetry install
 ```
 
@@ -74,7 +74,7 @@ the SQLite and the Postgres backends; that parity is an acceptance requirement.
 
 ## Architecture notes
 
-`iceduck` is a Typer CLI that publishes DuckLake tables as Iceberg v2 tables in
+`ducklake-iceberg` is a Typer CLI that publishes DuckLake tables as Iceberg v2 tables in
 the AWS Glue Data Catalog **without copying data**. Sync is one-way
 (DuckLake to Iceberg).
 
@@ -109,8 +109,8 @@ are `status`, `validate` (DuckLake and Iceberg reconciliation) and `clean`
 
 `ExitCode` in `errors.py` is a public contract: 0 success, 1 error, 2 blocked
 (compatibility), 3 diverged, 4 nothing to do. Exceptions carry their exit code
-(`IceduckError` subclasses). `--json` emits a versioned envelope (`output.py`,
-schema `src/iceduck/schemas/envelope-v1.json`). Optional keys may be added;
+(`DuckLakeIcebergError` subclasses). `--json` emits a versioned envelope (`output.py`,
+schema `src/ducklake_iceberg/schemas/envelope-v1.json`). Optional keys may be added;
 renaming or removing keys, or changing a key's type or meaning, requires a new
 envelope version. Logs go to stderr (`obs/`, with credential redaction in
 `obs/redaction.py`).
@@ -120,7 +120,7 @@ Exception names such as `NothingToDo`, `RecordCountMismatch` and
 
 ### Design decisions that must not be broken
 
-- **Zero-copy.** Data Parquet files are never copied or deleted by iceduck.
+- **Zero-copy.** Data Parquet files are never copied or deleted by ducklake-iceberg.
   Only delete files are rewritten. Physical cleanup of data files is DuckLake's
   job.
 - **Own metadata writer.** PyIceberg is used as the data model and reader, but
@@ -165,11 +165,11 @@ boto3 sessions and clients (`aws.py`), the PyIceberg FileIO cache
 needs the same reset. Concurrency limits are centralized in `concurrency.py`.
 
 Configuration (`config.py`, pydantic-settings) is resolved as: CLI flag >
-`ICEDUCK_*` environment variable > `iceduck.yaml` > default.
+`DUCKLAKE_ICEBERG_*` environment variable > `ducklake-iceberg.yaml` > default.
 
 ### Performance measurements
 
-`ICEDUCK_TIMINGS=1` adds a `timings` key (per-phase milliseconds and counters
+`DUCKLAKE_ICEBERG_TIMINGS=1` adds a `timings` key (per-phase milliseconds and counters
 for DuckDB connections, boto3 sessions and AWS calls) to the `--json` envelope.
 `scripts/bench_sync.py` runs a command N times and reports p50/p95. On WSL,
 benchmark from the Linux filesystem (not `/mnt/c`) and call the virtualenv
@@ -179,7 +179,7 @@ executable directly instead of `poetry run`.
 
 `duckdb` and `pyiceberg` are pinned to exact versions in `pyproject.toml`,
 and the extension builds (`ducklake`, `postgres`, `httpfs`, `aws`) are pinned
-in `src/iceduck/deps.py`. `python -m iceduck.deps` compares the environment
+in `src/ducklake_iceberg/deps.py`. `python -m ducklake_iceberg.deps` compares the environment
 with those pins (the Docker image build runs it), and the weekly,
 non-blocking `compat-latest` workflow runs the suite against the newest
 versions.
@@ -187,7 +187,7 @@ versions.
 To bump them:
 
 1. Update the `==` pin in `pyproject.toml` and run `poetry lock`.
-2. Update `src/iceduck/deps.py` with the new extension hashes.
+2. Update `src/ducklake_iceberg/deps.py` with the new extension hashes.
 3. Run `poetry run pytest -m "pins or roundtrip"` and the full suite.
 
 ## Releasing
@@ -218,7 +218,7 @@ is stored) and creates the GitHub release.
 
 One-time setup for maintainers:
 
-- On PyPI, add a *trusted publisher* for the repository `Didone/iceduck`,
+- On PyPI, add a *trusted publisher* for the repository `Didone/ducklake-iceberg`,
   workflow `release.yml`, environment `pypi`.
 - In GitHub, create the `pypi` environment (optionally with required
   reviewers).

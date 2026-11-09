@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://iceduck/doctor-v1.json",
-  "title": "iceduck doctor --json (version 1)",
+  "$id": "https://ducklake-iceberg/doctor-v1.json",
+  "title": "ducklake-iceberg doctor --json (version 1)",
   "type": "object",
   "required": [
     "version",

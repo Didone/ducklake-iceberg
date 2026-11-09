@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from iceduck.checkpoint.model import TableRef
-from iceduck.checkpoint.report import (
+from ducklake_iceberg.checkpoint.model import TableRef
+from ducklake_iceberg.checkpoint.report import (
     CheckpointSnapshotReport,
     FileRecord,
     SnapshotRow,

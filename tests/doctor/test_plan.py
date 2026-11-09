@@ -16,22 +16,22 @@ import pytest
 from jsonschema import validate
 from rich.console import Console
 
-from iceduck.doctor import rules as real_rules
-from iceduck.doctor.model import (
+from ducklake_iceberg.doctor import rules as real_rules
+from ducklake_iceberg.doctor.model import (
     DoctorContext,
     DoctorTarget,
     Finding,
     RuleStatus,
     Severity,
 )
-from iceduck.doctor.plan import (
+from ducklake_iceberg.doctor.plan import (
     PLAN_ORDER,
     ExecutionPlan,
     PlanError,
     execution_plan,
 )
-from iceduck.doctor.render import render
-from iceduck.doctor.runner import run
+from ducklake_iceberg.doctor.render import render
+from ducklake_iceberg.doctor.runner import run
 
 _SCHEMA = json.loads((Path(__file__).parent / "schema" / "doctor-v1.json").read_text())
 
@@ -44,7 +44,7 @@ def _ensure_real_rules_registered() -> None:
     `_REGISTRY` empty depending on module order; here we make sure
     `all_rules()`/`select_plan()` see the real rules.
     """
-    from iceduck.doctor import registry
+    from ducklake_iceberg.doctor import registry
 
     registry._reset()
     for rule in real_rules.RULES:
@@ -167,7 +167,7 @@ def test_dependents_of_non_gate_empty(rule_id: str) -> None:
 
 # 5 - rule registered but absent from PLAN_ORDER (strict, via registry)
 def test_extra_rule_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    from iceduck.doctor import plan as plan_mod
+    from ducklake_iceberg.doctor import plan as plan_mod
 
     extra = FakeRule("intruder")
     monkeypatch.setattr(plan_mod, "all_rules", lambda: (*real_rules.RULES, extra))
@@ -177,7 +177,7 @@ def test_extra_rule_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
 # 6 - PLAN_ORDER with an id missing from the registry
 def test_missing_rule_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    from iceduck.doctor import plan as plan_mod
+    from ducklake_iceberg.doctor import plan as plan_mod
 
     incomplete = tuple(r for r in real_rules.RULES if r.id != "encryption-key")
     monkeypatch.setattr(plan_mod, "all_rules", lambda: incomplete)
@@ -315,7 +315,7 @@ def test_json_no_short_circuit(ctx: DoctorContext) -> None:
 
 # 18 - select_plan pulls in the gate
 def test_select_plan_pulls_gate() -> None:
-    from iceduck.doctor.plan import select_plan
+    from ducklake_iceberg.doctor.plan import select_plan
 
     plan = select_plan(["partial-files"])
     ids = [r.id for r in plan]
@@ -332,7 +332,7 @@ def test_rich_skip_paragraph(
     render(report, console=console)
     out = capsys.readouterr().out
     assert "were not evaluated" in out
-    assert "iceduck checkpoint" in out
+    assert "ducklake-iceberg checkpoint" in out
     # no skipped rule line contains the OK (green) marker
     for line in out.splitlines():
         if "SKIPPED" in line:

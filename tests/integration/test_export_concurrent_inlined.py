@@ -12,16 +12,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from iceduck.config import IceduckSettings
-from iceduck.errors import ExitCode
-from iceduck.export import run_export
+from ducklake_iceberg.config import DuckLakeIcebergSettings
+from ducklake_iceberg.errors import ExitCode
+from ducklake_iceberg.export import run_export
 
 from .conftest import CatalogHarness
 
 LATE_ROWS = "INSERT INTO lake.main.pedidos VALUES (3, 'RJ'), (4, 'MG'), (5, 'BA')"
 
 
-def _settings(harness: CatalogHarness, tmp_path: Path) -> IceduckSettings:
+def _settings(harness: CatalogHarness, tmp_path: Path) -> DuckLakeIcebergSettings:
     prefix = tmp_path / "iceberg"
     prefix.mkdir(exist_ok=True)
     return harness.settings(iceberg_metadata_prefix=str(prefix))

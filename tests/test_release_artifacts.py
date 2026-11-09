@@ -17,7 +17,8 @@ def _check_release(
     import sys
 
     (tmp_path / "pyproject.toml").write_text(
-        f'[project]\nname = "iceduck"\nversion = "{version}"\n', encoding="utf-8"
+        f'[project]\nname = "ducklake-iceberg"\nversion = "{version}"\n',
+        encoding="utf-8",
     )
     args = [sys.executable, str(ROOT / "scripts/check_release_version.py"), tag]
     if changelog is not None:
@@ -163,11 +164,12 @@ def test_dockerfile_runtime_contract_and_no_credentials() -> None:
     runtime = _dockerfile_runtime()
     assert "FROM python:3.12-slim-bookworm AS runtime" in text
     assert "USER 10001:10001" in runtime
-    assert "HOME=/home/iceduck" in runtime
-    assert 'ENTRYPOINT ["iceduck"]' in runtime
+    assert "HOME=/home/ducklake-iceberg" in runtime
+    assert 'ENTRYPOINT ["ducklake-iceberg"]' in runtime
     assert 'CMD ["--help"]' in runtime
-    assert "ICEDUCK_DUCKDB_EXTENSION_DIRECTORY=/home/iceduck/.duckdb/extensions" in (
-        runtime
+    assert (
+        "DUCKLAKE_ICEBERG_DUCKDB_EXTENSION_DIRECTORY=/home/ducklake-iceberg/.duckdb/extensions"
+        in (runtime)
     )
     assert (
         "--network=none" in runtime

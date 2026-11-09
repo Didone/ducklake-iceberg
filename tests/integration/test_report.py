@@ -12,8 +12,8 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from iceduck.checkpoint.command import run_checkpoint
-from iceduck.cli import app
+from ducklake_iceberg.checkpoint.command import run_checkpoint
+from ducklake_iceberg.cli import app
 from tests.integration.conftest import CatalogHarness, cli_env_for
 
 pytestmark = [pytest.mark.integration]

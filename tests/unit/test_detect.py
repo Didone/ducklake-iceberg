@@ -8,7 +8,7 @@ correctly.
 
 from __future__ import annotations
 
-from iceduck.checkpoint.detect import (
+from ducklake_iceberg.checkpoint.detect import (
     _PHYSICAL_NAME,
     InlinedCount,
     InlinedPhysicalTable,
@@ -16,7 +16,7 @@ from iceduck.checkpoint.detect import (
     _classify,
     _reconcile,
 )
-from iceduck.checkpoint.model import TableRef
+from ducklake_iceberg.checkpoint.model import TableRef
 
 # -- the regex is anchored and does not match the DuckLake spec tables -------
 _SPEC_TABLES = [
