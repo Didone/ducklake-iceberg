@@ -186,6 +186,41 @@ The benchmark runs fresh processes and reports wall/in-process/startup
 distributions. `--prepare` can change the source before each run; use it only
 with a trusted command and a non-production workload.
 
+With `--json` and `DUCKLAKE_ICEBERG_TIMINGS=1`, `timings.phases_ms` also
+separates `catalog.connect`, `catalog.attach`, `catalog.probe`,
+`catalog.clear_cache`, `catalog.secret`, `catalog.close`, and per-extension
+`catalog.extension.<name>.load`/`.install`. Installed extensions are loaded
+without running `INSTALL`; only a missing extension triggers installation.
+`catalog.query` and `catalog.queries` measure the instrumented catalog reads
+(doctor, detection, enumeration, mappings and connection reads), without
+recording SQL text or parameters. They are not a count of PostgreSQL wire
+round trips or native DuckLake queries.
+
+`inlining.registered`, `.introspect`, `.count`, and `.cross_check` break down
+`inlining.detect`. Detection results and physical-table discovery are reused
+only within a consistent read, never across transactions or after a flush;
+`inlining.detections` and `inlining.cache_hits` show the work avoided.
+`checkpoint.detect`, `checkpoint.fingerprint`, `checkpoint.flush`, and
+`checkpoint.flush_call` distinguish preparation from the actual DuckLake call.
+The fingerprint is skipped when there is nothing to flush.
+
+The parquet/puffin doctor rules share one read of live delete files, including
+the same snapshot filter. `doctor.query_cache_hits` counts these reuses.
+The runner creates a fresh query cache for each invocation, including
+post-flush revalidation; skipped rules do not trigger reads, and failed
+queries are not cached.
+
+For metadata I/O, `s3.manifests_put`, `s3.metadata_put`, `s3.pointer_put`,
+`s3.metadata_get`, and `s3.pointer_get` separate the object types.
+`deletes.read`, `.encode`, and `.upload`, plus the `deletes.source_files`
+counter, distinguish reading source delete files from encoding/uploading the
+Iceberg files. Read timings include decoding; upload timings include any
+existence checks performed by FileIO. These are logical operations, not
+individual HTTP requests.
+
+These detailed timings are inclusive and nested: do not sum them with their
+parent phases. `results[].metrics.phases` provides exclusive phase durations.
+
 Common levers:
 
 - `stats_source=catalog` reduces footer reads where catalog metrics suffice.
