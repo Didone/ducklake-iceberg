@@ -44,7 +44,7 @@ from ducklake_iceberg.deletes.convert import (
 )
 from ducklake_iceberg.deletes.writer import InvalidDeletePositionError
 from ducklake_iceberg.errors import CompatibilityError
-from ducklake_iceberg.export import _evolve_schema
+from ducklake_iceberg.mapping.evolution import evolve_schema
 from ducklake_iceberg.writer.commit import (
     BaseSnapshot,
     CommitError,
@@ -357,7 +357,7 @@ def test_evolve_schema_allows_promotions_and_keeps_optional() -> None:
         NestedField(2, "p", DecimalType(12, 2), required=False),
         NestedField(3, "n", StringType(), required=True),
     )
-    evolved = _evolve_schema(new, base)
+    evolved = evolve_schema(new, base)
     assert evolved.find_field(1).field_type == LongType()
     assert not evolved.find_field(1).required  # was optional: stays optional
     assert evolved.find_field(3).required  # new column keeps NOT NULL
@@ -366,7 +366,7 @@ def test_evolve_schema_allows_promotions_and_keeps_optional() -> None:
 def test_evolve_schema_rejects_incompatible_type_change() -> None:
     base = _meta(Schema(NestedField(1, "id", IntegerType(), required=False)))
     with pytest.raises(CompatibilityError, match="promotion"):
-        _evolve_schema(Schema(NestedField(1, "id", StringType(), required=False)), base)
+        evolve_schema(Schema(NestedField(1, "id", StringType(), required=False)), base)
 
 
 def test_metadata_only_update_has_no_new_snapshot() -> None:

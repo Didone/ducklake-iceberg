@@ -15,7 +15,7 @@ from unittest import mock
 import pytest
 from pyiceberg.table import StaticTable
 
-import ducklake_iceberg.export
+import ducklake_iceberg.catalog.view
 from ducklake_iceberg.config import DuckLakeIcebergSettings
 from ducklake_iceberg.errors import CompatibilityError, ExitCode
 from ducklake_iceberg.export import run_export
@@ -117,7 +117,7 @@ def _export_counting_footers(
     from ducklake_iceberg.writer.stats import file_field_ids as real
 
     with mock.patch.object(
-        ducklake_iceberg.export, "file_field_ids", wraps=real
+        ducklake_iceberg.catalog.view, "file_field_ids", wraps=real
     ) as spy:
         result = run_export(_settings(harness, tmp_path), "main", "t")
     assert result.exit_code is ExitCode.SUCCESS

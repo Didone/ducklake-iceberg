@@ -141,6 +141,7 @@ ignore = ["S101"]  # assert is legitimate in tests
 # S105: `pass` is a validation status, not a credential.
 "src/ducklake_iceberg/deletes/reader.py" = ["S608"]
 "src/ducklake_iceberg/export.py" = ["S608"]
+"src/ducklake_iceberg/catalog/view.py" = ["S608"]
 "src/ducklake_iceberg/writer/catalog_stats.py" = ["S608"]
 # E501, SIM102: end-to-end tests may use long lines and nested ifs for clarity.
 "tests/e2e/*.py" = ["E501", "SIM102"]

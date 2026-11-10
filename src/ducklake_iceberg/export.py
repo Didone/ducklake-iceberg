@@ -1,9 +1,9 @@
-"""The ``ducklake-iceberg export`` command.
+"""The export stage of ``sync``.
 
 Produces, under the Iceberg metadata prefix, the Iceberg snapshot that mirrors
 the current snapshot of a DuckLake table: data and delete manifests, the
-manifest list, ``v{N}.metadata.json`` and the handoff pointer consumed by
-``register``. It **only reads the catalog (READ_ONLY) and writes to S3** - it
+manifest list, ``v{N}.metadata.json`` and the handoff pointer consumed by the
+register stage. It **only reads the catalog (READ_ONLY) and writes to S3** - it
 never copies data Parquet (zero-copy) and never touches Glue.
 
 First export or incremental, the path is the same:
@@ -31,8 +31,7 @@ import dataclasses
 import hashlib
 import json
 import logging
-import re
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
@@ -42,18 +41,6 @@ from pyiceberg.partitioning import PartitionSpec
 from pyiceberg.schema import Schema
 from pyiceberg.table.snapshots import Operation
 from pyiceberg.typedef import Record
-from pyiceberg.types import (
-    DecimalType,
-    DoubleType,
-    FloatType,
-    IcebergType,
-    IntegerType,
-    ListType,
-    LongType,
-    MapType,
-    NestedField,
-    StructType,
-)
 
 from ducklake_iceberg import __version__, timing
 from ducklake_iceberg.catalog.connection import metadata_catalog
@@ -61,20 +48,17 @@ from ducklake_iceberg.catalog.files import (
     FileSet,
     LiveDataFile,
     LiveDeleteFile,
-    enumerate_files,
 )
 from ducklake_iceberg.catalog.reader import (
     TableIdentity,
-    current_snapshot,
-    parse_table_ref,
-    resolve_table,
-    snapshot_at,
 )
-from ducklake_iceberg.checkpoint.detect import clean_snapshot, detect_inlined
-from ducklake_iceberg.checkpoint.model import TableRef as CheckpointTableRef
+from ducklake_iceberg.catalog.view import (
+    CatalogView,
+    check_initial_defaults,
+    read_catalog,
+)
 from ducklake_iceberg.concurrency import (
     ContextThreadPoolExecutor,
-    footer_workers,
     io_workers,
 )
 from ducklake_iceberg.deletes.convert import (
@@ -82,27 +66,17 @@ from ducklake_iceberg.deletes.convert import (
     read_visible_positions,
 )
 from ducklake_iceberg.deletes.writer import PositionDelete, write_position_delete_file
-from ducklake_iceberg.doctor.model import DoctorTarget, Finding, quote_ident
+from ducklake_iceberg.doctor.model import Finding
 from ducklake_iceberg.errors import (
-    CompatibilityError,
     DivergenceError,
     DuckLakeIcebergError,
     ExitCode,
 )
+from ducklake_iceberg.mapping.evolution import evolve_schema
 from ducklake_iceberg.mapping.partition import (
     SpecMapping,
     build_partition_record,
-    build_spec_mapping,
-    read_partition_specs,
-    read_partition_values,
     with_published_names,
-)
-from ducklake_iceberg.mapping.schema import (
-    DuckLakeColumn,
-    SchemaMapping,
-    build_iceberg_schema,
-    read_columns,
-    read_last_column_id,
 )
 from ducklake_iceberg.obs.metrics import add_call, add_work
 from ducklake_iceberg.register import (
@@ -151,7 +125,7 @@ from ducklake_iceberg.writer.metadata import (
     read_metadata_or_none,
     write_metadata_json,
 )
-from ducklake_iceberg.writer.stats import FileToExport, build_data_files, file_field_ids
+from ducklake_iceberg.writer.stats import FileToExport, build_data_files
 
 if TYPE_CHECKING:
     from pyiceberg.io import FileIO
@@ -169,7 +143,6 @@ _FIRST_METADATA_VERSION: Final[int] = 1
 _COMPACTION_TOKENS: Final[frozenset[str]] = frozenset(
     {"merge_adjacent", "rewrite_delete"}
 )
-_CHANGE_RE: Final[re.Pattern[str]] = re.compile(r"([a-z_]+):(\d+)")
 #: default for concurrent delete file conversions; the effective value comes
 #: from ``max_io_workers``
 _DELETE_WORKERS: Final[int] = 8
@@ -339,320 +312,6 @@ def _load_base(io: FileIO, location: str, pointer: ExportPointer | None) -> _Bas
     return _Base(pointer=pointer, metadata=metadata)
 
 
-# -- reading DuckLake (step 2) -------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class _CatalogView:
-    identity: TableIdentity
-    snapshot_id: int
-    snapshot_time: datetime
-    files: FileSet
-    schema_mapping: SchemaMapping
-    spec_mapping: SpecMapping
-    values_by_file: dict[int, dict[int, str | None]]
-    table_changes: tuple[str, ...]  # tokens of the (S_previous, S] window
-    #: column_id with a non-null ``initial_default`` -> snapshot that added it
-    defaults_added_at: Mapping[int, int] = dataclasses.field(default_factory=dict)
-    #: ``S_previous`` of the ``table_changes`` window (None = no window)
-    table_changes_since: int | None = None
-    #: the window has all snapshots (none expired in between): only then does
-    #: the absence of a token prove the table did not change
-    table_changes_complete: bool = False
-
-
-def _read_catalog(
-    con: DuckLakeConnection, ref_text: str, previous_snapshot: int | None
-) -> _CatalogView:
-    ref = parse_table_ref(ref_text)
-    with timing.phase("resolve"):
-        snapshot = current_snapshot(con)
-        identity = resolve_table(con, ref, snapshot)
-
-        # Target: the most recent snapshot without pending inlined data. An
-        # inlined commit that lands between the flush and the export is not
-        # lost: it is left for the next export. Never below what is already
-        # published; if needed, the guard below blocks.
-        target_id = clean_snapshot(
-            con.raw,
-            con.meta,
-            CheckpointTableRef(
-                identity.ref.schema_name, identity.ref.table_name, identity.table_id
-            ),
-            snapshot.snapshot_id,
-        )
-        if previous_snapshot is not None:
-            target_id = max(target_id, previous_snapshot)
-        if target_id != snapshot.snapshot_id:
-            snapshot = snapshot_at(con, target_id)
-            identity = resolve_table(con, ref, snapshot)
-
-    target = DoctorTarget(
-        catalog=con.alias,
-        metadata_catalog=con.meta,
-        schema_name=identity.ref.schema_name,
-        table_name=identity.ref.table_name,
-        table_id=identity.table_id,
-        snapshot_id=snapshot.snapshot_id,
-        schema_version=identity.schema_version,
-    )
-
-    # Inlined guard: with files already existing, the enumeration does not see
-    # the pending inlined rows - the export would silently lose them.
-    inlined = detect_inlined(
-        con.raw,
-        con.meta,
-        CheckpointTableRef(
-            identity.ref.schema_name, identity.ref.table_name, identity.table_id
-        ),
-        snapshot.snapshot_id,
-    )
-    if inlined.has_pending:
-        raise CompatibilityError(
-            f"{target.qualified_name} has {inlined.pending_data_rows} row(s) and "
-            f"{inlined.pending_delete_rows} deletion(s) of pending inlined data; "
-            f"the export would lose them",
-            hint=(f"ducklake-iceberg sync --table {target.qualified_name}"),
-        )
-
-    file_set = enumerate_files(con.raw, target, allow_historic=True)
-    columns = read_columns(con.raw, con.meta, identity.table_id, snapshot.snapshot_id)
-    schema_mapping = build_iceberg_schema(
-        columns,
-        schema_id=identity.schema_version,
-        last_column_id=read_last_column_id(con.raw, con.meta, identity.table_id),
-    )
-    spec_mapping = build_spec_mapping(
-        read_partition_specs(con.raw, con.meta, identity.table_id),
-        schema_mapping.schema,
-        snapshot_id=snapshot.snapshot_id,
-    )
-    values_by_file = read_partition_values(con.raw, con.meta, identity.table_id)
-    defaults_added_at = _defaults_added_at(
-        con, identity.table_id, schema_mapping.columns_by_id
-    )
-    changes: tuple[str, ...] = ()
-    complete = False
-    if previous_snapshot is not None:
-        changes = _table_changes(
-            con, identity.table_id, previous_snapshot, snapshot.snapshot_id
-        )
-        complete = _window_complete(con, previous_snapshot, snapshot.snapshot_id)
-    return _CatalogView(
-        identity=identity,
-        snapshot_id=snapshot.snapshot_id,
-        snapshot_time=snapshot.snapshot_time,
-        files=file_set,
-        schema_mapping=schema_mapping,
-        spec_mapping=spec_mapping,
-        values_by_file=values_by_file,
-        table_changes=changes,
-        defaults_added_at=defaults_added_at,
-        table_changes_since=previous_snapshot,
-        table_changes_complete=complete,
-    )
-
-
-def _window_complete(con: DuckLakeConnection, previous: int, target: int) -> bool:
-    """All snapshots in ``(prev, S]`` exist, with their change records.
-
-    DuckLake's ``snapshot_id`` is sequential; ``ducklake_expire_snapshots``
-    deletes snapshots (and their ``ducklake_snapshot_changes`` rows). A window
-    with a gap may have lost precisely this table's token.
-    """
-    meta = quote_ident(con.meta)
-    row = con.query_arrow(
-        f"SELECT (SELECT count(*) FROM {meta}.ducklake_snapshot "
-        f"WHERE snapshot_id > $prev AND snapshot_id <= $target) AS snapshots, "
-        f"(SELECT count(*) FROM {meta}.ducklake_snapshot_changes "
-        f"WHERE snapshot_id > $prev AND snapshot_id <= $target) AS changes",
-        {"prev": previous, "target": target},
-    ).to_pylist()[0]
-    expected = target - previous
-    return int(row["snapshots"]) == expected and int(row["changes"]) == expected
-
-
-def _table_changes(
-    con: DuckLakeConnection, table_id: int, previous: int, target: int
-) -> tuple[str, ...]:
-    """Change kinds recorded for the table in the ``(prev, S]`` window."""
-    rows = con.query_arrow(
-        f"SELECT changes_made FROM {quote_ident(con.meta)}.ducklake_snapshot_changes "
-        f"WHERE snapshot_id > $prev AND snapshot_id <= $target",
-        {"prev": previous, "target": target},
-    ).to_pylist()
-    kinds: list[str] = []
-    for row in rows:
-        for kind, ident in _CHANGE_RE.findall(str(row["changes_made"] or "")):
-            if int(ident) == table_id:
-                kinds.append(kind)
-    return tuple(kinds)
-
-
-# -- initial default ---------------------------------------------------------
-
-
-def _has_initial_default(col: DuckLakeColumn) -> bool:
-    raw = col.initial_default
-    return raw is not None and raw.strip().upper() != "NULL"
-
-
-def _defaults_added_at(
-    con: DuckLakeConnection, table_id: int, columns: Mapping[int, DuckLakeColumn]
-) -> dict[int, int]:
-    """Snapshot in which each column with an ``initial_default`` was added.
-
-    It is the smallest ``begin_snapshot`` of the ``column_id``: ``SET DEFAULT``
-    opens a new row in ``ducklake_column`` and does not change the
-    ``initial_default``.
-    """
-    wanted = sorted(cid for cid, col in columns.items() if _has_initial_default(col))
-    if not wanted:
-        return {}
-    rows = con.query_arrow(
-        f"SELECT column_id, min(begin_snapshot) AS added_at "
-        f"FROM {quote_ident(con.meta)}.ducklake_column "
-        f"WHERE table_id = $table_id GROUP BY column_id",
-        {"table_id": table_id},
-    ).to_pylist()
-    added = {int(r["column_id"]): int(r["added_at"]) for r in rows}
-    return {cid: added[cid] for cid in wanted if cid in added}
-
-
-def _check_initial_defaults(view: _CatalogView, io: FileIO) -> None:
-    """Block a live data file that lacks a column with an ``initial_default`` (exit 2).
-
-    In DuckLake the rows of a file written before ``ADD COLUMN ... DEFAULT x``
-    read ``x``; Iceberg v2 has no ``initial-default`` and every reader (Athena
-    included) reads NULL - a silent divergence. Only the footer tells whether
-    the file has the column: the checkpoint compaction may have rewritten it
-    with the materialized value while keeping the original ``begin_snapshot``.
-    The candidates are the files that predate the column; in the common case
-    (no column with a default, or no file older than it) no footer is read.
-    """
-    if not view.defaults_added_at:
-        return
-    candidates = [
-        f
-        for f in view.files.files
-        if any(f.begin_snapshot < s for s in view.defaults_added_at.values())
-    ]
-    if not candidates:
-        return
-    with ContextThreadPoolExecutor(max_workers=footer_workers(len(candidates))) as pool:
-        present = list(pool.map(lambda f: file_field_ids(f.path, io), candidates))
-    missing: dict[int, list[str]] = {}
-    for f, ids in zip(candidates, present, strict=True):
-        for cid, added_at in view.defaults_added_at.items():
-            if f.begin_snapshot < added_at and cid not in ids:
-                missing.setdefault(cid, []).append(f.path)
-    if not missing:
-        return
-    paths = view.schema_mapping.paths_by_id
-    columns = ", ".join(
-        f"{paths.get(cid, str(cid))!r} (DEFAULT "
-        f"{view.schema_mapping.columns_by_id[cid].initial_default}, "
-        f"{len(files)} file(s))"
-        for cid, files in sorted(missing.items())
-    )
-    # the UPDATE rewrites the top-level column (the whole struct for a nested field)
-    roots = dict.fromkeys(paths.get(cid, str(cid)).split(".")[0] for cid in missing)
-    quoted = ['"' + r.replace('"', '""') + '"' for r in roots]
-    assignments = ", ".join(f"{q} = {q}" for q in quoted)
-    table = view.identity.ref
-    raise CompatibilityError(
-        f"{table.schema_name}.{table.table_name}: column(s) added with DEFAULT "
-        f"have no value in the earlier data files: {columns}; DuckLake reads the "
-        f"default for those rows, Iceberg v2 (no initial-default) would read NULL",
-        hint=(
-            f"rewrite the old rows in DuckLake, e.g. UPDATE "
-            f"{table.schema_name}.{table.table_name} SET {assignments} "
-            f"(violates zero-copy), and run sync again"
-        ),
-    )
-
-
-# -- schema --------------------------------------------------------------------
-
-_PROMOTIONS: Final[frozenset[tuple[type[IcebergType], type[IcebergType]]]] = frozenset(
-    {(IntegerType, LongType), (FloatType, DoubleType)}
-)
-
-
-def _evolve_schema(schema: Schema, base: TableMetadata | None) -> Schema:
-    """Check the evolution against the published schema and preserve nullability.
-
-    Field IDs come from DuckLake's ``column_id``, which is never reused; what
-    can still break readers is changing the type of an ID to something that is
-    not an Iceberg promotion (exit 2) or making a previously optional column
-    required - it is kept optional, the only valid form in Iceberg.
-    """
-    if base is None:
-        return schema
-    published: dict[int, NestedField] = {}
-    for old in base.schemas:
-        for fid in old.field_ids:
-            published.setdefault(fid, old.find_field(fid))
-
-    def check_type(fid: int, name: str, new: IcebergType) -> None:
-        old_field = published.get(fid)
-        if old_field is None or not new.is_primitive:
-            return
-        old = old_field.field_type
-        if old == new or (type(old), type(new)) in _PROMOTIONS:
-            return
-        if (
-            isinstance(old, DecimalType)
-            and isinstance(new, DecimalType)
-            and old.scale == new.scale
-            and new.precision >= old.precision
-        ):
-            return
-        raise CompatibilityError(
-            f"column {name!r} (field id {fid}) changed from {old} to {new}; "
-            f"that is not a valid Iceberg promotion",
-            hint="recreate the Iceberg table (new prefix) or revert the type",
-        )
-
-    def visit(f: NestedField) -> NestedField:
-        check_type(f.field_id, f.name, f.field_type)
-        field_type = _visit_type(f.field_type, visit)
-        old_field = published.get(f.field_id)
-        required = f.required and (old_field is None or old_field.required)
-        return f.model_copy(update={"field_type": field_type, "required": required})
-
-    return Schema(
-        *[visit(f) for f in schema.fields],
-        schema_id=schema.schema_id,
-        identifier_field_ids=schema.identifier_field_ids,
-    )
-
-
-def _visit_type(
-    t: IcebergType, fn: Callable[[NestedField], NestedField]
-) -> IcebergType:
-    if isinstance(t, StructType):
-        return StructType(*[fn(f) for f in t.fields])
-    if isinstance(t, ListType):
-        element = fn(t.element_field)
-        return ListType(
-            element_id=element.field_id,
-            element_type=element.field_type,
-            element_required=element.required,
-        )
-    if isinstance(t, MapType):
-        key = fn(t.key_field)
-        value = fn(t.value_field)
-        return MapType(
-            key_id=key.field_id,
-            key_type=key.field_type,
-            value_id=value.field_id,
-            value_type=value.field_type,
-            value_required=value.required,
-        )
-    return t
-
-
 # -- desired vs. published (step 3) ------------------------------------------
 
 
@@ -687,7 +346,7 @@ def _partition_record(
     return build_partition_record(spec, schema, raw_by_field_id)
 
 
-def _desired(view: _CatalogView, schema: Schema) -> _Desired:
+def _desired(view: CatalogView, schema: Schema) -> _Desired:
     mapping = view.spec_mapping
     data: dict[str, tuple[LiveDataFile, int, Record]] = {}
     files_by_group: dict[
@@ -791,7 +450,7 @@ class _Prepared:
     plan: ExportPlan
     base: _Base
     base_snapshot: BaseSnapshot
-    view: _CatalogView
+    view: CatalogView
     schema: Schema
     desired: _Desired
     data_added: tuple[str, ...]
@@ -806,11 +465,11 @@ class _Unchanged:
     """Nothing changed in the table since the last export (short-circuit)."""
 
     plan: ExportPlan
-    view: _CatalogView
+    view: CatalogView
     pointer: ExportPointer
 
 
-def _unchanged_since(pointer: ExportPointer, view: _CatalogView) -> bool:
+def _unchanged_since(pointer: ExportPointer, view: CatalogView) -> bool:
     """Does the pointer already mirror the table's current state?
 
     Every data or schema write to a DuckLake table records a token with the
@@ -842,7 +501,7 @@ def _unchanged_since(pointer: ExportPointer, view: _CatalogView) -> bool:
 
 
 def _unchanged_plan(
-    location: str, pointer: ExportPointer, view: _CatalogView
+    location: str, pointer: ExportPointer, view: CatalogView
 ) -> ExportPlan:
     version = pointer.metadata_version + 1
     return ExportPlan(
@@ -874,13 +533,13 @@ def _prepare(
     with timing.phase("export.base"):
         pointer = _read_base_pointer(io, location)
 
-    def read_view(previous: int | None) -> _CatalogView:
+    def read_view(previous: int | None) -> CatalogView:
         with (
             timing.phase("export.catalog"),
             metadata_catalog(settings, con) as ro,
             ro.read_transaction(),
         ):
-            return _read_catalog(ro, ref, previous)
+            return read_catalog(ro, ref, previous)
 
     view = read_view(pointer.ducklake_snapshot_id if pointer is not None else None)
     # work counters once per export, even if the view is re-read
@@ -910,9 +569,9 @@ def _prepare(
             view,
             spec_mapping=with_published_names(view.spec_mapping, base.metadata.specs()),
         )
-    _check_initial_defaults(view, io)
+    check_initial_defaults(view, io)
 
-    schema = _evolve_schema(view.schema_mapping.schema, base.metadata)
+    schema = evolve_schema(view.schema_mapping.schema, base.metadata)
     desired = _desired(view, schema)
     with timing.phase("export.manifests_read"):
         base_snapshot = load_base_snapshot(io, base.metadata)
@@ -1124,7 +783,7 @@ def _run_export(
     )
 
 
-def _partition_warnings(view: _CatalogView) -> tuple[Finding, ...]:
+def _partition_warnings(view: CatalogView) -> tuple[Finding, ...]:
     """Degraded specs that affect live files, also logged.
 
     The degradation does not block (the table comes out without the partition
