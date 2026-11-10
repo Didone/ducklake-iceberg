@@ -40,6 +40,19 @@ Examples use `sales.orders`, Glue database `analytics`, region `us-east-1`,
 and clearly illustrative bucket names. Replace them with your own resources.
 Never paste credentials into configuration files, source control or tickets.
 
+## Diagrams
+
+Mermaid diagrams render directly on GitHub. Start with the
+[system and metadata graphs](concepts.md#the-problem-this-repository-solves),
+then follow the [sync sequence and manifest decisions](architecture.md#lifecycle-of-one-invocation),
+[configuration precedence](configuration.md#resolution-order),
+[class relationships](implementation.md#catalog-access-and-target-view),
+[release flow](testing.md#continuous-integration-and-releases),
+[ECS roles](deploy/README.md#amazon-ecs-fargate-with-eventbridge-scheduler)
+and [recovery decisions](operations.md#recovery-by-failure-boundary).
+The surrounding prose remains the detailed contract, including branches
+intentionally omitted from a high-level diagram.
+
 ## Scope and support boundaries
 
 The public command is `ducklake-iceberg sync --table schema.table`.

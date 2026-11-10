@@ -70,6 +70,27 @@ serialization.
 
 ## Recovery by failure boundary
 
+Use the failure boundary to choose what to inspect; fix the reported cause
+before retrying. This is not permission to force a pointer or delete evidence.
+
+```mermaid
+flowchart TD
+    Failure["Failed or interrupted sync"] --> Diverged{"Identity or lineage divergence?"}
+    Diverged -->|Yes| Stop["Stop writers and schedules; investigate identities and ancestry"]
+    Diverged -->|No| Unknown{"Glue update outcome unknown?"}
+    Unknown -->|Yes| Reconcile["Read and reconcile Glue metadata_location before retrying"]
+    Unknown -->|No| Handoff{"Completed export handoff available?"}
+    Handoff -->|Yes| Register["Normal sync reuses export and attempts registration"]
+    Handoff -->|No| Partial{"Any partial export artifacts?"}
+    Partial -->|Yes| Preserve["Preserve artifacts and evidence; normal sync validates any successor"]
+    Partial -->|No| Fix["Correct configuration, source blockers or infrastructure"]
+    Fix --> Retry["Rerun normal sync"]
+    Preserve --> Retry
+    Reconcile --> Check{"Safe state: table absent, intended metadata or valid ancestor?"}
+    Check -->|Yes| Retry
+    Check -->|No| Stop
+```
+
 ### Failure before any export writes
 
 Configuration, doctor, target resolution and consistency failures do not

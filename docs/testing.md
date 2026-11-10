@@ -195,6 +195,26 @@ not replace an expected hash just to make a check green.
 The release workflow does not itself run the full CI test matrix.
 Release a commit whose CI has passed.
 
+```mermaid
+flowchart TD
+    Change["Push to main / pull request"] --> CI["ci.yml: quality, packages, container and test matrix"]
+    CI --> Passing["Maintainer selects a CI-passing commit"]
+    Passing -.->|Manual release decision| Tag["Push v* tag"]
+    Tag --> Build["release.yml / build: validate version, build and check distributions"]
+    Build --> Smoke["container-smoke: offline, non-root and image labels"]
+    Smoke --> PyPI["publish-pypi: pypi environment + Trusted Publishing OIDC"]
+    PyPI --> Release["github-release: attach wheel and sdist"]
+    Release --> Kind{"Pre-release version?"}
+    Kind -->|Yes| Candidate["GitHub pre-release, not latest"]
+    Kind -->|No| Final["Regular GitHub release"]
+    Weekly["Weekly schedule / manual dispatch"] --> Compat["compat-latest.yml: newest dependencies and extensions"]
+    Compat --> Warning["Non-blocking compatibility signal; production pins unchanged"]
+```
+
+The dashed link is release policy, not an automatic CI-to-tag workflow.
+Final versions and candidates both go to real PyPI; a GitHub pre-release
+flag does not select a separate package index.
+
 Follow [CONTRIBUTING's release policy](../CONTRIBUTING.md#releasing).
 Validate locally before tagging:
 

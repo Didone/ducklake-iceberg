@@ -183,6 +183,30 @@ a replacement for distributed scheduling coordination.
 
 ## Amazon ECS (Fargate) with EventBridge Scheduler
 
+The three roles below serve different trust boundaries. Solid arrows show
+launch or I/O; dashed arrows show access authorized by the execution role.
+This is a logical topology, not a complete network or IAM policy.
+
+```mermaid
+flowchart TD
+    Scheduler["EventBridge Scheduler: scheduler role"] -->|RunTask and constrained PassRole| Task["Fargate sync container: task role"]
+    Agent["ECS launch and log delivery: execution role"]
+    Agent -.-> ECR["ECR image"]
+    Agent -.-> Secrets["Secrets Manager"]
+    Agent -.-> Logs["CloudWatch Logs"]
+    ECR -->|Pull image| Task
+    Secrets -->|Inject PGPASSWORD| Task
+    Task -->|Read metadata; flush only when needed| Catalog[("DuckLake PostgreSQL catalog")]
+    Task -->|Read; write new flush files only| Source[("Source S3 prefix")]
+    Task -->|Read and write generated artifacts| Metadata[("Iceberg metadata S3 prefix")]
+    Task -->|Register or advance metadata_location| Glue["AWS Glue"]
+    Task -->|stdout and stderr| Logs
+```
+
+The task role grants AWS data/catalog access; PostgreSQL authentication still
+uses the injected database credentials. None of these roles provides a
+distributed per-table lock.
+
 Task definition (excerpt): the task role carries `iam/sync-policy.json`; the
 PostgreSQL password comes from Secrets Manager.
 
