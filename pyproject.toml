@@ -138,6 +138,7 @@ ignore = ["S101"]  # assert is legitimate in tests
 "src/ducklake_iceberg/checkpoint/detect.py" = ["S608"]
 "src/ducklake_iceberg/checkpoint/variant.py" = ["S608"]
 "src/ducklake_iceberg/doctor/rules/*.py" = ["S608"]
+"src/ducklake_iceberg/doctor/sql.py" = ["S608"]
 # S105: `pass` is a validation status, not a credential.
 "src/ducklake_iceberg/deletes/reader.py" = ["S608"]
 "src/ducklake_iceberg/export.py" = ["S608"]
