@@ -49,6 +49,7 @@ def test_lock_dir_resolution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     )
 
     monkeypatch.delenv("HOME")
+    monkeypatch.delenv("USERPROFILE", raising=False)  # the Windows fallback
     with pytest.raises(LockError):
         _lock_dir()
 
@@ -61,6 +62,7 @@ def test_lock_dir_unwritable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
         pass
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mount-point heuristic")
 def test_network_dir_warns(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -233,8 +235,9 @@ def test_lock_held_by_other_process_and_released_on_kill(state_dir: Path) -> Non
         """
         import sys, time
         from ducklake_iceberg.sync.lock import table_lock
+        import os
         with table_lock("kp", metadata={"table": "s.t"}):
-            print("ok", flush=True)
+            print(os.getpid(), flush=True)
             time.sleep(60)
         """
     )
@@ -245,10 +248,12 @@ def test_lock_held_by_other_process_and_released_on_kill(state_dir: Path) -> Non
     )
     try:
         assert proc.stdout is not None
-        assert proc.stdout.readline().strip() == b"ok"
+        # the holder reports its own pid: on Windows a virtualenv's python.exe
+        # is a launcher, so the Popen pid is not the interpreter's
+        holder_pid = int(proc.stdout.readline().strip())
         with pytest.raises(LockHeld) as exc, table_lock("kp"):
             pass
-        assert exc.value.info.pid == proc.pid
+        assert exc.value.info.pid == holder_pid
     finally:
         proc.kill()
         proc.wait()

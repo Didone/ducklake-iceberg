@@ -254,18 +254,24 @@ def test_nested_phases_are_exclusive_and_sum_below_total() -> None:
     """``stats`` contains ``footers``; the sum does not exceed the total."""
     metrics = RunMetrics(run_id="a" * 32, command="export")
     with collect(metrics):
+        outer_started = time.perf_counter()
         with timing.phase("export.stats"):
             time.sleep(0.02)
             with timing.phase("footers"):
                 time.sleep(0.04)
+        outer_ms = (time.perf_counter() - outer_started) * 1000
         # ``export.write`` is not a phase: only its children count
         with timing.phase("export.write"), timing.phase("manifest"):
             time.sleep(0.01)
 
     phases = {m.phase: m for m in metrics.phases}
     assert set(phases) == {"stats", "footers", "manifest"}
-    assert phases["footers"].duration_ms >= 40
-    assert 15 <= phases["stats"].duration_ms < 40
+    stats, footers = phases["stats"].duration_ms, phases["footers"].duration_ms
+    assert footers >= 40
+    assert stats >= 15
+    # exclusive: the nested phase is not counted twice (sleep may overshoot on
+    # slow runners, so compare with the measured wall time, not the sleeps)
+    assert stats + footers <= outer_ms + 5
     total = sum(m.duration_ms for m in metrics.phases)
     assert total <= metrics.duration_ms
 
