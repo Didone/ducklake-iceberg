@@ -260,7 +260,7 @@ def test_github_release_marks_only_prereleases(prerelease: str, tmp_path: Path) 
     assert ("--latest=false" in args) is (prerelease == "true")
 
 
-# -- deploy/: shipped IAM documents ----------------------------------------------
+# -- docs/deploy/: shipped IAM documents -----------------------------------------
 
 
 @pytest.mark.parametrize("name", ["sync-policy.json", "metadata-bucket-policy.json"])
@@ -268,7 +268,7 @@ def test_shipped_iam_documents_are_valid_policies(name: str) -> None:
     import json
     import re
 
-    text = (ROOT / "deploy" / "iam" / name).read_text(encoding="utf-8")
+    text = (ROOT / "docs" / "deploy" / "iam" / name).read_text(encoding="utf-8")
     placeholders = set(re.findall(r"<([A-Z_]+)>", text))
     assert placeholders <= {
         "DATA_BUCKET",
@@ -292,7 +292,9 @@ def test_sync_policy_never_allows_deleting_ducklake_data() -> None:
     import json
 
     policy = json.loads(
-        (ROOT / "deploy" / "iam" / "sync-policy.json").read_text(encoding="utf-8")
+        (ROOT / "docs" / "deploy" / "iam" / "sync-policy.json").read_text(
+            encoding="utf-8"
+        )
     )
     data = "arn:aws:s3:::<DATA_BUCKET>/<DATA_PREFIX>/*"
     for statement in policy["Statement"]:

@@ -1,5 +1,9 @@
 # Contributing to ducklake-iceberg
 
+For the complete learning path, architecture, class reference and operations,
+start with the [documentation](docs/README.md). The
+[testing guide](docs/testing.md) explains fixtures, test selection and CI.
+
 Thanks for your interest in improving `ducklake-iceberg`! Bug reports, feature requests
 and pull requests are welcome.
 
@@ -42,7 +46,7 @@ poetry run pytest -m postgres --cov-fail-under=0
 poetry run pytest -m minio --cov-fail-under=0
 
 # A single test (disable the coverage gate or the run fails)
-poetry run pytest tests/sync/test_delta.py::test_name --no-cov
+poetry run pytest tests/sync/test_lock.py --no-cov
 poetry run pytest -k "some_pattern" --no-cov
 ```
 

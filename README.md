@@ -1,5 +1,8 @@
 # ducklake-iceberg
 
+[Complete documentation](docs/README.md): concepts, first steps, configuration,
+implementation/class reference, testing, deployment and operations.
+
 [![CI](https://github.com/Didone/ducklake-iceberg/actions/workflows/ci.yml/badge.svg)](https://github.com/Didone/ducklake-iceberg/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/ducklake-iceberg.svg)](https://pypi.org/project/ducklake-iceberg/)
 [![Python](https://img.shields.io/pypi/pyversions/ducklake-iceberg.svg)](https://pypi.org/project/ducklake-iceberg/)
@@ -149,7 +152,7 @@ ducklake-iceberg sync --table sales.orders
 
 ### Running from cron
 
-See [deploy/README.md](deploy/README.md) for the least-privilege IAM policy
+See [deployment documentation](docs/deploy/README.md) for the least-privilege IAM policy
 and ECS/EventBridge, Airflow and Docker examples.
 
 
@@ -228,7 +231,7 @@ poetry run mypy
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the architecture notes, test markers
-and the release process, and [deploy/README.md](deploy/README.md) for the IAM
+and the release process, and [deployment documentation](docs/deploy/README.md) for the IAM
 policy, Docker, ECS/EventBridge and Airflow examples.
 
 ## Releasing

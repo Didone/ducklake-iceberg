@@ -675,7 +675,7 @@ def test_dry_run_is_a_read_only_monitor(lake: Lake) -> None:
 # -- DuckLake data on S3, synced by a least-privilege principal ---------------
 DATA_BUCKET = "data-bucket"
 SYNC_KEY, SYNC_SECRET = "sync-user", "sync-user-secret"
-POLICY = Path(__file__).parents[2] / "deploy" / "iam" / "sync-policy.json"
+POLICY = Path(__file__).parents[2] / "docs" / "deploy" / "iam" / "sync-policy.json"
 
 
 def _render_policy(**values: str) -> dict[str, Any]:
@@ -721,12 +721,12 @@ def _create_sync_user(container: Any, policy: dict[str, Any]) -> None:
 def test_s3_lake_synced_with_the_shipped_least_privilege_policy(
     lake: Lake, minio_container: Any, tmp_path: Path
 ) -> None:
-    """Data and metadata on S3, the sync running with ``deploy/iam/sync-policy.json``.
+    """Data and metadata on S3, using ``docs/deploy/iam/sync-policy.json``.
 
-    The S3 statements are enforced by MinIO (including the explicit deny on
-    deleting or rewriting DuckLake data); every Glue operation the tool calls
-    must be granted by the policy's Glue statement. Not a single existing data
-    object may change.
+    MinIO enforces S3 statements, including the deny on deleting DuckLake data.
+    Every Glue operation must be granted by the policy's Glue statement.
+    Existing-object hashes also verify immutability: allowing PutObject for
+    flush files does not by itself prevent overwrites.
     """
     host = lake.endpoint.removeprefix("http://")
     boto3.client(
