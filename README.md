@@ -236,8 +236,8 @@ policy, Docker, ECS/EventBridge and Airflow examples.
 Releases are published to [PyPI](https://pypi.org/project/ducklake-iceberg/) by the
 `release` GitHub Actions workflow when a `vX.Y.Z` tag is pushed. The tag must
 match the version in `pyproject.toml`, and `CHANGELOG.md` must contain a
-`## [X.Y.Z]` section. Pre-release tags (`vX.Y.ZrcN`) are published to
-TestPyPI only, to rehearse a release. See
+`## [X.Y.Z]` section. Pre-release tags (`vX.Y.ZrcN`) are also published to
+PyPI and marked as pre-releases on GitHub. See
 [CONTRIBUTING.md](CONTRIBUTING.md#releasing).
 
 ## License

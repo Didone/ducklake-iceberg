@@ -119,15 +119,10 @@ def test_release_workflow_publishes_to_pypi_with_trusted_publishing() -> None:
     assert any(u.startswith("pypa/gh-action-pypi-publish@") for u in uses)
     assert "secrets." not in str(publish)
 
-    # pre-releases rehearse on TestPyPI; only final versions reach PyPI
-    assert publish["if"] == "needs.build.outputs.prerelease == 'false'"
-    rehearsal = jobs["publish-testpypi"]
-    assert rehearsal["if"] == "needs.build.outputs.prerelease == 'true'"
-    assert rehearsal["environment"]["name"] == "testpypi"
-    assert rehearsal["permissions"] == {"id-token": "write"}
-    (upload,) = [s for s in rehearsal["steps"] if "pypi-publish" in s.get("uses", "")]
-    assert upload["with"]["repository-url"] == "https://test.pypi.org/legacy/"
-    assert "secrets." not in str(rehearsal)
+    assert "if" not in publish  # final versions and pre-releases both go to PyPI
+    (upload,) = [s for s in publish["steps"] if "pypi-publish" in s.get("uses", "")]
+    assert "repository-url" not in upload.get("with", {})
+    assert "testpypi" not in str(workflow).lower()
 
     image = jobs["container-smoke"]
     image_run = _run_text(image)
@@ -204,7 +199,7 @@ def test_dockerfile_runtime_contract_and_no_credentials() -> None:
         ("v2.0.0b1", "true"),
     ],
 )
-def test_release_routes_prereleases_to_testpypi(
+def test_release_detects_prerelease_tags(
     tag: str, prerelease: str, tmp_path: Path
 ) -> None:
     import shutil
@@ -229,6 +224,40 @@ def test_release_routes_prereleases_to_testpypi(
     lines = output.read_text(encoding="utf-8").splitlines()
     assert f"version={tag[1:]}" in lines
     assert f"prerelease={prerelease}" in lines
+
+
+@pytest.mark.parametrize("prerelease", ["true", "false"])
+def test_github_release_marks_only_prereleases(prerelease: str, tmp_path: Path) -> None:
+    import shutil
+
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash unavailable")
+    (step,) = [
+        s
+        for s in _workflow("release.yml")["jobs"]["github-release"]["steps"]
+        if s.get("name") == "Create the release"
+    ]
+    assert step["env"]["PRERELEASE"] == "${{ needs.build.outputs.prerelease }}"
+    output = tmp_path / "release_args"
+    script = 'gh() { printf "%s\\n" "$@" > "$RELEASE_ARGS"; }\n' + step["run"]
+    subprocess.run(  # noqa: S603 - workflow script with a local gh stub
+        [bash, "-e", "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env={
+            "GITHUB_REF_NAME": "v0.1.0rc1" if prerelease == "true" else "v0.1.0",
+            "PRERELEASE": prerelease,
+            "RELEASE_ARGS": str(output),
+        },
+        timeout=30,
+    )
+    args = output.read_text(encoding="utf-8").splitlines()
+    assert args[:2] == ["release", "create"]
+    assert ("--prerelease" in args) is (prerelease == "true")
+    assert ("--latest=false" in args) is (prerelease == "true")
 
 
 # -- deploy/: shipped IAM documents ----------------------------------------------

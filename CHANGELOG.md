@@ -20,9 +20,9 @@ example: "envelope v1: optional key `timings`".
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-11-09
+## [0.1.0rc1] - 2026-11-10
 
-First public release.
+First release candidate, published to PyPI to rehearse the release process.
 
 ### Added
 
@@ -57,5 +57,5 @@ First public release.
 - Works with Typer 0.27 to 0.29 (no direct import of Click, which Typer 0.29
   vendors).
 
-[Unreleased]: https://github.com/Didone/ducklake-iceberg/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/Didone/ducklake-iceberg/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Didone/ducklake-iceberg/compare/v0.1.0rc1...HEAD
+[0.1.0rc1]: https://github.com/Didone/ducklake-iceberg/releases/tag/v0.1.0rc1

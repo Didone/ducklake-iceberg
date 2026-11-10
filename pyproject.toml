@@ -1,6 +1,6 @@
 [project]
 name = "ducklake-iceberg"
-version = "0.1.0"
+version = "0.1.0rc1"
 description = "Publish DuckLake tables as Apache Iceberg v2 tables in AWS Glue, without copying data"
 readme = "README.md"
 license = "MIT"
