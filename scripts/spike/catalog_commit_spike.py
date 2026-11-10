@@ -31,6 +31,7 @@ Not shipped and not part of the test suite.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 import tempfile
@@ -413,6 +414,7 @@ def run_spike(catalog: Catalog, lake: Lake, settings: DuckLakeIcebergSettings) -
         commit_next(label, previous, current)
         previous = current
     partition_evolution(catalog, lake, settings)
+    spec_id_renumbering(catalog, lake, settings)
     external_write_is_rejected(catalog, lake, ident, previous, export)
 
 
@@ -475,6 +477,54 @@ def partition_evolution(
             )
         describe_ids(catalog, ident)
         previous = current
+
+
+def spec_id_renumbering(
+    catalog: Catalog, lake: Lake, settings: DuckLakeIcebergSettings
+) -> None:
+    """Finding 3: a table first published unpartitioned, then partitioned.
+
+    The tool names the new spec after DuckLake's ``partition_id`` (catalog-wide,
+    so usually > 1); a catalog that numbers specs itself assigns 1, and the
+    manifests then reference a spec the catalog does not have.
+    """
+    ident = (NAMESPACE, "late")
+    with contextlib.suppress(Exception):
+        catalog.drop_table(ident)
+    lake.write(
+        "CREATE TABLE lake.main.late(id BIGINT, region VARCHAR)",
+        "INSERT INTO lake.main.late SELECT i, 'a' FROM range(1, 101) t(i)",
+    )
+    first = run_export(settings, "main", "late")
+    if BOOTSTRAP == "create":
+        bootstrap_by_create(catalog, ident, first)
+    else:
+        catalog.register_table(ident, first.plan.metadata_location)
+    lake.write(
+        "ALTER TABLE lake.main.late SET PARTITIONED BY (region)",
+        "INSERT INTO lake.main.late SELECT i, 'b' FROM range(200, 300) t(i)",
+    )
+    second = run_export(settings, "main", "late")
+    io = catalog.load_table(ident).io
+    old = read_metadata_json(io, first.plan.metadata_location)
+    new = read_metadata_json(io, second.plan.metadata_location)
+    requirements, updates = updates_between(
+        old, new, catalog.load_table(ident).metadata
+    )
+    catalog.commit_table(catalog.load_table(ident), requirements, updates)
+    table = catalog.load_table(ident)
+    kept = new.default_spec_id == table.metadata.default_spec_id
+    record(
+        "spec ids: the catalog keeps the spec id chosen by the tool",
+        kept,
+        f"tool {new.default_spec_id}, catalog {table.metadata.default_spec_id}",
+    )
+    try:
+        check_mirror(catalog, lake, ident, "late partitioning")
+    except Exception as exc:
+        record(
+            "late partitioning: table readable", False, f"{type(exc).__name__}: {exc}"
+        )
 
 
 def describe_ids(catalog: Catalog, ident: tuple[str, str]) -> None:

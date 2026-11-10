@@ -253,9 +253,9 @@ MinIO. PyIceberg 0.12.0.
 
 | Catalog | Bootstrap | Result |
 | --- | --- | --- |
-| SQL catalog (SQLite) | `register_table` | 32/32 |
+| SQL catalog (SQLite) | `register_table` | 36/36 (incl. the spec-ID check) |
 | AWS Glue (moto server) | `register_table` | 32/32 (commit mode works for Glue) |
-| Iceberg REST reference server (`apache/iceberg-rest-fixture`) | `register_table` | 32/32 |
+| Iceberg REST reference server (`apache/iceberg-rest-fixture`) | `register_table` | 32/34: the two failures are finding 3 (spec ID renumbered, table unreadable) |
 | Iceberg REST reference server | create + first commit | 33/33 |
 | Apache Polaris 1.8.0 | `register_table` | 32/32 |
 | Apache Polaris 1.8.0 | create + first commit | 33/33 |
@@ -277,7 +277,9 @@ Findings:
    `schema_version` as schema ID, so manifests can reference a spec ID the
    catalog does not have (`KeyError` on read, reproduced on the REST server).
    The SQL and Glue catalogs (client-side PyIceberg) keep the given IDs, so
-   the bug would only show on REST. Fix: allocate spec and schema IDs from
+   the bug would only show on REST. Reproduced by the spike's `late` table
+   (published unpartitioned, then partitioned: tool spec ID 7, catalog 1,
+   `KeyError: 7` on read). Fix: allocate spec and schema IDs from
    the catalog's current metadata (reuse an identical one, else max + 1) and
    persist the DuckLake `partition_id` -> Iceberg spec ID map in a table
    property.
