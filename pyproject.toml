@@ -143,6 +143,9 @@ ignore = ["S101"]  # assert is legitimate in tests
 "src/ducklake_iceberg/export.py" = ["S608"]
 "src/ducklake_iceberg/catalog/view.py" = ["S608"]
 "src/ducklake_iceberg/writer/catalog_stats.py" = ["S608"]
+# Throwaway phase-0 spike scripts that talk to local Docker services with the
+# well-known MinIO/Polaris test credentials; not shipped and not run in CI.
+"scripts/spike/**" = ["E501", "S105", "S110", "S310", "S608", "SIM105"]
 # E501, SIM102: end-to-end tests may use long lines and nested ifs for clarity.
 "tests/e2e/*.py" = ["E501", "SIM102"]
 

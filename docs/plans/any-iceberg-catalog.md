@@ -1,6 +1,6 @@
 # Plan: publish to any Iceberg catalog, not only AWS Glue
 
-Status: approved direction, spike in progress (branch
+Status: approved direction, phase-0 spike done (branch
 `feat/any-iceberg-catalog`).
 
 Decisions (2026-11-10):
@@ -238,3 +238,76 @@ blocker (exit 2) with an explanation, never worked around by copying data.
 4. Multi-level namespaces (`catalog.schema` in Unity Catalog): map the DuckLake
    schema to the namespace (one namespace per DuckLake schema) or keep one
    configured namespace as today?
+
+## 12. Phase-0 spike results (2026-11-10)
+
+Script: `scripts/spike/catalog_commit_spike.py` (+ `polaris_setup.py`). It
+uses today's export as the planner, turns each pair of consecutive
+`metadata.json` files into `TableUpdate`s + `TableRequirement`s, commits them
+through PyIceberg, then reads the table back **through the catalog** and checks
+rows, field IDs and that every data file is a live DuckLake file (zero copy).
+Scenarios: create + insert, insert, delete + update (position deletes), add
+column, merge, partition evolution (identity, then identity + bucket, then
+unpartitioned), and an external write followed by our commit. Storage:
+MinIO. PyIceberg 0.12.0.
+
+| Catalog | Bootstrap | Result |
+| --- | --- | --- |
+| SQL catalog (SQLite) | `register_table` | 32/32 |
+| AWS Glue (moto server) | `register_table` | 32/32 (commit mode works for Glue) |
+| Iceberg REST reference server (`apache/iceberg-rest-fixture`) | `register_table` | 32/32 |
+| Iceberg REST reference server | create + first commit | 33/33 |
+| Apache Polaris 1.8.0 | `register_table` | 32/32 |
+| Apache Polaris 1.8.0 | create + first commit | 33/33 |
+| Unity Catalog OSS (`unitycatalog/unitycatalog`) | - | No `POST .../register` endpoint advertised; `create_table` needs server-side S3 configuration that was not completed. Not representative of Databricks |
+
+Findings:
+
+1. **Commit mode works without copying data** on every catalog tested: the
+   catalogs accept snapshots whose manifest lists, manifests and position
+   delete files were written by the tool, plus `AddSchema`/`AddPartitionSpec`
+   and the `ducklake.*` properties. Field IDs are preserved.
+2. **External writes are detected** by `AssertRefSnapshotId(main, <our last
+   snapshot>)`: every catalog rejected our commit with
+   `CommitFailedException` after a PyIceberg append (exit 3 in the tool).
+3. **The catalog renumbers schema and partition-spec IDs (blocker for the
+   design, must fix in phase 2).** Java-based REST servers assign
+   `max(existing) + 1` to an added spec/schema (an identical one reuses its
+   ID). The tool uses DuckLake's `partition_id` as spec ID and
+   `schema_version` as schema ID, so manifests can reference a spec ID the
+   catalog does not have (`KeyError` on read, reproduced on the REST server).
+   The SQL and Glue catalogs (client-side PyIceberg) keep the given IDs, so
+   the bug would only show on REST. Fix: allocate spec and schema IDs from
+   the catalog's current metadata (reuse an identical one, else max + 1) and
+   persist the DuckLake `partition_id` -> Iceberg spec ID map in a table
+   property.
+4. **The catalog owns `metadata.json`:** REST servers write their own files
+   (`00002-<uuid>.metadata.json`); the tool's `v1.metadata.json` only
+   survives as the first `metadata-log` entry. The export must plan against
+   `catalog.load_table(...).metadata`, as planned.
+5. **Catalogs without `register_table`** can be bootstrapped with
+   `create_table` (throwaway one-column schema, which `create_table` may
+   renumber) followed by a first commit that adds the real schema: the update
+   path keeps the client's field IDs. Works on the REST server and Polaris;
+   this is the likely path for Unity Catalog.
+6. **Polaris specifics:** the table location must be under the namespace
+   location (`<default-base-location>/<namespace>/<table>`, so
+   `iceberg_metadata_prefix` = the catalog's `default-base-location`), and
+   PyIceberg's default `X-Iceberg-Access-Delegation: vended-credentials`
+   header must be disabled when the catalog cannot vend credentials. Polaris
+   did **not** validate data-file paths: data outside `allowedLocations` was
+   accepted. With credential vending, readers would get credentials for the
+   table location only, so they need their own access to DuckLake's
+   `data_path` (doctor rule + docs, section 6).
+7. **Unity Catalog open questions (need a Databricks workspace):** does the
+   Databricks Iceberg REST endpoint accept `register_table` or the
+   create-then-commit bootstrap for a table whose data files live outside UC
+   managed storage (zero copy), or does it only allow managed tables in UC
+   storage? Are external writes allowed for those tables? Is the table location
+   forced by UC? The OSS server is not a proxy for these answers.
+
+Go / no-go: **go** for commit mode on Glue, SQL and REST (Polaris and the
+reference server), with finding 3 fixed in phase 2. Unity Catalog stays
+**pending** until the questions in finding 7 are answered in a real
+workspace; the implementation targets the create-then-commit bootstrap so
+that Unity Catalog does not depend on `register_table`.
