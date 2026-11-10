@@ -50,8 +50,6 @@ EVENTS = frozenset(
         "glue.register",
         "glue.conflict",
         "compat.blocked",
-        "validate.divergence",
-        "retention.risk",
         "problem",
         FREE_TEXT_EVENT,
     }

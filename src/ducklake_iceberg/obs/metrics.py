@@ -13,9 +13,7 @@ the context (``collect``). Rules:
 - ``items``/``bytes``/``calls``/``retries`` are per-phase counters that may be
   added before, during, or after the phase runs;
 - AWS calls made by the process Sessions (``aws.session``) are attributed to
-  the open phase through botocore's ``before-call`` hook; phases that count
-  their own calls (``_EXPLICIT_CALL_PHASES``) are left out of the hook, so
-  calls are not counted twice;
+  the open phase through botocore's ``before-call`` hook;
 - an exception with exit code 0 or 4 (``NothingToDo``) is not a phase
   failure.
 
@@ -52,9 +50,6 @@ Phase = Literal[
     "metadata_json",
     "s3_put",
     "glue",
-    "validate",
-    "retention",
-    "glue_stats",
 ]
 PHASES: tuple[Phase, ...] = get_args(Phase)
 
@@ -72,8 +67,6 @@ _PHASE_BY_TIMING: dict[str, Phase] = {
     "register": "glue",
 }
 
-#: phases that count their own API calls (idempotent retry)
-_EXPLICIT_CALL_PHASES: frozenset[Phase] = frozenset({"glue_stats"})
 #: phases whose ``bytes`` make up ``bytes_written``
 _WRITTEN_PHASES: frozenset[Phase] = frozenset(
     {"manifest", "manifest_list", "metadata_json", "deletes"}
@@ -283,7 +276,7 @@ def note_api_call() -> None:
     frame = _FRAME.get()
     if frame is None:
         metrics._add("_unattributed", calls=1)
-    elif frame.phase not in _EXPLICIT_CALL_PHASES:
+    else:
         metrics._add(frame.phase, calls=1)
 
 
