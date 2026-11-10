@@ -1,14 +1,14 @@
 """Concurrency: process lock.
 
-Implements an exclusive per-table lock using fcntl.flock to prevent two
-simultaneous syncs on the same machine. The kernel releases the lock
-automatically if the process dies (including SIGKILL).
+Implements an exclusive per-table lock to prevent two simultaneous syncs on
+the same machine: ``fcntl.flock`` on POSIX, ``msvcrt.locking`` on Windows. In
+both cases the operating system releases the lock automatically if the process
+dies (including SIGKILL).
 """
 
 from __future__ import annotations
 
 import errno
-import fcntl
 import hashlib
 import json
 import logging
@@ -24,6 +24,37 @@ from pathlib import Path
 from typing import Final
 
 from ducklake_iceberg.errors import DuckLakeIcebergError
+
+if sys.platform == "win32":
+    import msvcrt
+
+    #: byte locked by ``msvcrt.locking``: far past the metadata, so that a
+    #: waiting process can still read the holder recorded at offset 0
+    _WIN_LOCK_OFFSET: Final[int] = 0x7FFFFFFF
+
+    def _try_lock(fd: int) -> None:
+        os.lseek(fd, _WIN_LOCK_OFFSET, os.SEEK_SET)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        except OSError as exc:
+            # a lock held by another process surfaces as EACCES/EDEADLK
+            if exc.errno in (errno.EACCES, errno.EDEADLK):
+                raise OSError(errno.EWOULDBLOCK, str(exc)) from exc
+            raise
+
+    def _unlock(fd: int) -> None:
+        os.lseek(fd, _WIN_LOCK_OFFSET, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+
+else:
+    import fcntl
+
+    def _try_lock(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def _unlock(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
 
 LOG = logging.getLogger("ducklake_iceberg")
 
@@ -92,8 +123,10 @@ def _lock_dir() -> Path:
         if xdg_state:
             lock_path = Path(xdg_state) / "ducklake-iceberg" / "locks"
         else:
-            # 3. HOME/.local/state
-            home = os.environ.get("HOME")
+            # 3. HOME/.local/state (USERPROFILE on Windows, where HOME is unusual)
+            home = os.environ.get("HOME") or (
+                os.environ.get("USERPROFILE") if sys.platform == "win32" else None
+            )
             if not home:
                 raise LockError(
                     "None of DUCKLAKE_ICEBERG_STATE_DIR, XDG_STATE_HOME or HOME is "
@@ -166,9 +199,9 @@ def table_lock(
 ) -> Iterator[LockInfo | None]:
     """Acquire an exclusive process lock for a table.
 
-    The lock is implemented with fcntl.flock (LOCK_EX | LOCK_NB) on a file in
-    the state directory. The kernel releases it automatically when the
-    process dies, including on SIGKILL.
+    The lock is a non-blocking exclusive lock (``flock``/``msvcrt.locking``)
+    on a file in the state directory. The operating system releases it
+    automatically when the process dies, including on SIGKILL.
 
     Args:
         key: Lock key (hash of profile|db.table).
@@ -207,7 +240,7 @@ def table_lock(
     deadline = time.monotonic() + max(wait_s, 0.0)
     while True:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _try_lock(fd)
             break
         except OSError as e:
             if e.errno not in _HELD_ERRNOS:
@@ -263,7 +296,7 @@ def table_lock(
     finally:
         # Release the lock (close would also release it; explicit unlock is hygiene)
         try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            _unlock(fd)
             LOG.info("Lock released: %s", key)
         except OSError as e:
             LOG.warning("Error releasing lock: %s", e)
