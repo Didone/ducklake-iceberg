@@ -1,0 +1,25 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "TheIcebergMirrorIsReadOnlyForEveryoneButTheSyncRole",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": [
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion",
+        "s3:PutObjectAcl",
+        "s3:PutObjectTagging",
+        "s3:PutObjectRetention",
+        "s3:PutObjectLegalHold"
+      ],
+      "Resource": "arn:aws:s3:::<METADATA_BUCKET>/<METADATA_PREFIX>/*",
+      "Condition": {
+        "ArnNotLike": {
+          "aws:PrincipalArn": ["arn:aws:iam::<ACCOUNT>:role/<SYNC_ROLE>"]
+        }
+      }
+    }
+  ]
+}

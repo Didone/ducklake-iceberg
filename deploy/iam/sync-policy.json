@@ -1,0 +1,58 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListBucketsSoMissingKeysAre404NotAccessDenied",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::<DATA_BUCKET>", "arn:aws:s3:::<METADATA_BUCKET>"]
+    },
+    {
+      "Sid": "ReadDuckLakeDataFiles",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject"],
+      "Resource": "arn:aws:s3:::<DATA_BUCKET>/<DATA_PREFIX>/*"
+    },
+    {
+      "Sid": "FlushInlinedRowsIntoNewDuckLakeFiles",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:AbortMultipartUpload"],
+      "Resource": "arn:aws:s3:::<DATA_BUCKET>/<DATA_PREFIX>/*"
+    },
+    {
+      "Sid": "ZeroCopyNeverRewriteOrDeleteDuckLakeData",
+      "Effect": "Deny",
+      "Action": [
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion",
+        "s3:PutObjectAcl",
+        "s3:PutObjectTagging",
+        "s3:PutObjectRetention",
+        "s3:PutObjectLegalHold"
+      ],
+      "Resource": "arn:aws:s3:::<DATA_BUCKET>/<DATA_PREFIX>/*"
+    },
+    {
+      "Sid": "WriteIcebergMetadata",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:AbortMultipartUpload"],
+      "Resource": "arn:aws:s3:::<METADATA_BUCKET>/<METADATA_PREFIX>/*"
+    },
+    {
+      "Sid": "PublishTheMirrorInGlue",
+      "Effect": "Allow",
+      "Action": [
+        "glue:GetDatabase",
+        "glue:CreateDatabase",
+        "glue:GetTable",
+        "glue:CreateTable",
+        "glue:UpdateTable"
+      ],
+      "Resource": [
+        "arn:aws:glue:<REGION>:<ACCOUNT>:catalog",
+        "arn:aws:glue:<REGION>:<ACCOUNT>:database/<GLUE_DATABASE>",
+        "arn:aws:glue:<REGION>:<ACCOUNT>:table/<GLUE_DATABASE>/*"
+      ]
+    }
+  ]
+}

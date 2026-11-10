@@ -176,7 +176,7 @@ class Lake:
 
 # -- fixtures --------------------------------------------------------------
 @pytest.fixture(scope="module")
-def minio_endpoint() -> Iterator[str]:
+def minio_container() -> Iterator[Any]:
     try:
         from testcontainers.core.container import DockerContainer
 
@@ -214,9 +214,15 @@ def minio_endpoint() -> Iterator[str]:
             aws_secret_access_key=SECRET,
         )
         s3.create_bucket(Bucket=BUCKET)
-        yield endpoint
+        container.endpoint = endpoint  # type: ignore[attr-defined]
+        yield container
     finally:
         container.stop()
+
+
+@pytest.fixture(scope="module")
+def minio_endpoint(minio_container: Any) -> str:
+    return str(minio_container.endpoint)
 
 
 @pytest.fixture(scope="module")
@@ -666,12 +672,62 @@ def test_dry_run_is_a_read_only_monitor(lake: Lake) -> None:
     step(lake, "sales", "tiny", flush=True)
 
 
-# -- DuckLake data on S3: the production layout ------------------------------
+# -- DuckLake data on S3, synced by a least-privilege principal ---------------
 DATA_BUCKET = "data-bucket"
+SYNC_KEY, SYNC_SECRET = "sync-user", "sync-user-secret"
+POLICY = Path(__file__).parents[2] / "deploy" / "iam" / "sync-policy.json"
 
 
-def test_data_files_on_s3_are_referenced_in_place(lake: Lake, tmp_path: Path) -> None:
-    """Data and metadata both on S3: sync must not touch a single data object."""
+def _render_policy(**values: str) -> dict[str, Any]:
+    text = POLICY.read_text(encoding="utf-8")
+    for name, value in values.items():
+        text = text.replace(f"<{name}>", value)
+    assert "<" not in text, "unrendered placeholder"
+    policy: dict[str, Any] = json.loads(text)
+    return policy
+
+
+def _mc(container: Any, *args: str) -> str:
+    code, output = container.exec(["mc", *args])
+    text = output.decode() if isinstance(output, bytes) else str(output)
+    assert code == 0, text
+    return text
+
+
+_NO_MINIO = frozenset({"s3:PutObjectAcl"})
+
+
+def _create_sync_user(container: Any, policy: dict[str, Any]) -> None:
+    """A MinIO user restricted to the S3 statements of the shipped policy."""
+    s3_only = {
+        "Version": policy["Version"],
+        "Statement": [
+            # MinIO has no object ACLs; every other action is enforced as on AWS
+            {**st, "Action": [a for a in st["Action"] if a not in _NO_MINIO]}
+            for st in policy["Statement"]
+            if all(a.startswith("s3:") for a in st["Action"])
+        ],
+    }
+    _mc(container, "alias", "set", "local", "http://127.0.0.1:9000", KEY, SECRET)
+    document = json.dumps(s3_only).replace("'", "'\\''")
+    target = "/data/.sync-policy.json"  # a path inside the MinIO container
+    code, output = container.exec(["sh", "-c", f"printf '%s' '{document}' > {target}"])
+    assert code == 0, output
+    _mc(container, "admin", "policy", "create", "local", "sync", target)
+    _mc(container, "admin", "user", "add", "local", SYNC_KEY, SYNC_SECRET)
+    _mc(container, "admin", "policy", "attach", "local", "sync", "--user", SYNC_KEY)
+
+
+def test_s3_lake_synced_with_the_shipped_least_privilege_policy(
+    lake: Lake, minio_container: Any, tmp_path: Path
+) -> None:
+    """Data and metadata on S3, the sync running with ``deploy/iam/sync-policy.json``.
+
+    The S3 statements are enforced by MinIO (including the explicit deny on
+    deleting or rewriting DuckLake data); every Glue operation the tool calls
+    must be granted by the policy's Glue statement. Not a single existing data
+    object may change.
+    """
     host = lake.endpoint.removeprefix("http://")
     boto3.client(
         "s3",
@@ -680,8 +736,26 @@ def test_data_files_on_s3_are_referenced_in_place(lake: Lake, tmp_path: Path) ->
         aws_access_key_id=KEY,
         aws_secret_access_key=SECRET,
     ).create_bucket(Bucket=DATA_BUCKET)
+    policy = _render_policy(
+        DATA_BUCKET=DATA_BUCKET,
+        DATA_PREFIX="ducklake",
+        METADATA_BUCKET=BUCKET,
+        METADATA_PREFIX="iceberg-s3data",
+        REGION=REGION,
+        ACCOUNT="123456789012",
+        GLUE_DATABASE=DATABASE,
+    )
+    _create_sync_user(minio_container, policy)
+    glue_allowed = {
+        a.removeprefix("glue:")
+        for st in policy["Statement"]
+        if st["Effect"] == "Allow"
+        for a in st["Action"]
+        if a.startswith("glue:")
+    }
 
     def ducklake() -> duckdb.DuckDBPyConnection:
+        """The application that owns the lake writes with full credentials."""
         con = duckdb.connect(":memory:")
         for ext in ("ducklake", "sqlite", "httpfs"):
             con.execute(f"INSTALL {ext}")
@@ -729,14 +803,25 @@ def test_data_files_on_s3_are_referenced_in_place(lake: Lake, tmp_path: Path) ->
         ),
         encoding="utf-8",
     )
+    sync_env = {
+        **lake.env,
+        "AWS_ACCESS_KEY_ID": SYNC_KEY,
+        "AWS_SECRET_ACCESS_KEY": SYNC_SECRET,
+        "DUCKLAKE_ICEBERG_TIMINGS": "1",
+    }
+    glue_called: set[str] = set()
 
     def sync(expect: int = 0) -> None:
         result = runner.invoke(
             app,
             ["sync", "--table", "s3data.t", "--config", str(config), "--json"],
-            env=lake.env,
+            env=sync_env,
         )
         assert result.exit_code == expect, result.stdout + str(result.stderr)
+        counters = json.loads(result.stdout)["timings"]["counters"]
+        glue_called.update(
+            k.removeprefix("aws.glue.") for k in counters if k.startswith("aws.glue.")
+        )
 
     def check() -> None:
         con = ducklake()
@@ -782,11 +867,17 @@ def test_data_files_on_s3_are_referenced_in_place(lake: Lake, tmp_path: Path) ->
         con.execute(
             "INSERT INTO lake.s3data.t SELECT i, 'n' FROM range(2000, 2501) t(i)"
         )
+        # a few rows stay inlined in the catalog: the sync must flush them
+        con.execute("INSERT INTO lake.s3data.t VALUES (9001, 'inlined')")
     finally:
         con.close()
     before = data_objects()
     sync()
     after = data_objects()
     assert {k: v for k, v in after.items() if k in before} == before
+    assert len(after) > len(before)  # the flush wrote the inlined row
     check()
     sync(expect=4)
+
+    assert glue_called, "no Glue call recorded"
+    assert glue_called <= glue_allowed, glue_called - glue_allowed

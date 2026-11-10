@@ -229,3 +229,54 @@ def test_release_routes_prereleases_to_testpypi(
     lines = output.read_text(encoding="utf-8").splitlines()
     assert f"version={tag[1:]}" in lines
     assert f"prerelease={prerelease}" in lines
+
+
+# -- deploy/: shipped IAM documents ----------------------------------------------
+
+
+@pytest.mark.parametrize("name", ["sync-policy.json", "metadata-bucket-policy.json"])
+def test_shipped_iam_documents_are_valid_policies(name: str) -> None:
+    import json
+    import re
+
+    text = (ROOT / "deploy" / "iam" / name).read_text(encoding="utf-8")
+    placeholders = set(re.findall(r"<([A-Z_]+)>", text))
+    assert placeholders <= {
+        "DATA_BUCKET",
+        "DATA_PREFIX",
+        "METADATA_BUCKET",
+        "METADATA_PREFIX",
+        "REGION",
+        "ACCOUNT",
+        "GLUE_DATABASE",
+        "SYNC_ROLE",
+    }
+    policy = json.loads(text)
+    assert policy["Version"] == "2012-10-17"
+    for statement in policy["Statement"]:
+        assert statement["Effect"] in ("Allow", "Deny")
+        assert statement["Sid"]
+        assert statement["Action"]
+
+
+def test_sync_policy_never_allows_deleting_ducklake_data() -> None:
+    import json
+
+    policy = json.loads(
+        (ROOT / "deploy" / "iam" / "sync-policy.json").read_text(encoding="utf-8")
+    )
+    data = "arn:aws:s3:::<DATA_BUCKET>/<DATA_PREFIX>/*"
+    for statement in policy["Statement"]:
+        resources = statement["Resource"]
+        resources = [resources] if isinstance(resources, str) else resources
+        if statement["Effect"] == "Allow" and data in resources:
+            assert not {"s3:DeleteObject", "s3:DeleteObjectVersion"} & set(
+                statement["Action"]
+            )
+    denied = [
+        s
+        for s in policy["Statement"]
+        if s["Effect"] == "Deny" and s["Resource"] == data
+    ]
+    assert denied
+    assert "s3:DeleteObject" in denied[0]["Action"]

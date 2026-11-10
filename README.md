@@ -149,6 +149,10 @@ ducklake-iceberg sync --table sales.orders
 
 ### Running from cron
 
+See [deploy/README.md](deploy/README.md) for the least-privilege IAM policy
+and ECS/EventBridge, Airflow and Docker examples.
+
+
 ```cron
 # every 15 minutes, one line per table
 */15 * * * * ducklake-iceberg sync --table sales.orders --config /etc/ducklake-iceberg.yaml --json >> /var/log/ducklake-iceberg/orders.json 2>/dev/null
@@ -224,7 +228,8 @@ poetry run mypy
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the architecture notes, test markers
-and the release process.
+and the release process, and [deploy/README.md](deploy/README.md) for the IAM
+policy, Docker, ECS/EventBridge and Airflow examples.
 
 ## Releasing
 
