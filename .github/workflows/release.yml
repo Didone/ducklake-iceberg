@@ -56,7 +56,7 @@ jobs:
           /tmp/wheel-venv/bin/python -m pip install --upgrade pip
           /tmp/wheel-venv/bin/pip install dist/*.whl
           /tmp/wheel-venv/bin/ducklake-iceberg --version
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ducklake-iceberg-${{ github.ref_name }}
           path: dist/*
