@@ -20,10 +20,15 @@ example: "envelope v1: optional key `timings`".
 
 ## [Unreleased]
 
+## [0.1.1rc1] - 2026-11-10
+
 ### Added
 
 - Envelope v1: optional `report` in doctor steps preserves rule diagnostics,
   including errors detected after flushing inlined data.
+- Envelope v1: detailed catalog connection/query, inlining, flush, delete and
+  S3 operation timings and query/cache counters in the existing `timings`
+  field, without recording SQL text or parameters.
 
 ### Fixed
 
@@ -39,6 +44,14 @@ example: "envelope v1: optional key `timings`".
 
 ### Changed
 
+- Reuse inlining detection and physical-table discovery within a consistent
+  read, without retaining results across transactions or after a flush.
+- Share one live-delete-file query between the Parquet and Puffin doctor
+  rules, with a fresh query cache for each doctor invocation.
+- Read the catalog fingerprint in one query instead of three, and skip it
+  when there is no pending inlined data to flush.
+- Load installed DuckDB extensions directly; install only when missing.
+- Probe catalog availability without counting the entire snapshot history.
 - Separate shared handoff/storage contracts from Glue registration and remove
   disconnected internal state-loading/reconciliation APIs. CLI flags and
   exit-code meanings are unchanged.
@@ -80,5 +93,6 @@ First release candidate, published to PyPI to rehearse the release process.
 - Works with Typer 0.27 to 0.29 (no direct import of Click, which Typer 0.29
   vendors).
 
-[Unreleased]: https://github.com/Didone/ducklake-iceberg/compare/v0.1.0rc1...HEAD
+[Unreleased]: https://github.com/Didone/ducklake-iceberg/compare/v0.1.1rc1...HEAD
+[0.1.1rc1]: https://github.com/Didone/ducklake-iceberg/compare/v0.1.0rc1...v0.1.1rc1
 [0.1.0rc1]: https://github.com/Didone/ducklake-iceberg/releases/tag/v0.1.0rc1
