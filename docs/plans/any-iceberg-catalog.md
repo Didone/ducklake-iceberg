@@ -1,7 +1,15 @@
 # Plan: publish to any Iceberg catalog, not only AWS Glue
 
-Status: proposal (branch `feat/any-iceberg-catalog`). Nothing here is
-implemented yet.
+Status: approved direction, spike in progress (branch
+`feat/any-iceberg-catalog`).
+
+Decisions (2026-11-10):
+
+* Glue moves to commit mode in 0.2: one publication path for every catalog,
+  no pointer mode. The pointer file and the raw boto3 `UpdateTable` go away.
+* Priority catalog: Databricks Unity Catalog. No Databricks workspace is
+  available yet, so the spike validates the protocol against other servers and
+  lists what only a real workspace can confirm.
 
 ## 1. Goal
 
@@ -88,11 +96,10 @@ manifests the tool writes. Commit mode is also more portable for Glue itself
 (`GlueCatalog.commit_table` does the same `VersionId` swap) and would remove the
 pointer file and the raw boto3 calls.
 
-**Recommendation.** Implement commit mode as the generic path. Keep pointer
-mode as the default for Glue in 0.2 (no behavior change for current users),
-behind a `publish_mode: auto | pointer | commit` setting where `auto` means
-pointer for Glue and commit for everything else. Decide after one release
-whether Glue moves to commit mode too.
+**Decision.** Commit mode is the only publication path in 0.2, Glue included
+(`GlueCatalog.commit_table` performs the same `VersionId` compare-and-swap).
+Existing Glue tables need no migration: the next sync loads the table through
+the catalog and commits on top of the current metadata.
 
 ## 4. Configuration
 
@@ -130,22 +137,20 @@ src/ducklake_iceberg/catalogs/
     __init__.py      # build_publisher(settings) -> Publisher
     base.py          # Publisher protocol, PublishedState, capabilities
     commit.py        # generic PyIceberg Catalog: register_table + commit_table
-    glue_pointer.py  # today's glue.py logic (pointer mode, Lake Formation)
+    glue.py          # Glue specifics only: Lake Formation detection, IAM hints
 ```
 
 * `Publisher.state(identifier) -> PublishedState | None` (metadata location,
   current snapshot id, table uuid, properties): used by the export base, the
   dry run (`in_sync` / `behind` / `unpublished`) and divergence detection.
 * `Publisher.register(identifier, metadata_location)` for the first sync.
-* `Publisher.publish(identifier, plan)` for later syncs: pointer swap or
-  `commit_table`.
-* The export no longer imports Glue code: in commit mode it plans against the
-  catalog's metadata and returns the updates; in pointer mode it keeps writing
-  `metadata.json` and the pointer.
-* `register.py` becomes the stage orchestration only; `glue.py` moves to
-  `catalogs/glue_pointer.py`.
+* `Publisher.publish(identifier, plan)` for later syncs: `commit_table`.
+* The export no longer imports Glue code: it plans against the catalog's
+  metadata and returns the updates; it writes `metadata.json` itself only for
+  the first registration.
+* `register.py` becomes the stage orchestration only; the boto3 `UpdateTable`
+  path and the private `_construct_table_input` import are removed.
 * `lock_key` takes the catalog name/URI, the namespace and the table.
-* The private PyIceberg imports stay confined to `glue_pointer.py`.
 
 ## 6. Storage and credentials
 
@@ -174,8 +179,8 @@ src/ducklake_iceberg/catalogs/
 * Exit codes do not change: 1 error, 2 blocked (now also "catalog does not
   support registering an existing table", see section 8), 3 diverged, 4
   nothing to do.
-* Pointer file: format v2 with neutral `catalog`/`namespace`/`table` fields;
-  v1 still read. Only used in pointer mode.
+* Pointer file: no longer written. Existing pointers are ignored; the catalog
+  is the only source of the published state.
 * Dependencies: `pyiceberg[glue,s3fs]` stays the default; extras
   `ducklake-iceberg[sql]` (`pyiceberg[sql-sqlite,sql-postgres]`) and
   `ducklake-iceberg[hive]`. The REST client is in PyIceberg core.
@@ -184,7 +189,7 @@ src/ducklake_iceberg/catalogs/
 
 | Catalog | Mode | Status / risk |
 | --- | --- | --- |
-| AWS Glue | pointer (default), commit | Supported today |
+| AWS Glue | commit | Supported today in pointer mode; moves to commit mode |
 | SQL catalog (SQLite/Postgres) | commit | Expected to work; fast in-process tests |
 | Hive | commit | Expected to work; no purge support in PyIceberg |
 | Generic REST (`apache/iceberg-rest-fixture`) | commit | Expected to work; reference for the protocol |
@@ -201,10 +206,11 @@ blocker (exit 2) with an explanation, never worked around by copying data.
 * Unit: config parsing and backward compatibility, update/requirement
   building from an export plan, error classification (409, 5xx, missing
   register endpoint), redaction of catalog secrets.
-* Fast integration (no Docker): PyIceberg `SqlCatalog` on SQLite as the
-  commit-mode catalog. Parametrize the existing sync suites
-  (`test_sync_e2e`, `test_incremental`, `test_second_reader`, envelope
-  contract) over `glue (moto, pointer)` and `sql (commit)`.
+* Fast integration (no Docker): PyIceberg `SqlCatalog` on SQLite. Parametrize
+  the existing sync suites (`test_sync_e2e`, `test_incremental`,
+  `test_second_reader`, envelope contract) over `glue (moto)` and `sql`.
+* Glue upgrade path: a table published by 0.1 (pointer mode) keeps syncing
+  under 0.2.
 * Docker integration: the REST fixture (`apache/iceberg-rest-fixture`) and
   Apache Polaris with MinIO, reusing the zero-copy audit of
   `test_e2e_minio.py`: create/insert/delete/update/merge, schema and partition
@@ -218,18 +224,17 @@ blocker (exit 2) with an explanation, never worked around by copying data.
 | Phase | Content | Done when |
 | --- | --- | --- |
 | 0. Spike (1-2 days) | Script: `register_table` of a tool-written v1, then `commit_table` with `AddSnapshot` pointing at a tool-written manifest list, on SQL, the REST fixture and Polaris; field IDs preserved; read back by PyIceberg and DuckDB. Unity Catalog check | Go/no-go per catalog written down here |
-| 1. Abstraction, no behavior change | `catalogs/` package, `Publisher` protocol, Glue pointer mode moved behind it, neutral lock key and pointer v2, `catalog` config with the legacy keys mapped | Whole suite green, Glue output identical |
-| 2. Commit mode | Export base from the catalog, update/requirement building, `commit_table` with conflict and unknown-state handling, dry-run check through `Publisher.state` | SQL-catalog suites green, zero-copy audit green |
+| 1. Abstraction | `catalogs/` package, `Publisher` protocol, neutral lock key, `catalog` config with the legacy keys mapped | Whole suite green |
+| 2. Commit mode | Export base from the catalog, update/requirement building, `commit_table` with conflict and unknown-state handling, dry-run check through `Publisher.state`, Glue switched over, pointer removed | SQL and Glue suites green, 0.1 Glue tables keep syncing, zero-copy audit green |
 | 3. REST and Polaris | Vended credentials FileIO, location rule in `doctor`, REST fixture and Polaris e2e, docs per catalog | Docker e2e green |
 | 4. Contract and release | `catalog` envelope key, phase and events with Glue aliases, extras, CHANGELOG, `docs/` | Release 0.2.0 |
 
 ## 11. Open questions
 
-1. Should Glue move to commit mode in 0.2 (simpler code, one path) or stay in
-   pointer mode until 0.3?
-2. Which catalogs matter first for you: Polaris, Unity Catalog, Snowflake Open
-   Catalog, Nessie?
-3. Is a Databricks workspace available for the Unity Catalog spike?
+1. ~~Glue in commit mode in 0.2?~~ Yes.
+2. ~~Priority?~~ Unity Catalog.
+3. ~~Databricks workspace?~~ Not yet: the Unity Catalog findings that need a
+   real workspace stay open (section 12).
 4. Multi-level namespaces (`catalog.schema` in Unity Catalog): map the DuckLake
    schema to the namespace (one namespace per DuckLake schema) or keep one
    configured namespace as today?
