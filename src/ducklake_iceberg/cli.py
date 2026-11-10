@@ -8,7 +8,6 @@ from importlib.metadata import version as pkg_version
 from pathlib import Path
 from typing import Annotated, Literal
 
-import click
 import typer
 
 from ducklake_iceberg import timing
@@ -49,12 +48,13 @@ app = typer.Typer(
     pretty_exceptions_show_locals=False,
 )
 
-#: click exceptions that control the exit (``typer.Exit``, ``Abort``, usage
-#: errors): they are not internal errors and go on to Typer
+#: exceptions that control the exit (``typer.Exit``, ``typer.Abort``, usage
+#: errors): they are not internal errors and go on to Typer. Only Typer's
+#: public names are used: Typer 0.29 vendors Click instead of depending on it.
 _CLICK_CONTROL: tuple[type[BaseException], ...] = (
-    click.exceptions.Exit,
-    click.exceptions.Abort,
-    click.ClickException,
+    typer.Exit,
+    typer.Abort,
+    typer.BadParameter,
 )
 
 

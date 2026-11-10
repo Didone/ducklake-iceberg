@@ -44,9 +44,9 @@ jobs:
           python-version: "3.12"
       - run: pipx install poetry==${{ env.POETRY_VERSION }}
       - run: poetry install --sync
-      - name: Upgrade duckdb and pyiceberg beyond the pinned versions
+      - name: Upgrade duckdb, pyiceberg and typer beyond the locked versions
         run: |
-          poetry run python -m pip install --upgrade $PIP_PRE duckdb "pyiceberg[glue,s3fs]"
+          poetry run python -m pip install --upgrade $PIP_PRE duckdb "pyiceberg[glue,s3fs]" typer
           poetry run python -m pip check || echo "::warning::pip check: dependency conflict with the newer versions"
       - name: Reinstall the extensions from the chosen repository
         run: |

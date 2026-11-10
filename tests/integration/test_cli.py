@@ -7,10 +7,10 @@ AWS is simulated with moto. Marked `integration` and `aws`.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import pytest
-from click import unstyle
 from moto import mock_aws
 from typer.testing import CliRunner
 
@@ -20,6 +20,12 @@ from tests.integration.conftest import CatalogHarness, cli_env_for
 pytestmark = [pytest.mark.integration, pytest.mark.aws]
 
 runner = CliRunner()
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def unstyle(text: str) -> str:
+    return _ANSI.sub("", text)
 
 
 def _json(output: str) -> dict[str, Any]:
