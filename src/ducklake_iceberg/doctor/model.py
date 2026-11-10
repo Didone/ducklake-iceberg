@@ -12,7 +12,10 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import IntEnum, StrEnum
-from typing import TYPE_CHECKING, Any, Protocol, Union, cast
+from typing import TYPE_CHECKING, Protocol, Union
+
+from ducklake_iceberg import timing
+from ducklake_iceberg.catalog.query import query_arrow
 
 if TYPE_CHECKING:
     import duckdb
@@ -111,6 +114,9 @@ class DoctorContext:
     target: DoctorTarget
     format_version: int = 2
     capabilities: frozenset[Capability] = frozenset({Capability.POSITION_DELETES})
+    _query_cache: dict[str, pa.Table] | None = field(
+        default=None, repr=False, compare=False
+    )
 
     def meta(self, table: str) -> str:
         """Qualified name of a table in the metadata catalog."""
@@ -128,11 +134,17 @@ class DoctorContext:
         used = {
             name: value for name, value in (params or {}).items() if f"${name}" in sql
         }
-        # Uses `con.sql(...).to_arrow_table()` (no extra copy; it is what
-        # DuckDB recommends). The duckdb stubs do not declare `.sql` with params.
-        con = cast("Any", self.con)
-        relation = con.sql(sql, params=used)
-        return cast("pa.Table", relation.to_arrow_table())
+        return query_arrow(self.con, sql, used)
+
+    def query_cached(self, sql: str) -> pa.Table:
+        """Share a target-bound read only during a single runner execution."""
+        if self._query_cache is None:
+            return self.query(sql, self.bind)
+        if sql not in self._query_cache:
+            self._query_cache[sql] = self.query(sql, self.bind)
+        else:
+            timing.count("doctor.query_cache_hits")
+        return self._query_cache[sql]
 
     @property
     def bind(self) -> dict[str, JsonValue]:

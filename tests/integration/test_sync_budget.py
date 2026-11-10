@@ -105,10 +105,12 @@ def test_sync_without_inlined_uses_one_read_only_connection(
     glue_env: None,
     opened: list[bool],
     maintenance_calls: list[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = _config(catalog, tmp_path, inlining=0)
     catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
     catalog.write("INSERT INTO lake.main.t SELECT * FROM range(10)")
+    _forbid(monkeypatch, "ducklake_iceberg.checkpoint.flush.read_fingerprint")
 
     code, doc = _sync(config)
     assert code == 0, doc["problems"]
@@ -122,6 +124,7 @@ def test_sync_without_inlined_uses_one_read_only_connection(
     assert code == 4
     assert opened == [True]
     assert timing.counter("duckdb.connect") == 1
+    assert timing.counter("doctor.query_cache_hits") == 1
 
 
 def test_sync_resolves_aws_session_once(
@@ -156,6 +159,11 @@ def test_sync_with_inlined_only_flushes(
     assert False in opened  # the flush write
     # the flush changed the snapshot: post-checkpoint revalidation
     assert _steps(doc) == ["doctor", "checkpoint", "doctor", "export", "register"]
+    assert timing.counter("inlining.cache_hits") >= 2
+    phases = timing.snapshot()["phases_ms"]
+    assert phases["checkpoint.flush_call"] >= 0
+    assert phases["catalog.attach"] >= 0
+    assert timing.counter("catalog.queries") > 0
 
 
 def _forbid(monkeypatch: pytest.MonkeyPatch, *targets: str) -> None:

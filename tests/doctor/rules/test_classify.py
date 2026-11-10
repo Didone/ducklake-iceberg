@@ -9,9 +9,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import duckdb
 import pyarrow as pa
 import pytest
 
+from ducklake_iceberg import timing
 from ducklake_iceberg.doctor.model import (
     Capability,
     DoctorContext,
@@ -28,6 +30,7 @@ from ducklake_iceberg.doctor.rules import (
     partial_files,
     unsupported_type,
 )
+from ducklake_iceberg.doctor.runner import run
 
 
 def _target(snapshot_id: int = 5) -> DoctorTarget:
@@ -54,6 +57,48 @@ def _ctx(
 
 def _table(rows: list[dict[str, Any]], schema: pa.Schema) -> pa.Table:
     return pa.Table.from_pylist(rows, schema=schema)
+
+
+def test_shared_delete_read_preserves_format_and_snapshot_filters() -> None:
+    with duckdb.connect() as con:
+        con.execute("CREATE SCHEMA lake_meta")
+        con.execute(
+            "CREATE TABLE lake_meta.ducklake_delete_file "
+            "(table_id BIGINT, delete_file_id BIGINT, format VARCHAR, "
+            "delete_count BIGINT, begin_snapshot BIGINT, end_snapshot BIGINT)"
+        )
+        con.execute(
+            "CREATE TABLE lake_meta.ducklake_metadata "
+            "(key VARCHAR, value VARCHAR, scope VARCHAR, scope_id BIGINT)"
+        )
+        con.execute(
+            "INSERT INTO lake_meta.ducklake_delete_file VALUES "
+            "(7, 1, 'PARQUET', 3, 1, NULL), "
+            "(7, 2, 'PUFFIN', 2, 1, NULL), "
+            "(7, 3, 'other', 1, 1, NULL), "
+            "(7, 4, NULL, 9, 1, NULL), "
+            "(7, 5, 'puffin', 100, 6, NULL), "
+            "(7, 6, 'parquet', 100, 1, 5), "
+            "(8, 7, 'puffin', 100, 1, NULL)"
+        )
+        ctx = DoctorContext(con=con, target=_target())
+        report = run(
+            ctx,
+            [
+                delete_parquet.DeleteParquetRule(requires=()),
+                delete_puffin.DeletePuffinRule(requires=()),
+            ],
+        )
+        parquet, puffin = report.results
+        assert [dict(f.data) for f in parquet.findings] == [
+            {"format": "other", "delete_files": 1, "delete_count": 1},
+            {"format": "parquet", "delete_files": 1, "delete_count": 3},
+        ]
+        assert [dict(f.data) for f in puffin.findings] == [
+            {"puffin_files": 1, "delete_count": 2}
+        ]
+        assert timing.counter("catalog.queries") == 2
+        assert timing.counter("doctor.query_cache_hits") == 1
 
 
 # --------------------------------------------------------------------------

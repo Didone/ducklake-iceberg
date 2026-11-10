@@ -28,7 +28,11 @@ from ducklake_iceberg.catalog.reader import (
     resolve_table,
     snapshot_at,
 )
-from ducklake_iceberg.checkpoint.detect import clean_snapshot, detect_inlined
+from ducklake_iceberg.checkpoint.detect import (
+    cache_inlined_reads,
+    clean_snapshot,
+    detect_inlined,
+)
 from ducklake_iceberg.checkpoint.model import TableRef as CheckpointTableRef
 from ducklake_iceberg.concurrency import (
     ContextThreadPoolExecutor,
@@ -86,6 +90,13 @@ class CatalogView:
 
 
 def read_catalog(
+    con: DuckLakeConnection, ref_text: str, previous_snapshot: int | None
+) -> CatalogView:
+    with cache_inlined_reads(con.raw):
+        return _read_catalog(con, ref_text, previous_snapshot)
+
+
+def _read_catalog(
     con: DuckLakeConnection, ref_text: str, previous_snapshot: int | None
 ) -> CatalogView:
     ref = parse_table_ref(ref_text)

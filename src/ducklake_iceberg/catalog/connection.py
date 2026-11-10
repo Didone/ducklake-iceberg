@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from types import TracebackType
@@ -13,6 +13,7 @@ import pyarrow as pa
 
 from ducklake_iceberg import timing
 from ducklake_iceberg.aws import s3_credential_properties
+from ducklake_iceberg.catalog.query import Params, query_arrow
 from ducklake_iceberg.config import DuckLakeIcebergSettings
 from ducklake_iceberg.errors import AwsError, CatalogError, ProfileNotFoundError
 
@@ -46,8 +47,6 @@ _BASE_EXTENSIONS: Final[tuple[str, ...]] = ("ducklake", "httpfs", "aws")
 _KNOWN_BACKENDS: Final[frozenset[str]] = frozenset(
     {"postgres", "sqlite", "mysql", "duckdb"}
 )
-
-Params = Sequence[Any] | Mapping[str, Any] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,7 +153,8 @@ class DuckLakeConnection:
     def open(self) -> Self:
         timing.count("duckdb.connect")
         with timing.phase("catalog_open"):
-            self._con = duckdb.connect(":memory:", config=self._connect_config())
+            with timing.phase("catalog.connect"):
+                self._con = duckdb.connect(":memory:", config=self._connect_config())
             if self._settings.duckdb_threads is not None:
                 self.execute(f"SET threads = {self._settings.duckdb_threads}")
             if self._settings.duckdb_memory_limit is not None:
@@ -163,10 +163,14 @@ class DuckLakeConnection:
                 )
             self._load_extensions()
             if self._backend == "postgres":
-                self.execute("CALL postgres_clear_cache()")
-            self._create_s3_secret()
-            self._attach()
-            self._probe_metadata_catalog()
+                with timing.phase("catalog.clear_cache"):
+                    self.execute("CALL postgres_clear_cache()")
+            with timing.phase("catalog.secret"):
+                self._create_s3_secret()
+            with timing.phase("catalog.attach"):
+                self._attach()
+            with timing.phase("catalog.probe"):
+                self._probe_metadata_catalog()
         return self
 
     def _connect_config(self) -> dict[str, Any]:
@@ -184,7 +188,9 @@ class DuckLakeConnection:
     def _probe_metadata_catalog(self) -> None:
         """Confirm that `<meta>.ducklake_*` is visible."""
         try:
-            self.query_arrow(f"SELECT count(*) AS n FROM {self.meta}.ducklake_snapshot")
+            self.query_arrow(
+                f"SELECT snapshot_id FROM {self.meta}.ducklake_snapshot LIMIT 1"
+            )
         except CatalogError as exc:
             raise CatalogError(
                 f"metadata catalog {self.meta!r} not found",
@@ -193,7 +199,8 @@ class DuckLakeConnection:
 
     def close(self) -> None:
         if self._con is not None:
-            self._con.close()
+            with timing.phase("catalog.close"):
+                self._con.close()
             self._con = None
 
     def __enter__(self) -> Self:
@@ -232,9 +239,7 @@ class DuckLakeConnection:
         """Execute and return a `pyarrow.Table`."""
         con = self._require_con()
         try:
-            if params is None:
-                return con.sql(sql).to_arrow_table()
-            return con.sql(sql, params=params).to_arrow_table()
+            return query_arrow(con, sql, params)
         except duckdb.Error as exc:
             LOG.debug("failed to query SQL: %s", sql, exc_info=exc)
             raise _translate(exc, sql) from exc
@@ -274,8 +279,21 @@ class DuckLakeConnection:
     def _load_extensions(self) -> None:
         for name in self._required_extensions():
             try:
-                self.execute(f"INSTALL {name}")
-                self.execute(f"LOAD {name}")
+                try:
+                    with timing.phase(f"catalog.extension.{name}.load"):
+                        self._require_con().execute(f"LOAD {name}")
+                except duckdb.IOException as exc:
+                    if "not found" not in str(exc) or "INSTALL" not in str(exc):
+                        raise
+                    with timing.phase(f"catalog.extension.{name}.install"):
+                        self.execute(f"INSTALL {name}")
+                    with timing.phase(f"catalog.extension.{name}.load"):
+                        self.execute(f"LOAD {name}")
+            except duckdb.Error as exc:
+                raise CatalogError(
+                    f"could not load extension '{name}'",
+                    hint="check the installed extension version and platform",
+                ) from exc
             except CatalogError as exc:
                 raise CatalogError(
                     f"could not load extension '{name}'",

@@ -21,6 +21,7 @@ import logging
 import time
 from collections.abc import Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import duckdb
@@ -67,6 +68,7 @@ def run(
     still holds, now under the caller's control.
     """
     plan = rules if isinstance(rules, ExecutionPlan) else execution_plan(rules)
+    ctx = replace(ctx, _query_cache={})
 
     scope: AbstractContextManager[object] = (
         read_transaction(ctx.con) if manage_transaction else nullcontext()

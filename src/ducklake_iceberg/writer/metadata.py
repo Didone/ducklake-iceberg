@@ -503,7 +503,7 @@ def write_metadata_json(io: FileIO, metadata: TableMetadata, path: str) -> None:
         add_work(
             "metadata_json", items=len(metadata.snapshots), byte_count=len(payload)
         )
-    with timing.phase("s3_put"):
+    with timing.phase("s3.metadata_put"), timing.phase("s3_put"):
         try:
             with io.new_output(path).create(overwrite=False) as out:
                 out.write(payload)
@@ -528,7 +528,10 @@ def read_metadata_or_none(io: FileIO, path: str) -> TableMetadataV2 | None:
     request, not four.
     """
     try:
-        with io.new_input(path).open(seekable=False) as stream:
+        with (
+            timing.phase("s3.metadata_get"),
+            io.new_input(path).open(seekable=False) as stream,
+        ):
             metadata = FromByteStream.table_metadata(stream)
     except FileNotFoundError:
         return None

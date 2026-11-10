@@ -13,30 +13,15 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 import pyarrow as pa
+import pyarrow.compute as pc
 
 from ducklake_iceberg.doctor.model import Capability, DoctorContext, Finding, Severity
 from ducklake_iceberg.doctor.registry import register
-from ducklake_iceberg.doctor.sql import as_int
+from ducklake_iceberg.doctor.sql import as_int, live_delete_files_sql
 
 
 def _sql(ctx: DoctorContext) -> str:
-    delete_file = ctx.meta("ducklake_delete_file")
-    return f"""\
-SELECT
-    dl.delete_file_id,
-    dl.data_file_id,
-    dl.path,
-    dl.path_is_relative,
-    lower(dl.format)  AS format,
-    dl.delete_count,
-    dl.file_size_bytes,
-    dl.begin_snapshot
-FROM {delete_file} dl
-WHERE dl.table_id = $table_id
-  AND lower(dl.format) <> 'puffin'
-  AND $snapshot_id >= dl.begin_snapshot
-  AND (dl.end_snapshot IS NULL OR $snapshot_id < dl.end_snapshot)
-ORDER BY dl.delete_file_id"""
+    return live_delete_files_sql(ctx)
 
 
 def classify(table: pa.Table, ctx: DoctorContext, rule_id: str) -> list[Finding]:
@@ -100,7 +85,8 @@ class DeleteParquetRule:
     requires: tuple[str, ...] = ("inlined-data",)
 
     def check(self, ctx: DoctorContext) -> Sequence[Finding]:
-        table = ctx.query(_sql(ctx), ctx.bind)
+        deletes = ctx.query_cached(_sql(ctx))
+        table = deletes.filter(pc.not_equal(deletes["format"], "puffin"))
         return classify(table, ctx, self.id)
 
 

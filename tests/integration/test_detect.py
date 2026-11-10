@@ -9,13 +9,18 @@ from __future__ import annotations
 
 import pytest
 
+from ducklake_iceberg import timing
 from ducklake_iceberg.catalog.connection import open_catalog
 from ducklake_iceberg.catalog.reader import (
     current_snapshot,
     parse_table_ref,
     resolve_table,
 )
-from ducklake_iceberg.checkpoint.detect import detect_inlined, detect_inlined_many
+from ducklake_iceberg.checkpoint.detect import (
+    cache_inlined_reads,
+    detect_inlined,
+    detect_inlined_many,
+)
 from ducklake_iceberg.checkpoint.model import TableRef
 from tests.integration.conftest import CatalogHarness
 
@@ -107,3 +112,45 @@ def test_detect_many(catalog: CatalogHarness) -> None:
     assert len(statuses) == 2
     by_pending = {tid: st.pending_rows for tid, st in statuses.items()}
     assert sorted(by_pending.values()) == [0, 2]
+
+
+def test_detection_cache_is_scoped_to_snapshot_and_read(
+    seeded_catalog: CatalogHarness,
+) -> None:
+    with open_catalog(seeded_catalog.settings()) as con:
+        with con.read_transaction(), cache_inlined_reads(con.raw):
+            snap = current_snapshot(con)
+            identity = resolve_table(con, parse_table_ref("main.pedidos"), snap)
+            table = TableRef("main", "pedidos", identity.table_id)
+            first = detect_inlined(con.raw, con.meta, table, snap.snapshot_id)
+            queries = timing.counter("catalog.queries")
+            assert detect_inlined(con.raw, con.meta, table, snap.snapshot_id) == first
+            assert timing.counter("catalog.queries") == queries
+            before = first.earliest_pending_begin
+            assert before is not None
+            previous = detect_inlined(con.raw, con.meta, table, before - 1)
+            assert not previous.has_pending
+            assert timing.counter("catalog.queries") > queries
+
+        with con.read_transaction(), cache_inlined_reads(con.raw):
+            queries = timing.counter("catalog.queries")
+            assert detect_inlined(con.raw, con.meta, table, snap.snapshot_id) == first
+            assert timing.counter("catalog.queries") > queries
+
+
+def test_detection_cache_does_not_hide_later_inlined_rows(
+    seeded_catalog: CatalogHarness,
+) -> None:
+    with open_catalog(seeded_catalog.settings()) as con:
+        with con.read_transaction(), cache_inlined_reads(con.raw):
+            snap = current_snapshot(con)
+            identity = resolve_table(con, parse_table_ref("main.pedidos"), snap)
+            table = TableRef("main", "pedidos", identity.table_id)
+            first = detect_inlined(con.raw, con.meta, table, snap.snapshot_id)
+
+        seeded_catalog.write("INSERT INTO lake.main.pedidos VALUES (3, 'RJ')")
+
+        with con.read_transaction(), cache_inlined_reads(con.raw):
+            snapshot = current_snapshot(con)
+            current = detect_inlined(con.raw, con.meta, table, snapshot.snapshot_id)
+            assert current.pending_data_rows == first.pending_data_rows + 1

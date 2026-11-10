@@ -22,6 +22,7 @@ from pyiceberg.manifest import ManifestContent
 from pyiceberg.table import StaticTable
 from pyiceberg.transforms import BucketTransform, DayTransform
 
+from ducklake_iceberg import timing
 from ducklake_iceberg.config import DuckLakeIcebergSettings
 from ducklake_iceberg.errors import CompatibilityError, DivergenceError, ExitCode
 from ducklake_iceberg.export import ExportResult, run_export
@@ -161,6 +162,18 @@ def test_delete_regression_does_not_touch_later_rows(lake: Lake) -> None:
     rows = lake.iceberg_rows(final)
     assert rows == lake.rows()
     assert sorted(r for r in rows if r[1] == "new") == [(i, "new") for i in range(5)]
+    phases = timing.snapshot()["phases_ms"]
+    assert {
+        "deletes.read",
+        "deletes.encode",
+        "deletes.upload",
+        "s3.manifests_put",
+        "s3.metadata_get",
+        "s3.metadata_put",
+        "s3.pointer_get",
+        "s3.pointer_put",
+    } <= phases.keys()
+    assert timing.counter("deletes.source_files") == 1
 
 
 def test_other_table_change_is_nothing_to_do(lake: Lake) -> None:

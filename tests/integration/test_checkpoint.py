@@ -11,6 +11,7 @@ from typing import Any
 import duckdb
 import pytest
 
+from ducklake_iceberg import timing
 from ducklake_iceberg.catalog.connection import DuckLakeConnection, open_catalog
 from ducklake_iceberg.checkpoint import flush
 from ducklake_iceberg.checkpoint.flush import flush_inlined, read_fingerprint
@@ -152,7 +153,9 @@ def test_read_fingerprint(seeded_catalog: CatalogHarness) -> None:
         open_catalog(seeded_catalog.settings(), read_only=True) as con,
         con.read_transaction(),
     ):
+        queries = timing.counter("catalog.queries")
         fp = read_fingerprint(con)
+        assert timing.counter("catalog.queries") == queries + 1
     assert fp.data_path is not None
     assert fp.format_version is not None
     assert fp.max_snapshot_id is not None

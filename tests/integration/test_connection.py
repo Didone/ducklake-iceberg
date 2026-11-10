@@ -236,6 +236,22 @@ def test_no_secret_without_s3(catalog: CatalogHarness) -> None:
         assert "ducklake_iceberg_s3" not in con.environment().secrets
 
 
+def test_installed_extensions_do_not_run_install(
+    catalog: CatalogHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    con = DuckLakeConnection(catalog.settings(), s3=False)
+    execute = con.execute
+
+    def forbid_install(sql: str, params: object = None) -> None:
+        assert not sql.startswith("INSTALL ")
+        assert params is None
+        execute(sql)
+
+    monkeypatch.setattr(con, "execute", forbid_install)
+    with con:
+        assert con.environment().extensions["ducklake"]
+
+
 # --- pure helpers (backend independent) --------------------------------------
 @pytest.mark.parametrize(
     ("dsn", "expected"),

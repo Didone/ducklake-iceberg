@@ -22,6 +22,7 @@ from typing import Any, Final, cast
 
 import duckdb
 
+from ducklake_iceberg.catalog.query import query_arrow
 from ducklake_iceberg.checkpoint.model import (
     CheckpointError,
     NestedVariantError,
@@ -120,11 +121,11 @@ def find_variant_columns(
     snapshot_id: int,
 ) -> tuple[VariantColumn, ...]:
     """All `variant` columns of the table in the snapshot, with their path."""
-    relation = cast("Any", con).sql(
+    rows = query_arrow(
+        con,
         _tree_sql(meta),
-        params={"table_id": table.table_id, "snapshot_id": snapshot_id},
-    )
-    rows: list[dict[str, Any]] = relation.to_arrow_table().to_pylist()
+        {"table_id": table.table_id, "snapshot_id": snapshot_id},
+    ).to_pylist()
     return tuple(
         VariantColumn(
             column_id=int(r["column_id"]),

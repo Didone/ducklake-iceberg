@@ -21,6 +21,7 @@ from pyiceberg.manifest import DataFile, DataFileContent, FileFormat
 from pyiceberg.schema import Schema
 from pyiceberg.types import LongType, NestedField, StringType
 
+from ducklake_iceberg import timing
 from ducklake_iceberg.errors import DuckLakeIcebergError
 from ducklake_iceberg.writer.avro import upload
 
@@ -211,11 +212,13 @@ def write_position_delete_file(
 
     # Serialize in memory: the size comes from the buffer, no S3 HEAD needed
     buffer = BytesIO()
-    pq.write_table(table, buffer, compression="zstd")
+    with timing.phase("deletes.encode"):
+        pq.write_table(table, buffer, compression="zstd")
     payload = buffer.getvalue()
     file_size = len(payload)
     try:
-        upload(io, path, payload, check_exists=check_exists)
+        with timing.phase("deletes.upload"):
+            upload(io, path, payload, check_exists=check_exists)
     except Exception as e:
         if "already exists" in str(e).lower():
             raise DeleteFileExistsError(path) from e

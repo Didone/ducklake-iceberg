@@ -18,12 +18,16 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import duckdb
 
+from ducklake_iceberg import timing
+from ducklake_iceberg.catalog.query import query_arrow
 from ducklake_iceberg.checkpoint.model import TableRef
 from ducklake_iceberg.doctor.model import quote_ident
 
@@ -142,6 +146,30 @@ class InlinedStatus:
         }
 
 
+@dataclass
+class _ReadCache:
+    con: duckdb.DuckDBPyConnection
+    statuses: dict[tuple[str, TableRef, int], InlinedStatus] = field(
+        default_factory=dict
+    )
+    physical_tables: dict[str, set[str]] = field(default_factory=dict)
+
+
+_READ_CACHE: ContextVar[_ReadCache | None] = ContextVar(
+    "inlined_read_cache", default=None
+)
+
+
+@contextmanager
+def cache_inlined_reads(con: duckdb.DuckDBPyConnection) -> Iterator[None]:
+    """Reuse detection only within the caller's consistent read transaction."""
+    token = _READ_CACHE.set(_ReadCache(con))
+    try:
+        yield
+    finally:
+        _READ_CACHE.reset(token)
+
+
 # -- DuckDB access -------------------------------------------------------
 
 
@@ -149,8 +177,7 @@ def _q(
     con: duckdb.DuckDBPyConnection, sql: str, params: dict[str, Any]
 ) -> list[dict[str, Any]]:
     used = {name: value for name, value in params.items() if f"${name}" in sql}
-    relation = cast("Any", con).sql(sql, params=used)
-    table = relation.to_arrow_table()
+    table = query_arrow(con, sql, used)
     rows: list[dict[str, Any]] = table.to_pylist()
     return rows
 
@@ -382,20 +409,45 @@ def detect_inlined(
 ) -> InlinedStatus:
     """Full detection for one table. Must be called inside the read
     transaction opened by the caller."""
+    cache = _READ_CACHE.get()
+    key = (meta, table, snapshot_id)
+    if cache is not None and cache.con is con and key in cache.statuses:
+        timing.count("inlining.cache_hits")
+        return cache.statuses[key]
+    with timing.phase("inlining.detect"):
+        timing.count("inlining.detections")
+        status = _detect_inlined(con, meta, table, snapshot_id)
+    if cache is not None and cache.con is con:
+        cache.statuses[key] = status
+    return status
+
+
+def _detect_inlined(
+    con: duckdb.DuckDBPyConnection,
+    meta: str,
+    table: TableRef,
+    snapshot_id: int,
+) -> InlinedStatus:
     warnings: list[str] = []
-    registered = _registered_tables(con, meta, table.table_id)
-    introspected = {
-        name
-        for name in _introspected_tables(con, meta)
-        if _PHYSICAL_NAME.match(name) is not None
-    }
+    with timing.phase("inlining.registered"):
+        registered = _registered_tables(con, meta, table.table_id)
+    cache = _READ_CACHE.get()
+    with timing.phase("inlining.introspect"):
+        if cache is not None and cache.con is con and meta in cache.physical_tables:
+            introspected = cache.physical_tables[meta]
+        else:
+            introspected = _introspected_tables(con, meta)
+            if cache is not None and cache.con is con:
+                cache.physical_tables[meta] = introspected
     sources = _reconcile(registered, introspected, table.table_id, warnings)
 
-    counts = tuple(
-        _count_source(con, meta, src, snapshot_id, warnings) for src in sources
-    )
+    with timing.phase("inlining.count"):
+        counts = tuple(
+            _count_source(con, meta, src, snapshot_id, warnings) for src in sources
+        )
     pending = sum(c.rows_visible for c in counts)
-    _cross_check(con, meta, table.table_id, snapshot_id, pending, warnings)
+    with timing.phase("inlining.cross_check"):
+        _cross_check(con, meta, table.table_id, snapshot_id, pending, warnings)
 
     return InlinedStatus(
         table=table,

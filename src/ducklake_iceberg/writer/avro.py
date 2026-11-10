@@ -177,7 +177,7 @@ def upload_all(io: FileIO, payloads: Sequence[tuple[str, bytes]]) -> None:
 
     Phase ``s3_put``: one ``PutObject`` per file.
     """
-    with timing.phase("s3_put"):
+    with timing.phase("s3.manifests_put"), timing.phase("s3_put"):
         if len(payloads) <= 1:
             for path, payload in payloads:
                 upload(io, path, payload, check_exists=False)

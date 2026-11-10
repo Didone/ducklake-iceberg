@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import pyarrow as pa
 
+    from ducklake_iceberg.doctor.model import DoctorContext
+
 #: Limit of individual findings per rule; above it, a single aggregate.
 MAX_FINDINGS: int = 20
 
@@ -30,6 +32,15 @@ VISIBLE_AT_SNAPSHOT = (
 def visible(alias: str = "") -> str:
     """Visibility predicate, optionally prefixed by an alias."""
     return VISIBLE_AT_SNAPSHOT.format(alias=f"{alias}." if alias else "")
+
+
+def live_delete_files_sql(ctx: DoctorContext) -> str:
+    return f"""\
+SELECT dl.delete_file_id, lower(dl.format) AS format, dl.delete_count
+FROM {ctx.meta("ducklake_delete_file")} dl
+WHERE dl.table_id = $table_id
+  AND {visible("dl")}
+ORDER BY dl.delete_file_id"""
 
 
 def one_row(table: pa.Table, column: str, default: Any = None) -> Any:

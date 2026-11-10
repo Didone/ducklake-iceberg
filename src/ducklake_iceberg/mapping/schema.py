@@ -40,6 +40,7 @@ from pyiceberg.types import (
     StructType,
 )
 
+from ducklake_iceberg.catalog.query import query_arrow
 from ducklake_iceberg.doctor.model import Finding, Severity, quote_ident
 from ducklake_iceberg.mapping.types import (
     NESTED_TYPES,
@@ -191,7 +192,7 @@ def read_columns(
     column = f"{quote_ident(meta)}.ducklake_column"
     sql = _READ_COLUMNS_SQL.format(column=column)
     params = {"table_id": table_id, "snapshot_id": snapshot_id}
-    table = cast("Any", con).sql(sql, params=params).to_arrow_table()
+    table = query_arrow(con, sql, params)
     return [_row_to_column(row) for row in _rows(table)]
 
 
@@ -201,7 +202,7 @@ def read_last_column_id(
     """``max(column_id)`` over the table's **whole history**."""
     column = f"{quote_ident(meta)}.ducklake_column"
     sql = _LAST_COLUMN_ID_SQL.format(column=column)
-    table = cast("Any", con).sql(sql, params={"table_id": table_id}).to_arrow_table()
+    table = query_arrow(con, sql, {"table_id": table_id})
     rows = _rows(table)
     return _as_int(rows[0]["last_column_id"]) if rows else 0
 

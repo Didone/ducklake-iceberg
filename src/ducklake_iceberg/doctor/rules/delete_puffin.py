@@ -11,30 +11,15 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 import pyarrow as pa
+import pyarrow.compute as pc
 
 from ducklake_iceberg.doctor.model import DoctorContext, Finding, Severity
 from ducklake_iceberg.doctor.registry import register
-from ducklake_iceberg.doctor.sql import one_row
+from ducklake_iceberg.doctor.sql import live_delete_files_sql, one_row
 
 
 def _sql_puffin(ctx: DoctorContext) -> str:
-    delete_file = ctx.meta("ducklake_delete_file")
-    return f"""\
-SELECT
-    dl.delete_file_id,
-    dl.data_file_id,
-    dl.path,
-    dl.path_is_relative,
-    dl.delete_count,
-    dl.file_size_bytes,
-    dl.footer_size,
-    dl.begin_snapshot
-FROM {delete_file} dl
-WHERE dl.table_id = $table_id
-  AND lower(dl.format) = 'puffin'
-  AND $snapshot_id >= dl.begin_snapshot
-  AND (dl.end_snapshot IS NULL OR $snapshot_id < dl.end_snapshot)
-ORDER BY dl.delete_file_id"""
+    return live_delete_files_sql(ctx)
 
 
 def _sql_option(ctx: DoctorContext) -> str:
@@ -101,7 +86,8 @@ class DeletePuffinRule:
     requires: tuple[str, ...] = ("inlined-data",)
 
     def check(self, ctx: DoctorContext) -> Sequence[Finding]:
-        puffin = ctx.query(_sql_puffin(ctx), ctx.bind)
+        deletes = ctx.query_cached(_sql_puffin(ctx))
+        puffin = deletes.filter(pc.equal(deletes["format"], "puffin"))
         option = ctx.query(_sql_option(ctx), ctx.bind)
         return classify(puffin, option, ctx, self.id)
 

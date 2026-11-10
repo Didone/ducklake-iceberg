@@ -34,6 +34,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
+from ducklake_iceberg import timing
 from ducklake_iceberg.deletes.writer import (
     InvalidDeletePositionError,
     PositionDelete,
@@ -103,8 +104,10 @@ def read_visible_positions(
     ``[0, record_count)``: that would indicate a wrong pairing with the data
     file, and publishing it would delete the wrong rows.
     """
-    with io.new_input(delete.path).open() as stream:
-        table = pq.read_table(stream)
+    with timing.phase("deletes.read"):
+        timing.count("deletes.source_files")
+        with io.new_input(delete.path).open() as stream:
+            table = pq.read_table(stream)
 
     pos_col = _column_by_field_id(table.schema, DUCKLAKE_DELETE_POS_FIELD_ID)
     if pos_col is None:

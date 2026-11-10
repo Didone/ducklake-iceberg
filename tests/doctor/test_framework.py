@@ -16,6 +16,7 @@ import duckdb
 import pytest
 from jsonschema import validate
 
+from ducklake_iceberg import timing
 from ducklake_iceberg.doctor import registry
 from ducklake_iceberg.doctor.model import (
     DoctorContext,
@@ -87,6 +88,17 @@ class SpyConnection:
 
     def arrow(self) -> Any:  # pragma: no cover - not used by the fakes
         raise AssertionError("fake must not query the catalog")
+
+
+class CachedQueryRule(FakeRule):
+    def __init__(self, rule_id: str) -> None:
+        super().__init__(rule_id)
+        self.values: list[int] = []
+
+    def check(self, ctx: DoctorContext) -> Sequence[Finding]:
+        table = ctx.query_cached("SELECT count(*) AS n FROM probe")
+        self.values.append(int(table.column("n")[0].as_py()))
+        return ()
 
 
 @pytest.fixture
@@ -299,6 +311,33 @@ def test_commit_despite_rule_error(target: DoctorTarget) -> None:
     run(ctx, [FakeRule("boom", raises=RuntimeError("x"))])
     assert "COMMIT" in spy.commands
     assert "ROLLBACK" not in spy.commands
+
+
+def test_query_cache_is_fresh_for_each_run(target: DoctorTarget) -> None:
+    with duckdb.connect() as con:
+        con.execute("CREATE TABLE probe AS SELECT 1 AS v")
+        ctx = DoctorContext(con=con, target=target)
+        rules = [CachedQueryRule("a"), CachedQueryRule("b")]
+        assert run(ctx, rules).exit_code() == 0
+        assert timing.counter("catalog.queries") == 1
+
+        con.execute("INSERT INTO probe VALUES (2)")
+        assert run(ctx, rules).exit_code() == 0
+        assert timing.counter("catalog.queries") == 2
+        assert [rule.values for rule in rules] == [[1, 2], [1, 2]]
+
+
+def test_failed_shared_queries_are_not_cached(target: DoctorTarget) -> None:
+    with duckdb.connect() as con:
+        ctx = DoctorContext(con=con, target=target)
+        rules = [CachedQueryRule("a"), CachedQueryRule("b")]
+        report = run(ctx, rules)
+        assert all(result.status is RuleStatus.ERROR for result in report.results)
+        assert timing.counter("catalog.queries") == 2
+
+        con.execute("CREATE TABLE probe AS SELECT 1 AS v")
+        assert run(ctx, rules).exit_code() == 0
+        assert [rule.values for rule in rules] == [[1], [1]]
 
 
 # --------------------------------------------------------------------------

@@ -86,7 +86,7 @@ def write_pointer(io: FileIO, pointer: ExportPointer) -> str:
     path = pointer_path(pointer.location)
     payload = json.dumps(pointer.to_json(), indent=2).encode("utf-8")
     output = io.new_output(path)
-    with timing.phase("s3_put"):
+    with timing.phase("s3.pointer_put"), timing.phase("s3_put"):
         try:
             with output.create(overwrite=True) as stream:
                 stream.write(payload)
@@ -105,7 +105,10 @@ def read_pointer(io: FileIO, location: str) -> ExportPointer:
     path = pointer_path(location)
     # a single GET: ``exists()`` + ``open()`` cost ~4 S3 requests
     try:
-        with io.new_input(path).open(seekable=False) as stream:
+        with (
+            timing.phase("s3.pointer_get"),
+            io.new_input(path).open(seekable=False) as stream,
+        ):
             raw = stream.read()
     except FileNotFoundError:
         raise PointerNotFoundError(

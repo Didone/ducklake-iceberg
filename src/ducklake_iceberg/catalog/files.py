@@ -28,8 +28,9 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final
 
+from ducklake_iceberg.catalog.query import query_arrow
 from ducklake_iceberg.checkpoint.detect import detect_inlined
 from ducklake_iceberg.checkpoint.model import TableRef
 from ducklake_iceberg.doctor.model import Finding, Severity, quote_ident
@@ -283,8 +284,7 @@ def _q(
     con: duckdb.DuckDBPyConnection, sql: str, params: dict[str, Any]
 ) -> list[dict[str, Any]]:
     used = {name: value for name, value in params.items() if f"${name}" in sql}
-    relation = cast("Any", con).sql(sql, params=used)
-    table = relation.to_arrow_table()
+    table = query_arrow(con, sql, used)
     rows: list[dict[str, Any]] = table.to_pylist()
     return rows
 

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import duckdb
 
+from ducklake_iceberg import timing
 from ducklake_iceberg.catalog.connection import (
     DuckLakeConnection,
     metadata_catalog,
@@ -149,24 +150,20 @@ def _resolve_table(
 def read_fingerprint(con: DuckLakeConnection) -> CatalogFingerprint:
     """Catalog identity fingerprint."""
     meta = con.meta
-    meta_rows = _rows(
+    rows = _rows(
         con,
         "SELECT "
         "max(CASE WHEN key = 'data_path' AND scope IS NULL THEN value END) "
         "    AS data_path, "
         "max(CASE WHEN key = 'version' AND scope IS NULL THEN value END) "
-        "    AS format_version "
+        "    AS format_version, "
+        f'(SELECT max(snapshot_id) FROM "{meta}".ducklake_snapshot) AS snapshot_id, '
+        f'(SELECT count(*) FROM "{meta}".ducklake_table '
+        " WHERE end_snapshot IS NULL) AS table_count "
         f'FROM "{meta}".ducklake_metadata',
     )
-    snap_rows = _rows(
-        con, f'SELECT max(snapshot_id) AS s FROM "{meta}".ducklake_snapshot'
-    )
-    count_rows = _rows(
-        con,
-        f'SELECT count(*) AS n FROM "{meta}".ducklake_table WHERE end_snapshot IS NULL',
-    )
-    head = meta_rows[0] if meta_rows else {}
-    snap = snap_rows[0]["s"] if snap_rows else None
+    head = rows[0]
+    snap = head["snapshot_id"]
 
     def opt(value: object) -> str | None:
         return None if value is None else str(value)
@@ -175,7 +172,7 @@ def read_fingerprint(con: DuckLakeConnection) -> CatalogFingerprint:
         data_path=opt(head.get("data_path")),
         format_version=opt(head.get("format_version")),
         max_snapshot_id=int(snap) if snap is not None else None,
-        table_count=int(count_rows[0]["n"]) if count_rows else 0,
+        table_count=int(head["table_count"]),
     )
 
 
@@ -192,10 +189,12 @@ def _flush_call(con: DuckLakeConnection, table: TableRef) -> int:
         f"schema_name => {_lit(table.schema_name)}, "
         f"table_name => {_lit(table.table_name)})"
     )
-    relation = cast("Any", con.raw).sql(sql)
-    if relation is None:
-        return 0
-    rows: list[dict[str, Any]] = relation.to_arrow_table().to_pylist()
+    with timing.phase("checkpoint.flush_call"):
+        timing.count("checkpoint.flush_calls")
+        relation = cast("Any", con.raw).sql(sql)
+        if relation is None:
+            return 0
+        rows: list[dict[str, Any]] = relation.to_arrow_table().to_pylist()
     return sum(int(r["rows_flushed"]) for r in rows)
 
 
@@ -217,27 +216,29 @@ def flush_inlined(
         DivergenceError: the catalog opened for writing is not the one read.
     """
     with metadata_catalog(cfg, con) as ro, ro.read_transaction():
-        snapshot_before = current_snapshot(ro).snapshot_id
-        table = _resolve_table(ro, qualified, snapshot_before)
-        fingerprint = read_fingerprint(ro)
-        status = detect_inlined(ro.raw, ro.meta, table, snapshot_before)
-        variants: tuple[VariantColumn, ...] = find_variant_columns(
-            ro.raw, ro.meta, table, snapshot_before
-        )
-    for warning in status.warnings:
-        LOG.warning("%s: %s", table.qualified, warning)
+        with timing.phase("checkpoint.detect"):
+            snapshot_before = current_snapshot(ro).snapshot_id
+            table = _resolve_table(ro, qualified, snapshot_before)
+            status = detect_inlined(ro.raw, ro.meta, table, snapshot_before)
+            variants: tuple[VariantColumn, ...] = find_variant_columns(
+                ro.raw, ro.meta, table, snapshot_before
+            )
+        for warning in status.warnings:
+            LOG.warning("%s: %s", table.qualified, warning)
 
-    # Evaluated BEFORE "nothing to do": a nested variant blocks even without
-    # pending inlined data.
-    nested = find_nested_variants(variants)
-    if nested:
-        raise nested_variant_error(table, nested, detected="pre_check")
-    if not status.has_pending:
-        return FlushResult(table, 0, snapshot_before, snapshot_before)
+        # A nested variant blocks even without pending inlined data.
+        nested = find_nested_variants(variants)
+        if nested:
+            raise nested_variant_error(table, nested, detected="pre_check")
+        if not status.has_pending:
+            return FlushResult(table, 0, snapshot_before, snapshot_before)
+        with timing.phase("checkpoint.fingerprint"):
+            fingerprint = read_fingerprint(ro)
 
     write = open_catalog(cfg, read_only=False)
     try:
-        divergence = fingerprint.divergence(read_fingerprint(write))
+        with timing.phase("checkpoint.fingerprint"):
+            divergence = fingerprint.divergence(read_fingerprint(write))
         if divergence is not None:
             raise DivergenceError(
                 "the catalog opened for writing is not the one read in "
@@ -245,9 +246,10 @@ def flush_inlined(
                 hint="review the DSN; the DuckLake may have been created by mistake",
             )
         try:
-            rows_flushed = _retry_on_conflict(
-                lambda: _flush_call(write, table), f"flush of {table.qualified}"
-            )
+            with timing.phase("checkpoint.flush"):
+                rows_flushed = _retry_on_conflict(
+                    lambda: _flush_call(write, table), f"flush of {table.qualified}"
+                )
         except duckdb.Error as exc:
             LOG.debug("flush of %s failed", table.qualified, exc_info=exc)
             after = _max_snapshot(write)

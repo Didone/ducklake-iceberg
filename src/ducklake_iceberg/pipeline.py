@@ -20,7 +20,11 @@ from ducklake_iceberg.catalog.reader import (
     resolve_table,
     snapshot_at,
 )
-from ducklake_iceberg.checkpoint.detect import clean_snapshot, detect_inlined
+from ducklake_iceberg.checkpoint.detect import (
+    cache_inlined_reads,
+    clean_snapshot,
+    detect_inlined,
+)
 from ducklake_iceberg.checkpoint.flush import flush_inlined
 from ducklake_iceberg.checkpoint.model import TableRef as CheckpointTableRef
 from ducklake_iceberg.concurrency import Limits, apply_limits
@@ -211,7 +215,11 @@ def _doctor_gate(
     will publish.
     """
     ref = parse_table_ref(qualified)
-    with metadata_catalog(settings, con) as ro, ro.read_transaction():
+    with (
+        metadata_catalog(settings, con) as ro,
+        ro.read_transaction(),
+        cache_inlined_reads(ro.raw),
+    ):
         snapshot = current_snapshot(ro)
         identity = resolve_table(ro, ref, snapshot)
         if at_export_target:

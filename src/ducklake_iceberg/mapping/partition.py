@@ -58,6 +58,7 @@ from pyiceberg.types import (
     UUIDType,
 )
 
+from ducklake_iceberg.catalog.query import query_arrow
 from ducklake_iceberg.doctor.model import Finding, Severity, quote_ident
 from ducklake_iceberg.mapping.transforms import CALENDAR_TRANSFORMS
 from ducklake_iceberg.mapping.transforms import PartitionSpecError as PartitionSpecError
@@ -175,7 +176,7 @@ def read_partition_specs(
         column=f"{q}.ducklake_partition_column",
         columns=f"{q}.ducklake_column",
     )
-    table = cast("Any", con).sql(sql, params={"table_id": table_id}).to_arrow_table()
+    table = query_arrow(con, sql, {"table_id": table_id})
     grouped: dict[int, list[DuckLakePartitionColumn]] = {}
     bounds: dict[int, tuple[int, int | None]] = {}
     order: list[int] = []
@@ -223,7 +224,7 @@ def read_partition_values(
     """
     q = quote_ident(meta)
     sql = _READ_VALUES_SQL.format(fpv=f"{q}.ducklake_file_partition_value")
-    table = cast("Any", con).sql(sql, params={"table_id": table_id}).to_arrow_table()
+    table = query_arrow(con, sql, {"table_id": table_id})
     out: dict[int, dict[int, str | None]] = {}
     for row in _rows(table):
         data_file_id = _as_int(row["data_file_id"])
