@@ -249,16 +249,16 @@ class _Base:
 
 
 def _table_location(settings: DuckLakeIcebergSettings, glue_table: str) -> str:
-    from ducklake_iceberg.glue import normalize_table_name
+    from ducklake_iceberg.catalogs import normalize_table_name
 
     prefix = settings.iceberg_metadata_prefix.rstrip("/")
-    return f"{prefix}/{settings.glue_database}/{normalize_table_name(glue_table)}"
+    return f"{prefix}/{settings.namespace}/{normalize_table_name(glue_table)}"
 
 
 def _glue_target(settings: DuckLakeIcebergSettings, glue_table: str) -> str:
-    from ducklake_iceberg.glue import normalize_table_name
+    from ducklake_iceberg.catalogs import normalize_table_name
 
-    return f"{settings.glue_database}.{normalize_table_name(glue_table)}"
+    return f"{settings.namespace}.{normalize_table_name(glue_table)}"
 
 
 def _read_base_pointer(io: FileIO, location: str) -> ExportPointer | None:
@@ -423,7 +423,7 @@ def _check_identity(base: _Base, identity: TableIdentity, glue_target: str) -> N
                 f"schema (and normalizes the table name). The Iceberg table at "
                 f"{where} mirrors {published}",
                 hint=(
-                    "use a distinct glue_database per schema (another config) or "
+                    "use a distinct catalog.namespace per schema (another config) or "
                     "rename one of the tables in DuckLake; Glue and S3 were not "
                     "changed"
                 ),
@@ -1044,14 +1044,14 @@ def _write_handoff(
     plan: ExportPlan, settings: DuckLakeIcebergSettings, io: FileIO
 ) -> ExportPointer:
     """Step 6: the handoff pointer, written last."""
-    from ducklake_iceberg.glue import normalize_table_name
+    from ducklake_iceberg.catalogs import normalize_table_name
 
     pointer = ExportPointer(
         version=1,
         metadata_location=plan.metadata_location,
         metadata_version=plan.metadata_version,
         location=plan.location,
-        glue_database=settings.glue_database,
+        glue_database=settings.namespace,
         glue_table=normalize_table_name(plan.table_name),
         ducklake_catalog=settings.catalog_alias,
         ducklake_schema=plan.schema_name,

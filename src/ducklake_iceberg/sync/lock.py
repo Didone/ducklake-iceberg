@@ -160,28 +160,18 @@ def _lock_dir() -> Path:
 # -- key generation -----------------------------------------------------------
 
 
-def lock_key(
-    *,
-    profile: str | None,
-    glue_database: str,
-    glue_table: str,
-) -> str:
-    """Generate the lock key for a table.
+def lock_key(*, catalog: str, identifier: tuple[str, ...]) -> str:
+    """Generate the lock key for a published table.
 
     Args:
-        profile: AWS profile (None for default).
-        glue_database: Glue database.
-        glue_table: Glue table.
+        catalog: stable description of the target catalog
+            (``catalogs.catalog_key``).
+        identifier: the table identifier, ``(*namespace, table)``.
 
     Returns:
         Truncated sha256 hash (16 chars).
     """
-    parts = [
-        profile or "default",
-        glue_database,
-        glue_table,
-    ]
-    key_str = "|".join(parts)
+    key_str = "|".join((catalog, *identifier))
     digest = hashlib.sha256(key_str.encode()).hexdigest()
     return digest[:16]
 

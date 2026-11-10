@@ -134,6 +134,15 @@ def test_read_pointer_unknown_version(tmp_path: pathlib.Path) -> None:
 # -- register.py imports neither duckdb nor ducklake_iceberg.catalog -----------------
 
 
+def _is_ducklake_reader(module: str) -> bool:
+    """duckdb or the DuckLake catalog package (not the Iceberg ``catalogs``)."""
+    return (
+        module == "duckdb"
+        or module == "ducklake_iceberg.catalog"
+        or module.startswith("ducklake_iceberg.catalog.")
+    )
+
+
 def test_register_module_architecture() -> None:
     import ducklake_iceberg.register as r
 
@@ -141,21 +150,14 @@ def test_register_module_architecture() -> None:
     forbidden: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            forbidden += [
-                n.name
-                for n in node.names
-                if n.name == "duckdb" or n.name.startswith("ducklake_iceberg.catalog")
-            ]
+            forbidden += [n.name for n in node.names if _is_ducklake_reader(n.name)]
         if (
             isinstance(node, ast.ImportFrom)
             and node.module
-            and (
-                node.module == "duckdb"
-                or node.module.startswith("ducklake_iceberg.catalog")
-            )
+            and _is_ducklake_reader(node.module)
         ):
             forbidden.append(node.module)
-    assert forbidden == [], f"register.py importa {forbidden}"
+    assert forbidden == [], f"register.py imports {forbidden}"
 
 
 # -- register: resolution and coherence with local FileIO + moto Glue -------
@@ -193,7 +195,7 @@ def _write_table_metadata(
     from ducklake_iceberg.glue import normalize_table_name
 
     prefix = settings_obj.iceberg_metadata_prefix.rstrip("/")
-    location = f"{prefix}/{settings_obj.glue_database}/{normalize_table_name(table)}"
+    location = f"{prefix}/{settings_obj.namespace}/{normalize_table_name(table)}"
     pathlib.Path(location.removeprefix("file://") + "/metadata").mkdir(
         parents=True, exist_ok=True
     )
@@ -232,7 +234,7 @@ def _write_table_metadata(
         metadata_location=mjson,
         metadata_version=1,
         location=loc_uri,
-        glue_database=settings_obj.glue_database,
+        glue_database=settings_obj.namespace,
         glue_table=normalize_table_name(table),
         ducklake_catalog="lake",
         ducklake_schema="sales",

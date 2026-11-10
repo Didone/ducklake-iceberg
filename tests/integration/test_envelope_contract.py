@@ -456,3 +456,21 @@ def test_closed_stderr_keeps_the_exit_code(
     assert normal.returncode == 0, normal.stderr
     assert closed.returncode == normal.returncode
     assert json.loads(closed.stdout)["exit_code"] == normal.returncode
+
+
+def test_unsupported_catalog_type_is_a_config_error(
+    catalog: CatalogHarness,
+    config: Path,
+    glue_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A catalog type not supported yet fails with exit 1, before any write."""
+    monkeypatch.setenv("DUCKLAKE_ICEBERG_CATALOG__TYPE", "rest")
+    monkeypatch.setenv("DUCKLAKE_ICEBERG_CATALOG__NAMESPACE", "analytics")
+    config.write_text(config.read_text().replace("glue_database: analytics\n", ""))
+    _seed(catalog)
+    code, doc, _ = _run(config, "sync", "--table", "main.t")
+    assert code == 1
+    assert doc["problems"][0]["code"] == "config_invalid"
+    assert "not supported yet" in doc["problems"][0]["message"]
+    assert not (config.parent / "iceberg").exists()

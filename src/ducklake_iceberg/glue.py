@@ -60,6 +60,7 @@ from botocore.exceptions import ClientError
 
 from ducklake_iceberg import aws
 from ducklake_iceberg.aws import s3_credential_properties, s3_endpoint_properties
+from ducklake_iceberg.catalogs import normalize_table_name as normalize_table_name
 from ducklake_iceberg.errors import AwsError, DivergenceError, ExitCode, NothingToDo
 from ducklake_iceberg.sync.state import SyncState, parse_sync_state
 
@@ -148,14 +149,6 @@ class RegisterDiverged(DivergenceError):
 
 
 # -- table name normalization -----------------------------------------------
-
-
-def normalize_table_name(name: str) -> str:
-    """``strip`` + lowercase + replace anything not ``[a-z0-9_]`` with ``_``."""
-    lowered = name.strip().lower()
-    return "".join(
-        c if (c.isalnum() and c.isascii()) or c == "_" else "_" for c in lowered
-    )
 
 
 # -- client / catalog construction ------------------------------------------

@@ -310,6 +310,7 @@ def test_env_prefix_and_fields_declared() -> None:
         "metadata_catalog",
         "data_path",
         "iceberg_metadata_prefix",
+        "catalog",
         "glue_database",
         "aws_region",
         "aws_profile",
@@ -364,3 +365,106 @@ def test_s3_endpoint_rejects_invalid_values(tmp_path: Path, value: str) -> None:
     data = {**_BASE, "s3_endpoint": value}
     with pytest.raises(ConfigError, match="s3_endpoint"):
         load_settings(config_file=_write_yaml(tmp_path, data))
+
+
+# --- catalog section ----------------------------------------------------------
+_NO_GLUE: dict[str, Any] = {k: v for k, v in _BASE.items() if k != "glue_database"}
+
+
+def test_legacy_glue_database_maps_to_glue_catalog(tmp_path: Path) -> None:
+    settings = load_settings(config_file=_write_yaml(tmp_path, _BASE))
+    catalog = settings.iceberg_catalog
+    assert (catalog.type, catalog.name, catalog.namespace) == (
+        "glue",
+        "glue",
+        "analytics",
+    )
+    assert settings.namespace == "analytics"
+
+
+def test_nested_yaml_catalog(tmp_path: Path) -> None:
+    data = {
+        **_NO_GLUE,
+        "catalog": {
+            "type": "rest",
+            "name": "polaris",
+            "namespace": "lake.analytics",
+            "properties": {"uri": "http://polaris:8181/api/catalog"},
+        },
+    }
+    settings = load_settings(config_file=_write_yaml(tmp_path, data))
+    assert settings.iceberg_catalog.type == "rest"
+    assert settings.iceberg_catalog.namespace_parts == ("lake", "analytics")
+    assert settings.iceberg_catalog.properties["uri"].startswith("http://polaris")
+    assert settings.glue_database is None
+
+
+def test_catalog_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DUCKLAKE_ICEBERG_CATALOG__TYPE", "rest")
+    monkeypatch.setenv("DUCKLAKE_ICEBERG_CATALOG__NAMESPACE", "analytics")
+    monkeypatch.setenv("DUCKLAKE_ICEBERG_CATALOG__PROPERTIES__URI", "http://rest:8181")
+    monkeypatch.setenv("DUCKLAKE_ICEBERG_CATALOG__PROPERTIES__CREDENTIAL", "id:secret")
+    settings = load_settings(config_file=_write_yaml(tmp_path, _NO_GLUE))
+    catalog = settings.iceberg_catalog
+    assert catalog.type == "rest"
+    assert catalog.properties == {
+        "uri": "http://rest:8181",
+        "credential": "id:secret",
+    }
+
+
+def test_catalog_and_glue_database_conflict(tmp_path: Path) -> None:
+    data = {**_BASE, "catalog": {"type": "glue", "namespace": "analytics"}}
+    with pytest.raises(ConfigError, match="not both"):
+        load_settings(config_file=_write_yaml(tmp_path, data))
+
+
+def test_catalog_missing(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError) as exc:
+        load_settings(config_file=_write_yaml(tmp_path, _NO_GLUE))
+    assert exc.value.message == (
+        "incomplete configuration: catalog (or the legacy glue_database)"
+    )
+
+
+@pytest.mark.parametrize(
+    "catalog",
+    [
+        {"type": "glue", "namespace": "lake.analytics"},
+        {"type": "glue", "namespace": "Analytics"},
+        {"type": "rest", "namespace": "a..b"},
+        {"type": "rest", "namespace": "a", "name": "bad name"},
+        {"type": "nessie", "namespace": "a"},
+        {"type": "rest", "namespace": "a", "unknown": 1},
+    ],
+)
+def test_catalog_rejected(tmp_path: Path, catalog: dict[str, Any]) -> None:
+    with pytest.raises(ConfigError):
+        load_settings(
+            config_file=_write_yaml(tmp_path, {**_NO_GLUE, "catalog": catalog})
+        )
+
+
+def test_redacted_masks_catalog_secrets(tmp_path: Path) -> None:
+    data = {
+        **_NO_GLUE,
+        "catalog": {
+            "type": "rest",
+            "namespace": "analytics",
+            "properties": {
+                "uri": "http://rest:8181",
+                "credential": "id:secret",
+                "token": "t0k3n",
+                "s3.secret-access-key": "sk",
+                "s3.access-key-id": "ak",
+                "warehouse": "lake",
+            },
+        },
+    }
+    red = load_settings(config_file=_write_yaml(tmp_path, data)).redacted()
+    props = red["catalog"]["properties"]
+    assert props["uri"] == "http://rest:8181"
+    assert props["warehouse"] == "lake"
+    for key in ("credential", "token", "s3.secret-access-key", "s3.access-key-id"):
+        assert props[key] == "***"
+    assert "id:secret" not in repr(red)

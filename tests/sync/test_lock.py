@@ -29,11 +29,13 @@ def state_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def test_lock_key_is_stable_and_scoped() -> None:
-    a = lock_key(profile=None, glue_database="db", glue_table="t")
-    assert a == lock_key(profile="default", glue_database="db", glue_table="t")
+    glue = "glue|us-east-1|default|"
+    a = lock_key(catalog=glue, identifier=("db", "t"))
+    assert a == lock_key(catalog=glue, identifier=("db", "t"))
     assert len(a) == 16
-    assert a != lock_key(profile="prod", glue_database="db", glue_table="t")
-    assert a != lock_key(profile=None, glue_database="db", glue_table="u")
+    assert a != lock_key(catalog="glue|us-east-1|prod|", identifier=("db", "t"))
+    assert a != lock_key(catalog=glue, identifier=("db", "u"))
+    assert a != lock_key(catalog="rest|http://polaris||", identifier=("db", "t"))
 
 
 def test_lock_dir_resolution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

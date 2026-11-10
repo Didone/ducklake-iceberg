@@ -19,6 +19,7 @@ from ducklake_iceberg.catalog.reader import (
     resolve_table,
     snapshot_at,
 )
+from ducklake_iceberg.catalogs import catalog_key, ensure_supported, table_identifier
 from ducklake_iceberg.checkpoint.detect import clean_snapshot, detect_inlined
 from ducklake_iceberg.checkpoint.flush import flush_inlined
 from ducklake_iceberg.checkpoint.model import TableRef as CheckpointTableRef
@@ -40,7 +41,6 @@ from ducklake_iceberg.errors import (
     NothingToDo,
 )
 from ducklake_iceberg.export import run_export
-from ducklake_iceberg.glue import normalize_table_name
 from ducklake_iceberg.obs.logging import bind, log_event
 from ducklake_iceberg.obs.metrics import RunMetrics, add_work, collect
 from ducklake_iceberg.obs.redaction import scrub
@@ -486,9 +486,8 @@ def _sync_locked(
 ) -> ExitCode:
     """The stages under the table's process lock (skipped in a dry run)."""
     key = lock_key(
-        profile=settings.aws_profile,
-        glue_database=settings.glue_database,
-        glue_table=normalize_table_name(table_name),
+        catalog=catalog_key(settings),
+        identifier=table_identifier(settings, table_name),
     )
     qualified = f"{schema_name}.{table_name}"
     catalog = _SharedCatalog(settings)
@@ -541,6 +540,7 @@ def sync_table(
         raise ConfigError(
             f"--table requires a qualified name: <schema>.<table> (got {qualified!r})"
         )
+    ensure_supported(settings)
     schema_name, table_name = ref.schema_name, ref.table_name
     qualified = f"{schema_name}.{table_name}"
     log_event("table.start", table=qualified)

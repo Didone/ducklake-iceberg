@@ -33,13 +33,13 @@ from pyiceberg.io import AWS_PROFILE_NAME, AWS_REGION, load_file_io
 
 from ducklake_iceberg import timing
 from ducklake_iceberg.aws import s3_credential_properties, s3_endpoint_properties
+from ducklake_iceberg.catalogs import normalize_table_name
 from ducklake_iceberg.errors import ConfigError, DivergenceError
 from ducklake_iceberg.glue import (
     GlueTarget,
     RegisterResult,
     TableAlreadyRegistered,
     describe_table,
-    normalize_table_name,
 )
 from ducklake_iceberg.glue import (
     register as glue_register,
@@ -202,7 +202,7 @@ def _pointer_from_dict(data: dict[str, Any]) -> ExportPointer:
 def _table_location(settings: DuckLakeIcebergSettings, table_name: str) -> str:
     glue_table = normalize_table_name(table_name)
     prefix = settings.iceberg_metadata_prefix.rstrip("/")
-    return f"{prefix}/{settings.glue_database}/{glue_table}"
+    return f"{prefix}/{settings.namespace}/{glue_table}"
 
 
 def read_current_pointer(
@@ -293,7 +293,7 @@ def run_register(
     from S3.
     """
     target = GlueTarget(
-        database=settings.glue_database,
+        database=settings.namespace,
         table=normalize_table_name(table_name),
         region=settings.aws_region,
         profile=settings.aws_profile,

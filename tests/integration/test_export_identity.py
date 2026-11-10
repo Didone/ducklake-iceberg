@@ -62,7 +62,7 @@ def test_same_name_in_other_schema_is_a_name_collision(
         assert "does not include the DuckLake schema" in exc.value.message
         assert "was recreated" not in exc.value.message
         assert exc.value.hint is not None
-        assert "glue_database" in exc.value.hint
+        assert "catalog.namespace" in exc.value.hint
     assert _metadata_files(tmp_path) == before  # nothing written
 
 

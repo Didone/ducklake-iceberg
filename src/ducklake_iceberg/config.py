@@ -10,6 +10,8 @@ from urllib.parse import urlparse
 import yaml
 from pydantic import (
     AliasChoices,
+    BaseModel,
+    ConfigDict,
     Field,
     PrivateAttr,
     ValidationError,
@@ -27,6 +29,10 @@ from ducklake_iceberg.errors import ConfigError
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 StatsSource = Literal["catalog", "footer"]
+#: PyIceberg catalog types the tool can be configured with
+CatalogType = Literal["glue", "rest", "sql", "hive"]
+#: catalog types the ``sync`` can publish to in this release
+SUPPORTED_CATALOG_TYPES: frozenset[str] = frozenset({"glue"})
 
 
 SQL_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -45,6 +51,68 @@ CONFIG_SEARCH_PATH: tuple[Path, ...] = (
 
 #: Credential tokens forbidden in the DSN; compared case-insensitively.
 _CREDENTIAL_TOKENS: tuple[str, ...] = ("password=", "pwd=", "user=")
+#: Catalog property names whose values are secrets (redacted from the output)
+_SECRET_PROPERTY = re.compile(
+    r"(?i)(credential|secret|token|password|passwd|private|key-id|access-key|signature)"
+)
+CATALOG_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+NAMESPACE_PART = re.compile(r"^[^.\s/]{1,255}$")
+
+
+class CatalogSettings(BaseModel):
+    """The Iceberg catalog the table is published to.
+
+    ``type`` and ``properties`` are handed to PyIceberg's ``load_catalog``, so
+    every option of the chosen catalog type is available (``uri``,
+    ``warehouse``, ``credential``, ``glue.region``...). Secrets should come
+    from the environment (``DUCKLAKE_ICEBERG_CATALOG__PROPERTIES__CREDENTIAL``)
+    rather than the YAML; they are redacted from logs and envelopes.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: CatalogType = "glue"
+    #: label of the catalog in logs, the envelope and the lock key
+    name: str = "default"
+    #: namespace of the published tables: ``db`` or ``catalog.schema``
+    namespace: str
+    properties: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("name")
+    @classmethod
+    def _valid_name(cls, value: str) -> str:
+        if not CATALOG_NAME.fullmatch(value):
+            raise ValueError(f"invalid catalog.name: {value!r}")
+        return value
+
+    @field_validator("namespace")
+    @classmethod
+    def _valid_namespace(cls, value: str) -> str:
+        parts = value.split(".")
+        if not all(NAMESPACE_PART.fullmatch(p) for p in parts):
+            raise ValueError(f"invalid catalog.namespace: {value!r}")
+        return value
+
+    @model_validator(mode="after")
+    def _glue_namespace(self) -> CatalogSettings:
+        if self.type == "glue" and not GLUE_DATABASE.fullmatch(self.namespace):
+            raise ValueError(
+                f"invalid catalog.namespace for Glue: {self.namespace!r} "
+                "(one level, lowercase letters, digits and underscores)"
+            )
+        return self
+
+    @property
+    def namespace_parts(self) -> tuple[str, ...]:
+        return tuple(self.namespace.split("."))
+
+    def redacted(self) -> dict[str, Any]:
+        data = self.model_dump()
+        data["properties"] = {
+            key: ("***" if _SECRET_PROPERTY.search(key) else value)
+            for key, value in self.properties.items()
+        }
+        return data
 
 
 class DuckLakeIcebergSettings(BaseSettings):
@@ -55,6 +123,7 @@ class DuckLakeIcebergSettings(BaseSettings):
         case_sensitive=False,
         extra="forbid",
         validate_default=True,
+        env_nested_delimiter="__",
     )
 
     catalog_dsn: str = Field(
@@ -68,7 +137,11 @@ class DuckLakeIcebergSettings(BaseSettings):
     iceberg_metadata_prefix: str = Field(
         description="S3 prefix of the Iceberg metadata"
     )
-    glue_database: str
+    #: Iceberg catalog; without it, ``glue_database`` selects a Glue catalog
+    catalog: CatalogSettings | None = None
+    #: legacy shortcut for ``catalog: {type: glue, namespace: <glue_database>}``
+    glue_database: str | None = None
+    #: region of the S3 storage (and of Glue, for a Glue catalog)
     aws_region: str
     aws_profile: str | None = None
     log_level: LogLevel = "INFO"
@@ -156,7 +229,9 @@ class DuckLakeIcebergSettings(BaseSettings):
 
     @field_validator("glue_database")
     @classmethod
-    def _valid_glue_database(cls, value: str) -> str:
+    def _valid_glue_database(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         if not GLUE_DATABASE.fullmatch(value):
             raise ValueError(f"invalid glue_database: {value!r}")
         return value
@@ -191,6 +266,34 @@ class DuckLakeIcebergSettings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _resolve_catalog(self) -> DuckLakeIcebergSettings:
+        """``catalog`` or the legacy ``glue_database``, never both."""
+        if self.catalog is None:
+            if self.glue_database is None:
+                raise ValueError(
+                    "incomplete configuration: catalog (or the legacy glue_database)"
+                )
+            self.catalog = CatalogSettings(
+                type="glue", name="glue", namespace=self.glue_database
+            )
+        elif self.glue_database is not None:
+            raise ValueError(
+                "use catalog.namespace or the legacy glue_database, not both"
+            )
+        return self
+
+    @property
+    def iceberg_catalog(self) -> CatalogSettings:
+        """The resolved catalog (always set after validation)."""
+        assert self.catalog is not None  # set by _resolve_catalog
+        return self.catalog
+
+    @property
+    def namespace(self) -> str:
+        """Namespace of the published tables (``glue_database`` for Glue)."""
+        return self.iceberg_catalog.namespace
+
+    @model_validator(mode="after")
     def _alias_differs_from_metadata_catalog(self) -> DuckLakeIcebergSettings:
         if self.catalog_alias == self.metadata_catalog:
             raise ValueError("catalog_alias and metadata_catalog must be different")
@@ -200,6 +303,7 @@ class DuckLakeIcebergSettings(BaseSettings):
         """Dump for `--json` and `doctor`, without the DSN host/port."""
         data = self.model_dump()
         data["catalog_dsn"] = _redact_dsn(self.catalog_dsn)
+        data["catalog"] = self.iceberg_catalog.redacted()
         data["config_file"] = (
             str(self._config_file) if self._config_file is not None else None
         )
