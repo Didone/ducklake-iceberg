@@ -325,7 +325,8 @@ def validate_identity(
 
     A mismatch in any of them **forbids incremental sync**: the delta would be
     computed over a timeline that is not the one of the published table. The
-    remedy is ``--force-full``.
+    remedy requires validating/restoring the source or selecting a new
+    destination; there is no force override.
 
     Args:
         state: State read from the Iceberg table.

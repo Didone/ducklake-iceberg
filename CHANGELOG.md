@@ -20,6 +20,29 @@ example: "envelope v1: optional key `timings`".
 
 ## [Unreleased]
 
+### Added
+
+- Envelope v1: optional `report` in doctor steps preserves rule diagnostics,
+  including errors detected after flushing inlined data.
+
+### Fixed
+
+- Stop with exit 1 when post-flush compatibility revalidation errors instead
+  of continuing to export and register.
+- Envelope v1: no-op results now identify the existing completed metadata
+  file/version rather than an unwritten next version.
+- Retry transient Glue pointer updates using the shared bounded policy,
+  reconciling uncertain outcomes and rechecking ancestry and `VersionId`.
+- Share partition-transform classification between doctor and export.
+- Validate published sync-state format, version and source identity before
+  writing an incremental export.
+
+### Changed
+
+- Separate shared handoff/storage contracts from Glue registration and remove
+  disconnected internal state-loading/reconciliation APIs. CLI flags and
+  exit-code meanings are unchanged.
+
 ## [0.1.0rc1] - 2026-11-10
 
 First release candidate, published to PyPI to rehearse the release process.

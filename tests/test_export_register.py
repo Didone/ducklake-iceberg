@@ -28,16 +28,15 @@ from pyiceberg.types import IntegerType, NestedField, StringType
 
 from ducklake_iceberg.config import DuckLakeIcebergSettings, load_settings
 from ducklake_iceberg.errors import DivergenceError
-from ducklake_iceberg.register import (
+from ducklake_iceberg.handoff import (
     POINTER_NAME,
     ExportPointer,
     PointerError,
     pointer_path,
     read_pointer,
-    resolve_metadata_location,
-    run_register,
     write_pointer,
 )
+from ducklake_iceberg.register import resolve_metadata_location, run_register
 from ducklake_iceberg.writer.metadata import (
     DuckLakeProvenance,
     SnapshotCounters,
@@ -158,6 +157,19 @@ def test_register_module_architecture() -> None:
     assert forbidden == [], f"register.py importa {forbidden}"
 
 
+def test_export_contracts_do_not_depend_on_publication() -> None:
+    from ducklake_iceberg import export, handoff, storage
+
+    for module in (export, handoff, storage):
+        assert module.__file__ is not None
+        tree = ast.parse(pathlib.Path(module.__file__).read_text())
+        imports = [
+            node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+        ]
+        assert "ducklake_iceberg.register" not in imports
+        assert "ducklake_iceberg.glue" not in imports
+
+
 # -- register: resolution and coherence with local FileIO + moto Glue -------
 
 
@@ -190,7 +202,7 @@ def _write_table_metadata(
     settings_obj: DuckLakeIcebergSettings, table: str, *, snapshot_id: int
 ) -> str:
     """Write a local metadata.json and the pointer; return the location."""
-    from ducklake_iceberg.glue import normalize_table_name
+    from ducklake_iceberg.handoff import normalize_table_name
 
     prefix = settings_obj.iceberg_metadata_prefix.rstrip("/")
     location = f"{prefix}/{settings_obj.glue_database}/{normalize_table_name(table)}"

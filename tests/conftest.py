@@ -6,7 +6,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from ducklake_iceberg import aws, concurrency, register, timing
+from ducklake_iceberg import aws, concurrency, storage, timing
 from ducklake_iceberg.obs.logging import reset_logging
 from ducklake_iceberg.obs.redaction import reset_redaction_failures
 
@@ -19,7 +19,7 @@ def _fresh_aws_process_state() -> Iterator[None]:
     cleanup, a client created under one test's mock would leak into the next.
     """
     aws.clear_cache()
-    register.clear_file_io_cache()
+    storage.clear_file_io_cache()
     timing.reset()
     concurrency.reset_limits()
     # log handler, library log levels and the redaction failure counter
@@ -27,7 +27,7 @@ def _fresh_aws_process_state() -> Iterator[None]:
     reset_redaction_failures()
     yield
     aws.clear_cache()
-    register.clear_file_io_cache()
+    storage.clear_file_io_cache()
     concurrency.reset_limits()
     reset_logging()
     reset_redaction_failures()

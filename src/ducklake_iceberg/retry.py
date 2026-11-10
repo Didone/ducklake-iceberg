@@ -25,11 +25,12 @@ from botocore.exceptions import (
 
 from ducklake_iceberg.errors import DivergenceError, DuckLakeIcebergError
 from ducklake_iceberg.obs.logging import log_event
-from ducklake_iceberg.obs.metrics import Phase, add_call, add_retry
+from ducklake_iceberg.obs.metrics import Phase, add_retry
 
 LOG = logging.getLogger("ducklake_iceberg")
 
 T = TypeVar("T")
+R = TypeVar("R")
 
 
 # -- enums and structures -------------------------------------------------------
@@ -48,7 +49,7 @@ class RetryClass(StrEnum):
 class RetryPolicy:
     """Retry policy with exponential backoff and jitter."""
 
-    max_attempts: int = 5  # 1 tentativa + 4 retries
+    max_attempts: int = 5
     base_delay_s: float = 0.5
     factor: float = 2.0
     max_delay_s: float = 8.0
@@ -117,10 +118,6 @@ class CommitExhausted(DuckLakeIcebergError):  # noqa: N818 - name is part of the
     def __init__(self, message: str, *, attempts: list[AttemptLog]) -> None:
         super().__init__(message)
         self.attempts = attempts
-
-
-class CommitStateUnknown(DuckLakeIcebergError):  # noqa: N818 - name is part of the public contract
-    """Commit state unknown (requires reconciliation)."""
 
 
 # -- exception classification ---------------------------------------------------
@@ -256,12 +253,12 @@ def _delay_multiplier(exc: BaseException) -> float:
 
 def commit_with_retry(
     plan_fn: Callable[[], T],
-    commit_fn: Callable[[T], object],
+    commit_fn: Callable[[T], R],
     *,
     policy: RetryPolicy | None = None,
     reconcile_fn: Callable[[T], bool],
     guard_fn: Callable[[], None],
-) -> object:
+) -> R | None:
     """Run a commit with retry, replanning, and reconciliation.
 
     Args:
@@ -387,13 +384,14 @@ def call_with_retry(
     ``UpdateColumnStatisticsForTable``, which overwrites the statistics):
     retries the ``RETRYABLE``, ``CONFLICT``, and ``UNKNOWN_STATE`` classes up
     to ``policy.max_attempts`` or the wait budget; ``FATAL`` is raised at once.
-    Each attempt counts in the phase's ``calls``; repetitions, in ``retries``.
+    Botocore records API calls; this helper records repetitions in ``retries``.
     """
     if policy is None:
         policy = RetryPolicy()
     ctx = RetryContext(policy=policy)
     for attempt in range(1, policy.max_attempts + 1):
-        add_call(phase, retry=attempt > 1)
+        if attempt > 1:
+            add_retry(phase)
         try:
             return fn()
         except Exception as exc:

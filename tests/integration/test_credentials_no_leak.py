@@ -29,7 +29,7 @@ from moto import mock_aws
 from pyiceberg.io import S3_SECRET_ACCESS_KEY
 from typer.testing import CliRunner
 
-import ducklake_iceberg.register
+import ducklake_iceberg.storage
 from ducklake_iceberg.catalog.connection import DuckLakeConnection, open_catalog
 from ducklake_iceberg.cli import app
 from ducklake_iceberg.errors import AwsError
@@ -133,7 +133,7 @@ def test_profile_credentials_never_leak(
 
     catalog.write("CREATE TABLE lake.main.t (id INTEGER, v VARCHAR)")
     catalog.write("INSERT INTO lake.main.t SELECT i, 'v' || i FROM range(20) r(i)")
-    with mock.patch.object(ducklake_iceberg.register, "load_file_io", spy):
+    with mock.patch.object(ducklake_iceberg.storage, "load_file_io", spy):
         assert cli("sync", "--table", "main.t") == 0
         catalog.write("DELETE FROM lake.main.t WHERE id < 5")
         catalog.write("INSERT INTO lake.main.t VALUES (100, 'x')")

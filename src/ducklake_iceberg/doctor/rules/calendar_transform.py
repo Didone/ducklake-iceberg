@@ -9,28 +9,16 @@ becomes `INFO` (it only affects incremental republishing of old specs).
 
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Final
 
 import pyarrow as pa
+from pyiceberg.transforms import BucketTransform
 
 from ducklake_iceberg.doctor.model import DoctorContext, Finding, Severity
 from ducklake_iceberg.doctor.registry import register
 from ducklake_iceberg.doctor.sql import as_int
-
-CALENDAR_TRANSFORMS: Final[frozenset[str]] = frozenset({"year", "month", "day", "hour"})
-MAPPABLE_TRANSFORMS: Final[dict[str, str]] = {
-    "identity": "identity",
-    "epoch_year": "year",
-    "epoch_month": "month",
-    "epoch_day": "day",
-    "epoch_hour": "hour",
-}
-_BUCKET_RE: Final[re.Pattern[str]] = re.compile(
-    r"\Abucket\s*[(\[]\s*(?P<n>\d+)\s*[)\]]\Z"
-)
+from ducklake_iceberg.mapping.transforms import CALENDAR_TRANSFORMS, map_transform
 
 
 def _sql(ctx: DoctorContext) -> str:
@@ -73,10 +61,11 @@ def classify(table: pa.Table, ctx: DoctorContext, rule_id: str) -> list[Finding]
     findings: list[Finding] = []
     for row in table.to_pylist():
         transform = str(row["transform"])
-        if transform in MAPPABLE_TRANSFORMS:
-            continue
-        if _BUCKET_RE.match(transform):
+        mapped = map_transform(transform)
+        if isinstance(mapped, BucketTransform):
             findings.append(_bucket_info(row, transform, ctx, rule_id))
+            continue
+        if mapped is not None:
             continue
         # calendar or unknown
         is_current = bool(row["is_current"])

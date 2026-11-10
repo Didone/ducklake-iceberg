@@ -33,6 +33,7 @@ than reopening the DuckLake source.
 | `deletes/` | Visibility/position validation, conversion, position-delete writing and manifest checks | Source-data rewrite |
 | `writer/` | File statistics, Avro, incremental manifests, metadata, sequences and counters | Assigning unrelated source field IDs |
 | `export.py` | Plan and build the next mirror state; write metadata/delete artifacts and handoff | Glue publication or source data copies |
+| `handoff.py`, `storage.py` | Shared destination naming, completed-export pointer and cached FileIO construction | Glue publication or DuckLake reads |
 | `register.py`, `glue.py` | Resolve handoff, check coherence/ancestry and publish metadata pointer | DuckLake catalog reads |
 | `sync/` | Local process lock and persisted state vocabulary | A distributed scheduler |
 | `obs/`, `timing.py`, `concurrency.py`, `aws.py` | Instrumentation, worker context, credential/client reuse | An always-running service |
@@ -254,9 +255,10 @@ For an existing table:
 - Same-named non-Iceberg table: explicit error, never replacement.
 
 Registration is reread to verify the resulting location. Transient errors
-have bounded retries; access/validation errors are not blindly retried.
-The broader retry/reconciliation primitives are documented separately from
-the active registration path in the class reference.
+have bounded retries through the shared retry policy; access/validation
+errors are not blindly retried. After a conflict or uncertain update, Glue
+is reread: an applied request is recognized, unrelated ancestry stops
+publication, and a retry uses the newly observed `VersionId`.
 
 An export exit 4 **does not stop registration**. A prior run might have
 written all metadata but failed before advancing Glue.

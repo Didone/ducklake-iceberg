@@ -19,10 +19,9 @@ Design points:
   A same-named **non-Iceberg** table is never overwritten (exit 1).
 - A post-registration re-read checks the ``metadata_location``; a mismatch is
   exit 3.
-- Retry with exponential backoff + jitter only for transient conditions
-  (``ConcurrentModificationException``, ``ThrottlingException``,
-  ``OperationTimeoutException``); ``AccessDenied`` and ``InvalidInput`` are
-  never retried.
+- Shared bounded retry/backoff for transient conditions. Pointer updates
+  reconcile uncertain outcomes and refresh ancestry/VersionId after conflicts;
+  ``AccessDenied`` and ``InvalidInput`` are never retried.
 - Lake Formation: reactive detection (via ``GetTable`` or the ``AccessDenied``
   message) with an actionable message.
 
@@ -42,33 +41,36 @@ Minimum IAM permissions, also used by the ``moto`` tests:
 
 Lake Formation, when active: lakeformation:GetDataAccess on the data location.
 
-The ``register`` principal does **not** need ``s3:PutObject`` (``export`` does
-the writing), and no principal needs write access to the DuckLake
-``data_path``.
+Registration alone does **not** need ``s3:PutObject``. Export writes the separate
+metadata prefix; an inlined-data flush also needs to create source Parquet
+objects under DuckLake's ``data_path``.
 """
 
 from __future__ import annotations
 
 import logging
-import random
-import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final, TypeVar, cast
 
 from botocore.exceptions import ClientError
+from pyiceberg.exceptions import TableAlreadyExistsError
 
 from ducklake_iceberg import aws
 from ducklake_iceberg.aws import s3_credential_properties, s3_endpoint_properties
 from ducklake_iceberg.errors import AwsError, DivergenceError, ExitCode, NothingToDo
-from ducklake_iceberg.sync.state import SyncState, parse_sync_state
+from ducklake_iceberg.retry import (
+    RetryClass,
+    RetryPolicy,
+    call_with_retry,
+    classify_glue_error,
+    commit_with_retry,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from pyiceberg.catalog.glue import GlueCatalog
     from pyiceberg.io import FileIO
-    from pyiceberg.table import Table
     from pyiceberg.table.metadata import TableMetadata
 
 LOG = logging.getLogger("ducklake_iceberg")
@@ -77,17 +79,8 @@ LOG = logging.getLogger("ducklake_iceberg")
 _ICEBERG_TABLE_TYPE: Final[str] = "ICEBERG"
 
 #: transient conditions that deserve a retry with backoff.
-_RETRYABLE: Final[frozenset[str]] = frozenset(
-    {
-        "ConcurrentModificationException",
-        "ThrottlingException",
-        "OperationTimeoutException",
-    }
-)
-
-_MAX_ATTEMPTS: Final[int] = 5
-_BACKOFF_BASE: Final[float] = 0.2
-_BACKOFF_CAP: Final[float] = 5.0
+GLUE_RETRY: Final = RetryPolicy()
+T = TypeVar("T")
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,17 +140,6 @@ class RegisterDiverged(DivergenceError):
     """Post-registration re-read returned another metadata_location (exit 3)."""
 
 
-# -- table name normalization -----------------------------------------------
-
-
-def normalize_table_name(name: str) -> str:
-    """``strip`` + lowercase + replace anything not ``[a-z0-9_]`` with ``_``."""
-    lowered = name.strip().lower()
-    return "".join(
-        c if (c.isalnum() and c.isascii()) or c == "_" else "_" for c in lowered
-    )
-
-
 # -- client / catalog construction ------------------------------------------
 
 
@@ -210,30 +192,16 @@ def _is_lake_formation(exc: ClientError) -> bool:
     return "lake formation" in _error_message(exc).lower()
 
 
-def _sleep_seconds(attempt: int) -> float:
-    """``min(cap, base * 2^(n-1)) * random(0.5, 1.0)``."""
-    raw = min(_BACKOFF_CAP, _BACKOFF_BASE * (2 ** (attempt - 1)))
-    jitter = random.uniform(0.5, 1.0)  # noqa: S311 - jitter, not crypto
-    return float(raw * jitter)
-
-
-def _call_with_retry(func: Any, description: str) -> Any:
-    """Run a Glue call, retrying only on transient conditions."""
-    last: ClientError | None = None
-    for attempt in range(1, _MAX_ATTEMPTS + 1):
-        try:
-            return func()
-        except ClientError as exc:
-            code = _error_code(exc)
-            if code not in _RETRYABLE:
-                raise
-            last = exc
-            if attempt < _MAX_ATTEMPTS:
-                time.sleep(_sleep_seconds(attempt))
-    raise GlueError(
-        f"Glue unavailable after {_MAX_ATTEMPTS} attempts in {description}: "
-        f"{_error_code(last) if last else 'unknown'}"
-    )
+def _call_with_retry(func: Callable[[], T], description: str) -> T:
+    try:
+        return call_with_retry(func, phase="glue", policy=GLUE_RETRY)
+    except Exception as exc:
+        if classify_glue_error(exc) is RetryClass.FATAL:
+            raise
+        raise GlueError(
+            f"Glue unavailable after {GLUE_RETRY.max_attempts} attempts "
+            f"in {description}: {type(exc).__name__}: {exc}"
+        ) from exc
 
 
 # -- database ---------------------------------------------------------------
@@ -321,6 +289,15 @@ def _table_type(table: dict[str, object]) -> str | None:
 def _lake_formation_flag(table: dict[str, object]) -> bool | None:
     value = table.get("IsRegisteredWithLakeFormation")
     return bool(value) if value is not None else None
+
+
+def _require_iceberg(target: GlueTarget, table: dict[str, object]) -> None:
+    table_type = _table_type(table)
+    if table_type is None or table_type.upper() != _ICEBERG_TABLE_TYPE:
+        raise GlueError(
+            f"{target.database}.{target.table} exists and is not Iceberg "
+            f"(table_type={table_type})"
+        )
 
 
 # -- metadata_location validation -------------------------------------------
@@ -422,8 +399,11 @@ def register(
             lambda: catalog.register_table(target.identifier, metadata_location),
             "register_table",
         )
-    except ClientError as exc:
-        if _error_code(exc) == "AlreadyExistsException":
+    except (ClientError, TableAlreadyExistsError) as exc:
+        if (
+            isinstance(exc, TableAlreadyExistsError)
+            or _error_code(exc) == "AlreadyExistsException"
+        ):
             # race: re-read and decide
             reread = describe_table(target)
             if reread is not None:
@@ -435,6 +415,11 @@ def register(
                     database_created=database_created,
                     verify=metadata is None,
                 )
+        if isinstance(exc, TableAlreadyExistsError):
+            raise GlueError(
+                f"{target.database}.{target.table} already exists but "
+                "GetTable did not return it; retry after verifying catalog visibility"
+            ) from exc
         if _is_lake_formation(exc):
             raise _lake_formation_error(metadata_location) from exc
         raise _translate_access(
@@ -475,20 +460,23 @@ def _handle_existing(
     with ``VersionId`` only commits over the version read, and any other writer
     in between becomes ``ConcurrentModificationException`` (handled below).
     """
-    for attempt in range(1, _MAX_ATTEMPTS + 1):
-        table_type = _table_type(table)
-        if table_type is None or table_type.upper() != _ICEBERG_TABLE_TYPE:
-            raise GlueError(
-                f"{target.database}.{target.table} exists and is not Iceberg "
-                f"(table_type={table_type})"
-            )
+    _require_iceberg(target, table)
+    initial_previous = _table_metadata_location(table)
+    if initial_previous == metadata_location:
+        raise TableAlreadyRegistered(
+            f"{target.database}.{target.table} already published at {initial_previous}",
+            metadata_location=initial_previous,
+        )
+    metadata = load_metadata()
+
+    def guard() -> None:
+        _require_iceberg(target, table)
         previous = _table_metadata_location(table)
         if previous == metadata_location:
             raise TableAlreadyRegistered(
                 f"{target.database}.{target.table} already published at {previous}",
                 metadata_location=previous,
             )
-        metadata = load_metadata()
         ancestors = {entry.metadata_file for entry in metadata.metadata_log}
         if previous not in ancestors:
             raise RegisterDiverged(
@@ -497,35 +485,11 @@ def _handle_existing(
                 f"outside ducklake-iceberg or an export from another state",
                 hint="the Iceberg table is a read-only mirror; stop external writers",
             )
-        if dry_run:
-            return RegisterResult(
-                outcome=RegisterOutcome.DRY_RUN,
-                database_created=False,
-                metadata_location=metadata_location,
-                previous_metadata_location=previous,
-                lake_formation=_lake_formation_flag(table),
-            )
-        try:
-            _update_table(target, table, metadata, metadata_location, previous)
-        except ClientError as exc:
-            if _error_code(exc) != "ConcurrentModificationException":
-                if _is_lake_formation(exc):
-                    raise _lake_formation_error(metadata_location) from exc
-                raise _translate_access(
-                    exc, "UpdateTable", f"{target.database}.{target.table}"
-                ) from exc
-            # another writer won the compare-and-swap: re-read and decide again
-            if attempt < _MAX_ATTEMPTS:
-                time.sleep(_sleep_seconds(attempt))
-            reread = describe_table(target)
-            if reread is None:
-                raise GlueError(
-                    f"{target.database}.{target.table} vanished during registration"
-                ) from exc
-            table = reread
-            continue
 
-        reread = describe_table(target) if verify else table
+    def commit(plan: dict[str, object]) -> RegisterResult:
+        previous = _table_metadata_location(plan)
+        _update_table(target, plan, metadata, metadata_location, previous)
+        reread = describe_table(target) if verify else plan
         published = (
             _table_metadata_location(reread)
             if reread is not None and verify
@@ -543,9 +507,52 @@ def _handle_existing(
             previous_metadata_location=previous,
             lake_formation=_lake_formation_flag(reread) if reread else None,
         )
-    raise GlueError(
-        f"Glue under concurrent modification after {_MAX_ATTEMPTS} attempts in "
-        f"{target.database}.{target.table}"
+
+    def reconcile(_plan: dict[str, object]) -> bool:
+        nonlocal table
+        reread = describe_table(target)
+        if reread is None:
+            raise GlueError(
+                f"{target.database}.{target.table} vanished during registration"
+            )
+        table = reread
+        if (
+            str(_table_type(table)).upper() == _ICEBERG_TABLE_TYPE
+            and _table_metadata_location(table) == metadata_location
+        ):
+            return True
+        guard()
+        return False
+
+    guard()
+    if dry_run:
+        return RegisterResult(
+            outcome=RegisterOutcome.DRY_RUN,
+            database_created=False,
+            metadata_location=metadata_location,
+            previous_metadata_location=initial_previous,
+            lake_formation=_lake_formation_flag(table),
+        )
+    try:
+        result = commit_with_retry(
+            lambda: table,
+            commit,
+            policy=GLUE_RETRY,
+            reconcile_fn=reconcile,
+            guard_fn=guard,
+        )
+    except ClientError as exc:
+        raise _translate_access(
+            exc, "UpdateTable", f"{target.database}.{target.table}"
+        ) from exc
+    if result is not None:
+        return result
+    return RegisterResult(
+        outcome=RegisterOutcome.UPDATED,
+        database_created=database_created,
+        metadata_location=metadata_location,
+        previous_metadata_location=initial_previous,
+        lake_formation=_lake_formation_flag(table),
     )
 
 
@@ -604,201 +611,3 @@ def _lake_formation_error(location: str) -> LakeFormationBlocked:
         f"(or ALL) on the table to consumers; keep writes restricted to "
         f"ducklake-iceberg."
     )
-
-
-# -- state reading ----------------------------------------------------------
-
-
-def load_table(target: GlueTarget) -> Table | None:
-    """Load the Iceberg table from Glue using GlueCatalog.
-
-    This is the source of truth for reading state: the ``metadata.json``
-    pointed to by ``metadata_location``. Use ``load_table_state`` to read the
-    parsed state.
-
-    Args:
-        target: Glue target (database, table, region, profile).
-
-    Returns:
-        The loaded Iceberg table, or None if it does not exist.
-
-    Raises:
-        GlueError: On access or communication errors.
-    """
-    catalog = build_catalog(target)
-    try:
-        return catalog.load_table(target.identifier)
-    except Exception as exc:
-        # PyIceberg raises NoSuchTableError for a missing table
-        if "NoSuchTableError" in type(exc).__name__:
-            return None
-        if isinstance(exc, ClientError):
-            raise _translate_access(
-                exc, "LoadTable", f"{target.database}.{target.table}"
-            ) from exc
-        raise GlueError(
-            f"Failed to load table {target.database}.{target.table}: {exc}"
-        ) from exc
-
-
-def load_table_state(target: GlueTarget) -> SyncState:
-    """Read the sync state of the Iceberg table from Glue.
-
-    Source of truth: ``GlueCatalog.load_table(identifier).properties``, which
-    comes from the ``metadata.json`` pointed to by ``metadata_location``.
-
-    Args:
-        target: Glue target (database, table, region, profile).
-
-    Returns:
-        The parsed state. If the table does not exist or has no managed
-        properties, ``SyncState.is_absent`` is True.
-
-    Raises:
-        GlueError: On access or communication errors.
-    """
-    table = load_table(target)
-    if table is None:
-        # Table does not exist: absent state
-        return parse_sync_state({})
-
-    return parse_sync_state(table.properties)
-
-
-def load_table_state_fast(target: GlueTarget) -> SyncState | None:
-    """Fast read path via GetTable Parameters.
-
-    **Limitations:**
-    - The Parameters may be stale (PyIceberg replicates properties, but an
-      external write through Athena leaves the copy outdated).
-    - It can only **discard** work (table clearly up to date), never confirm a
-      commit.
-    - Before any write, re-read from the metadata.json (use
-      ``load_table_state``).
-
-    Recommended use: only for ``status --all-tables``, where discarding
-    synced tables saves time.
-
-    Args:
-        target: Glue target (database, table, region, profile).
-
-    Returns:
-        State parsed from the Parameters, or None if the table does not exist.
-
-    Raises:
-        GlueError: On access or communication errors.
-    """
-    table_desc = describe_table(target)
-    if table_desc is None:
-        return None
-
-    params = table_desc.get("Parameters")
-    if not isinstance(params, dict):
-        return parse_sync_state({})
-
-    return parse_sync_state(params)
-
-
-# -- reconciliation and guard ---------------------------------------------------
-
-
-def reconcile_commit(
-    target: GlueTarget,
-    *,
-    metadata_location: str,
-    target_snapshot_id: int,
-) -> bool:
-    """Reconcile unknown state by checking whether our commit won.
-
-    Args:
-        target: Glue target (database, table, region, profile).
-        metadata_location: Location of the metadata.json we wrote.
-        target_snapshot_id: DuckLake snapshot we wanted to publish.
-
-    Returns:
-        True if our commit won, False otherwise.
-
-    Raises:
-        GlueError: On access errors.
-    """
-    # 1. Fresh GetTable (no cache)
-    table = load_table(target)
-    if table is None:
-        # Table vanished during the commit
-        return False
-
-    # 2. Check metadata_location
-    current_location = table.metadata_location
-    if current_location == metadata_location:
-        # Our commit won
-        LOG.info("Reconciliation: our commit won (metadata_location match)")
-        return True
-
-    # 3. Load the current metadata.json and check properties
-    state = parse_sync_state(table.properties)
-
-    # Check whether another sync published the same snapshot
-    if (
-        state.snapshot_id is not None
-        and state.snapshot_id >= target_snapshot_id
-        and state.iceberg_snapshot_id is not None
-    ):
-        # Another sync already published this snapshot or a later one
-        LOG.info(
-            "Reconciliation: another sync published snapshot %d (we wanted %d)",
-            state.snapshot_id,
-            target_snapshot_id,
-        )
-        return False
-
-    # Check for ducklake_iceberg.* properties (indicates it is our mirror)
-    if state.iceberg_snapshot_id is None:
-        # ducklake_iceberg.* properties missing: external writer
-        LOG.warning(
-            "Reconciliation: external writer detected "
-            "(no ducklake_iceberg.* properties)"
-        )
-        raise DivergenceError(
-            f"External writer detected: snapshot "
-            f"{table.metadata.current_snapshot_id} has no ducklake_iceberg.* properties"
-        )
-
-    # Otherwise, our commit did not win
-    return False
-
-
-def guard_external_write(target: GlueTarget) -> None:
-    """Check for an external write and abort if there was one.
-
-    Args:
-        target: Glue target (database, table, region, profile).
-
-    Raises:
-        DivergenceError: If an external write was detected (exit 3).
-        GlueError: On access errors.
-    """
-    table = load_table(target)
-    if table is None:
-        # Table does not exist: no external write
-        return
-
-    state = parse_sync_state(table.properties)
-
-    # With no properties, it is not our mirror yet
-    if state.is_absent:
-        return
-
-    # Check whether current-snapshot-id == ducklake_iceberg.iceberg-snapshot-id
-    current_snapshot_id = table.metadata.current_snapshot_id
-    recorded_snapshot_id = state.iceberg_snapshot_id
-
-    if (
-        current_snapshot_id is not None
-        and recorded_snapshot_id is not None
-        and current_snapshot_id != recorded_snapshot_id
-    ):
-        raise DivergenceError(
-            f"External write detected: current Iceberg snapshot "
-            f"{current_snapshot_id} differs from the last one published by "
-            f"ducklake-iceberg {recorded_snapshot_id}"
-        )

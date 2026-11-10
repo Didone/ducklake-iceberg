@@ -8,6 +8,7 @@ from a recreated table.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -81,4 +82,28 @@ def test_recreated_table_keeps_recreated_message(
     assert exc.value.exit_code is ExitCode.DIVERGED
     assert "table main.dup_name was recreated" in exc.value.message
     assert "map to the same Glue table" not in exc.value.message
+    assert _metadata_files(tmp_path) == before
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("ducklake_iceberg.state-version", "999"),
+        ("ducklake.snapshot-id", "invalid"),
+        ("ducklake.data-path", "/different/source/"),
+    ],
+)
+def test_incremental_export_validates_published_state(
+    harness: CatalogHarness, tmp_path: Path, key: str, value: str
+) -> None:
+    settings = _settings(harness, tmp_path)
+    first = run_export(settings, "main", "dup_name")
+    path = Path(first.metadata_location)
+    metadata = json.loads(path.read_text())
+    metadata["properties"][key] = value
+    path.write_text(json.dumps(metadata))
+    harness.write("INSERT INTO lake.main.dup_name VALUES (2)")
+    before = _metadata_files(tmp_path)
+    with pytest.raises(DivergenceError, match="invalid published sync state"):
+        run_export(settings, "main", "dup_name")
     assert _metadata_files(tmp_path) == before

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -26,8 +27,13 @@ from moto import mock_aws
 from pyiceberg.catalog.glue import GlueCatalog
 from typer.testing import CliRunner
 
+from ducklake_iceberg import pipeline
+from ducklake_iceberg.catalog.connection import DuckLakeConnection
+from ducklake_iceberg.catalog.reader import TableIdentity
 from ducklake_iceberg.cli import app
 from ducklake_iceberg.config import load_settings
+from ducklake_iceberg.doctor.model import RuleStatus
+from ducklake_iceberg.doctor.report import DoctorReport, RuleResult
 from ducklake_iceberg.export import run_export
 
 from .conftest import CatalogHarness
@@ -103,6 +109,57 @@ def test_sync_registers_updates_and_is_idempotent(
     code, doc = _sync(config)
     assert code == 4
     assert _steps(doc)["export"]["exit_code"] == 4
+    assert doc["results"][0]["metadata_location"] == params["metadata_location"]
+    assert Path(doc["results"][0]["metadata_location"]).is_file()
+    assert _steps(doc)["export"]["metadata_version"] == 2
+
+
+@pytest.mark.parametrize("failure_round", [1, 2])
+def test_doctor_error_stops_before_export(
+    catalog: CatalogHarness,
+    config: Path,
+    glue_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_round: int,
+) -> None:
+    catalog.write("CALL lake.set_option('data_inlining_row_limit', 10)")
+    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
+    catalog.write("INSERT INTO lake.main.t VALUES (1)")
+    run_rules = pipeline._run_rules
+    rounds = 0
+
+    def failing_rules(con: DuckLakeConnection, identity: TableIdentity) -> DoctorReport:
+        nonlocal rounds
+        rounds += 1
+        report = run_rules(con, identity)
+        if rounds == failure_round:
+            return replace(
+                report,
+                results=(
+                    RuleResult(
+                        rule_id="delete-parquet",
+                        status=RuleStatus.ERROR,
+                        error="unreadable delete metadata",
+                    ),
+                ),
+            )
+        return report
+
+    monkeypatch.setattr(pipeline, "_run_rules", failing_rules)
+    with (
+        mock.patch.object(pipeline, "run_export") as export,
+        mock.patch.object(pipeline, "run_register") as register,
+    ):
+        code, doc = _sync(config)
+    assert code == 1
+    assert rounds == failure_round
+    export.assert_not_called()
+    register.assert_not_called()
+    assert doc["problems"][0]["code"] == "doctor_failed"
+    assert "unreadable delete metadata" in doc["problems"][0]["message"]
+    last = doc["results"][0]["steps"][-1]
+    assert last["step"] == "doctor"
+    assert last["report"]["rules"][0]["error"] == "unreadable delete metadata"
 
 
 def test_sync_emits_versioned_metrics_and_json_logs(

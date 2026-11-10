@@ -364,11 +364,21 @@ def test_calendar_bucket_info() -> None:
     table = _table([_ct_row("bucket(16)")], _CT_SCHEMA)
     findings = calendar_transform.classify(table, _ctx(), "calendar-transform")
     assert findings[0].severity is Severity.INFO
-    table2 = _table([_ct_row("bucket[16]")], _CT_SCHEMA)
+    table2 = _table([_ct_row("bucket(16, state)")], _CT_SCHEMA)
     assert (
         calendar_transform.classify(table2, _ctx(), "calendar-transform")[0].severity
         is Severity.INFO
     )
+
+
+@pytest.mark.parametrize("transform", ["bucket[16]", "truncate(10)", "year"])
+def test_calendar_degradation_agrees_with_mapper(transform: str) -> None:
+    from ducklake_iceberg.mapping.partition import map_transform
+
+    table = _table([_ct_row(transform)], _CT_SCHEMA)
+    assert map_transform(transform) is None
+    findings = calendar_transform.classify(table, _ctx(), "calendar-transform")
+    assert findings[0].severity is Severity.DEGRADED
 
 
 def test_calendar_epoch_maps_cleanly() -> None:

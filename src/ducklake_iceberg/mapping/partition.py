@@ -29,7 +29,6 @@ pure and do not access the database; ``read_partition_specs`` and
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -41,12 +40,8 @@ from pyiceberg.partitioning import PartitionField, PartitionSpec
 from pyiceberg.schema import Schema
 from pyiceberg.transforms import (
     BucketTransform,
-    DayTransform,
-    HourTransform,
     IdentityTransform,
-    MonthTransform,
     Transform,
-    YearTransform,
 )
 from pyiceberg.typedef import Record
 from pyiceberg.types import (
@@ -64,6 +59,9 @@ from pyiceberg.types import (
 )
 
 from ducklake_iceberg.doctor.model import Finding, Severity, quote_ident
+from ducklake_iceberg.mapping.transforms import CALENDAR_TRANSFORMS
+from ducklake_iceberg.mapping.transforms import PartitionSpecError as PartitionSpecError
+from ducklake_iceberg.mapping.transforms import map_transform as map_transform
 
 if TYPE_CHECKING:
     import duckdb
@@ -77,25 +75,6 @@ _RULE_ID: Final[str] = "partition"
 
 #: days from 0001-01-01 (proleptic) to 1970-01-01, to convert date.toordinal.
 _EPOCH_ORDINAL: Final[int] = date(1970, 1, 1).toordinal()
-
-_BUCKET_RE: Final[re.Pattern[str]] = re.compile(
-    r"\Abucket\s*\(\s*(\d+)\s*(?:,[^)]*)?\)\Z", re.IGNORECASE
-)
-
-#: DuckLake transforms with an exact equivalent in Iceberg v2.
-_EXACT_TRANSFORMS: Final[dict[str, Transform[Any, Any]]] = {
-    "identity": IdentityTransform(),
-    "epoch_year": YearTransform(),
-    "epoch_month": MonthTransform(),
-    "epoch_day": DayTransform(),
-    "epoch_hour": HourTransform(),
-}
-
-#: DuckLake calendar transforms - same names as Iceberg, different semantics.
-#: Mapped to degradation, never to the Iceberg transform.
-_CALENDAR_TRANSFORMS: Final[frozenset[str]] = frozenset(
-    {"year", "month", "day", "hour"}
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,40 +110,6 @@ class PartitionValueError(Exception):
     """partition_value missing, out of range or undecodable."""
 
     exit_code = 3
-
-
-class PartitionSpecError(Exception):
-    """Inconsistent partition catalog (exit 1)."""
-
-    exit_code = 1
-
-
-# -- transform --------------------------------------------------------------
-
-
-def map_transform(text: str) -> Transform[Any, Any] | None:
-    """Resolve the ``transform`` text into an Iceberg ``Transform``.
-
-    ``None`` means 'not mappable' -> degradation. Calendar transforms
-    (``year``/``month``/``day``/``hour``) **never** map, even though the name
-    matches an Iceberg one.
-    """
-    normalized = text.strip().lower()
-    if normalized in _CALENDAR_TRANSFORMS:
-        return None
-    if normalized in _EXACT_TRANSFORMS:
-        return _EXACT_TRANSFORMS[normalized]
-    match = _BUCKET_RE.match(normalized)
-    if match is not None:
-        n = int(match.group(1))
-        if n <= 0:
-            raise PartitionSpecError(f"invalid bucket transform: {text!r}")
-        return BucketTransform(n)
-    return None
-
-
-def _is_bucket(text: str) -> bool:
-    return _BUCKET_RE.match(text.strip().lower()) is not None
 
 
 # -- catalog reads (I/O) ---------------------------------------------
@@ -562,7 +507,7 @@ def _degraded_finding(
     partition_id: int, transform: str, column: str, *, column_id: int | None = None
 ) -> Finding:
     unit = transform.strip().lower()
-    if unit in _CALENDAR_TRANSFORMS:
+    if unit in CALENDAR_TRANSFORMS:
         remediation = (
             f"in DuckLake, replace {unit}({column}) with epoch_{unit}({column}) in "
             f"ALTER TABLE ... SET PARTITIONED BY (...): exact equivalence"

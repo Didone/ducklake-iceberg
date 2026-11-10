@@ -25,8 +25,9 @@ os.environ.setdefault("AWS_SESSION_TOKEN", "testing")
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, ReadTimeoutError
 from moto import mock_aws
+from pyiceberg.exceptions import TableAlreadyExistsError
 
 from ducklake_iceberg.errors import ExitCode
 from ducklake_iceberg.glue import (
@@ -36,13 +37,12 @@ from ducklake_iceberg.glue import (
     RegisterDiverged,
     RegisterOutcome,
     TableAlreadyRegistered,
-    _sleep_seconds,
     _validate_metadata_location,
     describe_table,
     ensure_database,
-    normalize_table_name,
     register,
 )
+from ducklake_iceberg.handoff import normalize_table_name
 
 REGION = "us-east-1"
 METADATA = "s3://bucket/iceberg/sales/orders/metadata/v1.metadata.json"
@@ -155,14 +155,6 @@ def test_validate_metadata_location_ok() -> None:
     _validate_metadata_location(
         "s3://b/iceberg/m.json", "s3://b/data"
     )  # does not raise
-
-
-def test_sleep_seconds_in_range() -> None:
-    for attempt in range(1, 6):
-        lo = min(5.0, 0.2 * (2 ** (attempt - 1))) * 0.5
-        hi = min(5.0, 0.2 * (2 ** (attempt - 1)))
-        value = _sleep_seconds(attempt)
-        assert lo <= value <= hi
 
 
 # -- database ---------------------------------------------------------------
@@ -292,6 +284,160 @@ def test_register_update_dry_run_writes_nothing(aws: None) -> None:
     assert table["Parameters"]["metadata_location"] == v0  # type: ignore[index]
 
 
+@pytest.mark.parametrize(
+    "code",
+    ["ThrottlingException", "InternalServiceException", "OperationTimeoutException"],
+)
+def test_register_retries_transient_update(aws: None, code: str) -> None:
+    from ducklake_iceberg.glue import _glue_client
+
+    previous = METADATA.replace("v1.", "v0.")
+    with _patch_catalog(_StubCatalog(published_location=previous)):
+        register(_target(), previous)
+    client = _glue_client(_target())
+    update = client.update_table
+    attempts = 0
+
+    def flaky(**kwargs: Any) -> Any:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ClientError({"Error": {"Code": code}}, "UpdateTable")
+        return update(**kwargs)
+
+    with (
+        mock.patch.object(client, "update_table", side_effect=flaky),
+        mock.patch("pyiceberg.catalog.glue._to_columns", return_value=[]),
+        mock.patch("ducklake_iceberg.retry.time.sleep"),
+    ):
+        result = register(_target(), METADATA, metadata=_metadata_with_log(previous))
+    assert result.outcome is RegisterOutcome.UPDATED
+    assert attempts == 2
+    table = describe_table(_target())
+    assert table is not None
+    assert table["Parameters"]["metadata_location"] == METADATA  # type: ignore[index]
+
+
+def test_register_reconciles_successful_update_after_timeout(aws: None) -> None:
+    from ducklake_iceberg.glue import _glue_client
+
+    previous = METADATA.replace("v1.", "v0.")
+    with _patch_catalog(_StubCatalog(published_location=previous)):
+        register(_target(), previous)
+    client = _glue_client(_target())
+    update = client.update_table
+
+    def applied_but_timed_out(**kwargs: Any) -> None:
+        update(**kwargs)
+        raise ReadTimeoutError(endpoint_url="https://glue")
+
+    with (
+        mock.patch.object(
+            client, "update_table", side_effect=applied_but_timed_out
+        ) as call,
+        mock.patch("pyiceberg.catalog.glue._to_columns", return_value=[]),
+        mock.patch("ducklake_iceberg.retry.time.sleep") as sleep,
+    ):
+        result = register(_target(), METADATA, metadata=_metadata_with_log(previous))
+    assert result.outcome is RegisterOutcome.UPDATED
+    assert result.previous_metadata_location == previous
+    assert call.call_count == 1
+    sleep.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("code", "attempts"),
+    [
+        ("ThrottlingException", 5),
+        ("AccessDeniedException", 1),
+        ("InvalidInputException", 1),
+    ],
+)
+def test_register_bounds_retries_and_stops_on_fatal_errors(
+    aws: None, code: str, attempts: int
+) -> None:
+    from ducklake_iceberg.glue import _glue_client
+    from ducklake_iceberg.retry import CommitExhausted
+
+    previous = METADATA.replace("v1.", "v0.")
+    with _patch_catalog(_StubCatalog(published_location=previous)):
+        register(_target(), previous)
+    client = _glue_client(_target())
+    failure = ClientError({"Error": {"Code": code}}, "UpdateTable")
+    error = CommitExhausted if attempts > 1 else GlueError
+    with (
+        mock.patch.object(client, "update_table", side_effect=failure) as call,
+        mock.patch("pyiceberg.catalog.glue._to_columns", return_value=[]),
+        mock.patch("ducklake_iceberg.retry.time.sleep") as sleep,
+        pytest.raises(error),
+    ):
+        register(_target(), METADATA, metadata=_metadata_with_log(previous))
+    assert call.call_count == attempts
+    assert sleep.call_count == attempts - 1
+    table = describe_table(_target())
+    assert table is not None
+    assert table["Parameters"]["metadata_location"] == previous  # type: ignore[index]
+
+
+@pytest.mark.parametrize("external_writer", [False, True])
+def test_register_rechecks_ancestry_and_version_after_conflict(
+    aws: None, external_writer: bool
+) -> None:
+    from ducklake_iceberg.glue import _glue_client
+
+    previous = METADATA.replace("v1.", "v0.")
+    intermediate = METADATA.replace("v1.", "v0-5.")
+    replacement = (
+        "s3://bucket/external.metadata.json" if external_writer else intermediate
+    )
+    with _patch_catalog(_StubCatalog(published_location=previous)):
+        register(_target(), previous)
+    client = _glue_client(_target())
+    update = client.update_table
+    versions: list[str] = []
+
+    def conflict(**kwargs: Any) -> Any:
+        versions.append(kwargs["VersionId"])
+        if len(versions) == 1:
+            competing_input = {
+                **kwargs["TableInput"],
+                "Parameters": {
+                    **kwargs["TableInput"]["Parameters"],
+                    "metadata_location": replacement,
+                },
+            }
+            update(**{**kwargs, "TableInput": competing_input})
+            raise ClientError(
+                {"Error": {"Code": "ConcurrentModificationException"}}, "UpdateTable"
+            )
+        return update(**kwargs)
+
+    with (
+        mock.patch.object(client, "update_table", side_effect=conflict),
+        mock.patch("pyiceberg.catalog.glue._to_columns", return_value=[]),
+        mock.patch("ducklake_iceberg.retry.time.sleep"),
+    ):
+        if external_writer:
+            with pytest.raises(RegisterDiverged):
+                register(
+                    _target(),
+                    METADATA,
+                    metadata=_metadata_with_log(previous, intermediate),
+                )
+            assert len(versions) == 1
+        else:
+            result = register(
+                _target(), METADATA, metadata=_metadata_with_log(previous, intermediate)
+            )
+            assert result.outcome is RegisterOutcome.UPDATED
+            assert len(versions) == 2
+            assert versions[0] != versions[1]
+    table = describe_table(_target())
+    assert table is not None
+    expected = replacement if external_writer else METADATA
+    assert table["Parameters"]["metadata_location"] == expected  # type: ignore[index]
+
+
 def test_register_not_ancestor_is_divergence(aws: None) -> None:
     other = "s3://bucket/iceberg/sales/orders/metadata/v9-athena.metadata.json"
     with _patch_catalog(_StubCatalog(published_location=other)):
@@ -384,7 +530,8 @@ def test_register_divergence(aws: None) -> None:
 # -- AlreadyExistsException on CreateTable -> re-reads, ends as ALREADY ------
 
 
-def test_register_create_table_race(aws: None) -> None:
+@pytest.mark.parametrize("mapped_error", [False, True])
+def test_register_create_table_race(aws: None, mapped_error: bool) -> None:
     ensure_database(_target(), create=True, dry_run=False)
 
     # stub whose register_table creates the table and then raises AlreadyExists
@@ -393,6 +540,8 @@ def test_register_create_table_race(aws: None) -> None:
             self, identifier: tuple[str, str], metadata_location: str
         ) -> None:
             super().register_table(identifier, metadata_location)
+            if mapped_error:
+                raise TableAlreadyExistsError("race")
             err = ClientError(
                 {"Error": {"Code": "AlreadyExistsException", "Message": "race"}},
                 "CreateTable",
@@ -404,6 +553,30 @@ def test_register_create_table_race(aws: None) -> None:
         pytest.raises(TableAlreadyRegistered),
     ):
         register(_target(), METADATA, create_database=True)
+
+
+def test_register_reconciles_initial_registration_after_timeout(aws: None) -> None:
+    attempts = 0
+
+    class _TimeoutCatalog(_StubCatalog):
+        def register_table(
+            self, identifier: tuple[str, str], metadata_location: str
+        ) -> None:
+            nonlocal attempts
+            attempts += 1
+            if attempts > 1:
+                raise TableAlreadyExistsError("already registered")
+            super().register_table(identifier, metadata_location)
+            raise ReadTimeoutError(endpoint_url="https://glue")
+
+    with (
+        _patch_catalog(_TimeoutCatalog()),
+        mock.patch("ducklake_iceberg.retry.time.sleep"),
+        pytest.raises(TableAlreadyRegistered) as exc,
+    ):
+        register(_target(), METADATA)
+    assert attempts == 2
+    assert exc.value.metadata_location == METADATA
 
 
 # -- AccessDenied (with and without Lake Formation) -------------------------
@@ -498,7 +671,7 @@ def test_retry_succeeds_after_transient_failures() -> None:
             )
         return "ok"
 
-    with mock.patch("ducklake_iceberg.glue.time.sleep") as sleep:
+    with mock.patch("ducklake_iceberg.retry.time.sleep") as sleep:
         assert _call_with_retry(flaky, "CreateTable") == "ok"
     assert calls["n"] == 3
     assert sleep.call_count == 2  # slept between the 3 attempts
@@ -518,7 +691,7 @@ def test_retry_exhausts_on_persistent_throttling() -> None:
 
     sleeps: list[float] = []
     with (
-        mock.patch("ducklake_iceberg.glue.time.sleep", side_effect=sleeps.append),
+        mock.patch("ducklake_iceberg.retry.time.sleep", side_effect=sleeps.append),
         pytest.raises(GlueError, match="5 attempts"),
     ):
         _call_with_retry(always_throttle, "CreateTable")
@@ -540,7 +713,7 @@ def test_retry_does_not_cover_access_denied() -> None:
         )
 
     with (
-        mock.patch("ducklake_iceberg.glue.time.sleep") as sleep,
+        mock.patch("ducklake_iceberg.retry.time.sleep") as sleep,
         pytest.raises(ClientError),
     ):
         _call_with_retry(denied, "CreateTable")

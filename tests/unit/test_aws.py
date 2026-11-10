@@ -17,7 +17,7 @@ from ducklake_iceberg.aws import s3_credential_properties
 from ducklake_iceberg.config import DuckLakeIcebergSettings
 from ducklake_iceberg.errors import AwsError
 from ducklake_iceberg.glue import GlueTarget, _catalog_file_io, build_catalog
-from ducklake_iceberg.register import build_file_io
+from ducklake_iceberg.storage import build_file_io
 
 _KEY = "AKIADUCKLAKE_ICEBERGTESTKEY01"
 _SECRET = "test-secret"

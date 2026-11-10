@@ -178,6 +178,7 @@ def test_unchanged_sync_reads_only_pointer_and_glue(
     code, doc = _sync(config)
     assert code == 0, doc["problems"]
 
+    published = doc["results"][0]["metadata_location"]
     # no table token in ducklake_snapshot_changes: no metadata.json, no
     # manifests, and no re-read in register
     catalog.write("CREATE TABLE lake.main.outra (x INTEGER)")
@@ -192,7 +193,9 @@ def test_unchanged_sync_reads_only_pointer_and_glue(
     assert code == 4, doc["problems"]
     steps = {s["step"]: s for s in doc["results"][0]["steps"]}
     assert steps["export"]["exit_code"] == 4
-    assert steps["export"]["metadata_location"].endswith("v2.metadata.json")
+    assert steps["export"]["metadata_location"] == published
+    assert steps["export"]["metadata_version"] == 1
+    assert Path(published).is_file()
     assert steps["register"]["exit_code"] == 4
 
 

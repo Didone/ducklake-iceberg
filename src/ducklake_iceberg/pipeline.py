@@ -9,6 +9,7 @@ and failed before reaching Glue.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ducklake_iceberg import timing
@@ -39,17 +40,17 @@ from ducklake_iceberg.errors import (
     ExitCode,
     NothingToDo,
 )
-from ducklake_iceberg.export import run_export
-from ducklake_iceberg.glue import normalize_table_name
+from ducklake_iceberg.export import ExportResult, run_export
+from ducklake_iceberg.handoff import (
+    ExportPointer,
+    normalize_table_name,
+    read_current_pointer,
+)
 from ducklake_iceberg.obs.logging import bind, log_event
 from ducklake_iceberg.obs.metrics import RunMetrics, add_work, collect
 from ducklake_iceberg.obs.redaction import scrub
 from ducklake_iceberg.output import Envelope, Problem
-from ducklake_iceberg.register import (
-    ExportPointer,
-    read_current_pointer,
-    run_register,
-)
+from ducklake_iceberg.register import run_register
 from ducklake_iceberg.sync.lock import lock_key, table_lock
 
 if TYPE_CHECKING:
@@ -198,8 +199,8 @@ def _doctor_gate(
     before_flush: bool = False,
     at_export_target: bool = False,
     con: DuckLakeConnection | None = None,
-) -> tuple[ExitCode, list[Finding]]:
-    """Run the preflight rules for a table and return the ``ExitCode``.
+) -> tuple[ExitCode, DoctorReport]:
+    """Run preflight rules and return the exit code and complete report.
 
     Opens the catalog READ_ONLY and runs the rules in the read transaction.
     Before the flush, auto-remediable gates (``inlined-data``) do not block:
@@ -228,8 +229,8 @@ def _doctor_gate(
         report = _run_rules(ro, identity)
     if before_flush and not report.has_error:
         blocking = _blockers(report, skip=frozenset(AUTO_REMEDIABLE_GATES))
-        return (ExitCode.BLOCKED if blocking else ExitCode.SUCCESS), blocking
-    return _exit_code_from_report(report), _blockers(report)
+        return (ExitCode.BLOCKED if blocking else ExitCode.SUCCESS), report
+    return _exit_code_from_report(report), report
 
 
 def _blocked_problem(qualified: str, findings: list[Finding]) -> Problem:
@@ -242,7 +243,29 @@ def _blocked_problem(qualified: str, findings: list[Finding]) -> Problem:
     )
 
 
+def _doctor_problem(qualified: str, code: ExitCode, report: DoctorReport) -> Problem:
+    if code is ExitCode.BLOCKED:
+        return _blocked_problem(qualified, _blockers(report))
+    errors = "; ".join(
+        f"{r.rule_id}: {r.error}"
+        for r in report.results
+        if r.status is RuleStatus.ERROR
+    )
+    return Problem(
+        code="doctor_failed",
+        message=f"doctor failed on {qualified}: {errors}",
+        hint="resolve the reported rule failure before publishing",
+        table=qualified,
+    )
+
+
 # -- pipeline -----------------------------------------------------------------
+@dataclass(frozen=True, slots=True)
+class _SyncResult:
+    exit_code: ExitCode
+    export: ExportResult | None = None
+
+
 class _SharedCatalog:
     """READ_ONLY metadata connection of a sync, lent to the stages.
 
@@ -273,33 +296,33 @@ def _sync_steps(
     *,
     dry_run: bool,
     envelope: Envelope,
-) -> ExitCode:
+) -> _SyncResult:
     qualified = f"{schema_name}.{table_name}"
     steps: list[dict[str, Any]] = []
     envelope.results.append({"table": qualified, "steps": steps})
 
     # doctor stage: a compatibility blocker (exit 2) stops the sync.
     with timing.phase("doctor"):
-        doctor_exit, blockers = _doctor_gate(
+        doctor_exit, report = _doctor_gate(
             settings, qualified, before_flush=True, con=catalog.get()
         )
-    steps.append({"step": "doctor", "exit_code": int(doctor_exit)})
+    steps.append(
+        {"step": "doctor", "exit_code": int(doctor_exit), "report": report.to_json()}
+    )
     if doctor_exit is ExitCode.BLOCKED:
-        envelope.problems.append(_blocked_problem(qualified, blockers))
+        envelope.problems.append(
+            _blocked_problem(qualified, _blockers(report, skip=AUTO_REMEDIABLE_GATES))
+        )
         log_event(
             "compat.blocked",
             level=logging.ERROR,
             table=qualified,
             exit_code=int(doctor_exit),
         )
-        return doctor_exit
+        return _SyncResult(doctor_exit)
     if doctor_exit is ExitCode.ERROR:
-        envelope.problems.append(
-            problem_from_error(
-                ConfigError(f"doctor failed on {qualified}"), table=qualified
-            )
-        )
-        return doctor_exit
+        envelope.problems.append(_doctor_problem(qualified, doctor_exit, report))
+        return _SyncResult(doctor_exit)
 
     # flush stage. Writes to DuckLake, so a dry run only reports what it would
     # flush; the export cannot be planned before the rows are in Parquet.
@@ -313,7 +336,7 @@ def _sync_steps(
             check = _dry_run_glue_check(
                 settings, schema_name, table_name, None, steps, envelope, qualified
             )
-            return ExitCode.SUCCESS if check is None else check
+            return _SyncResult(ExitCode.SUCCESS if check is None else check)
     else:
         try:
             with timing.phase("checkpoint"):
@@ -325,19 +348,26 @@ def _sync_steps(
         except DuckLakeIcebergError as exc:
             steps.append({"step": "checkpoint", "exit_code": int(exc.exit_code)})
             envelope.problems.append(problem_from_error(exc, table=qualified))
-            return exc.exit_code
+            return _SyncResult(exc.exit_code)
 
         # post-flush revalidation: the flush may expose a blocked type.
         if flush.wrote:
             with timing.phase("doctor"):
-                revalidate_exit, blockers = _doctor_gate(
+                revalidate_exit, report = _doctor_gate(
                     settings, qualified, at_export_target=True, con=catalog.get()
                 )
-            steps.append({"step": "doctor", "exit_code": int(revalidate_exit)})
-            if revalidate_exit in (ExitCode.BLOCKED, ExitCode.DIVERGED):
-                if blockers:
-                    envelope.problems.append(_blocked_problem(qualified, blockers))
-                return revalidate_exit
+            steps.append(
+                {
+                    "step": "doctor",
+                    "exit_code": int(revalidate_exit),
+                    "report": report.to_json(),
+                }
+            )
+            if revalidate_exit is not ExitCode.SUCCESS:
+                envelope.problems.append(
+                    _doctor_problem(qualified, revalidate_exit, report)
+                )
+                return _SyncResult(revalidate_exit)
 
     # export stage: incremental against the latest metadata.json
     try:
@@ -355,7 +385,7 @@ def _sync_steps(
         LOG.debug("export of %s failed", qualified, exc_info=exc)
         steps.append({"step": "export", "exit_code": int(exit_of(exc))})
         envelope.problems.append(problem_from_error(exc, table=qualified))
-        return exit_of(exc)
+        return _SyncResult(exit_of(exc))
     catalog.invalidate()
 
     if dry_run:
@@ -368,7 +398,7 @@ def _sync_steps(
             envelope,
             qualified,
         )
-        return result.exit_code if diverged is None else diverged
+        return _SyncResult(result.exit_code if diverged is None else diverged, result)
 
     # register stage. It runs even when export exits 4: a previous sync may have
     # written the metadata.json and failed before reaching Glue.
@@ -396,18 +426,19 @@ def _sync_steps(
             metadata_location=reg.metadata_location,
             outcome=str(reg.outcome),
         )
-        return ExitCode.SUCCESS
+        return _SyncResult(ExitCode.SUCCESS, result)
     except NothingToDo as exc:
         steps.append({"step": "register", "exit_code": int(exc.exit_code)})
         # already published: sync only "did something" if the export wrote
-        return (
-            result.exit_code if result.exit_code is ExitCode.SUCCESS else exc.exit_code
+        return _SyncResult(
+            result.exit_code if result.exit_code is ExitCode.SUCCESS else exc.exit_code,
+            result,
         )
     except Exception as exc:
         LOG.debug("register of %s failed", qualified, exc_info=exc)
         steps.append({"step": "register", "exit_code": int(exit_of(exc))})
         envelope.problems.append(problem_from_error(exc, table=qualified))
-        return exit_of(exc)
+        return _SyncResult(exit_of(exc), result)
 
 
 def _pending_inlined(qualified: str, con: DuckLakeConnection) -> dict[str, int] | None:
@@ -483,7 +514,7 @@ def _sync_locked(
     *,
     dry_run: bool,
     envelope: Envelope,
-) -> ExitCode:
+) -> _SyncResult:
     """The stages under the table's process lock (skipped in a dry run)."""
     key = lock_key(
         profile=settings.aws_profile,
@@ -504,25 +535,27 @@ def _sync_locked(
             )
     except DuckLakeIcebergError as exc:
         envelope.problems.append(problem_from_error(exc, table=qualified))
-        return exc.exit_code
+        return _SyncResult(exc.exit_code)
     finally:
         catalog.invalidate()
 
 
 def _publication_totals(
-    export_json: dict[str, Any], metrics: RunMetrics
+    export: ExportResult | None, metrics: RunMetrics
 ) -> dict[str, int]:
-    """Publication totals computed from the export's ``to_json``.
+    """Publication totals from the typed export result, before presentation.
 
     ``files_*`` count data files; delete files go in ``delete_files_added``.
     ``bytes_referenced`` is the sum of ``data_file_size_bytes`` of the published
     snapshot; ``bytes_written`` is the metadata and delete files written.
     """
     return {
-        "files_added": int(export_json.get("added_data_files") or 0),
-        "files_removed": int(export_json.get("removed_data_files") or 0),
-        "delete_files_added": int(export_json.get("added_delete_files") or 0),
-        "bytes_referenced": int(export_json.get("total_files_size") or 0),
+        "files_added": export.plan.added_data_files if export is not None else 0,
+        "files_removed": export.plan.removed_data_files if export is not None else 0,
+        "delete_files_added": export.plan.added_delete_files
+        if export is not None
+        else 0,
+        "bytes_referenced": export.plan.total_files_size if export is not None else 0,
         "bytes_written": metrics.bytes_written(),
     }
 
@@ -546,30 +579,28 @@ def sync_table(
     log_event("table.start", table=qualified)
     metrics = RunMetrics(run_id, "sync", table=qualified)
     with bind(table=qualified), collect(metrics):
-        code = _sync_locked(
+        outcome = _sync_locked(
             settings, schema_name, table_name, dry_run=dry_run, envelope=envelope
         )
     result = next(
         (item for item in reversed(envelope.results) if item.get("table") == qualified),
         None,
     )
-    export_step: dict[str, Any] = next(
-        (
-            step
-            for step in (result or {}).get("steps", [])
-            if step.get("step") == "export"
-        ),
-        {},
-    )
-    totals = _publication_totals(export_step, metrics)
+    code = outcome.exit_code
+    export = outcome.export
+    source_snapshot = export.plan.ducklake_snapshot_id if export is not None else None
+    iceberg_snapshot = export.snapshot_id if export is not None else None
+    totals = _publication_totals(export, metrics)
     if result is not None:
         result.update(
             {
                 "exit_code": int(code),
                 "duration_ms": metrics.duration_ms,
-                "ducklake_snapshot_id": export_step.get("ducklake_snapshot_id"),
-                "iceberg_snapshot_id": export_step.get("iceberg_snapshot_id"),
-                "metadata_location": export_step.get("metadata_location"),
+                "ducklake_snapshot_id": source_snapshot,
+                "iceberg_snapshot_id": iceberg_snapshot,
+                "metadata_location": export.metadata_location
+                if export is not None
+                else None,
                 **totals,
             }
         )
@@ -578,8 +609,8 @@ def sync_table(
     log_event(
         "sync.end",
         table=qualified,
-        snapshot_id=export_step.get("ducklake_snapshot_id"),
-        iceberg_snapshot_id=export_step.get("iceberg_snapshot_id"),
+        snapshot_id=source_snapshot,
+        iceberg_snapshot_id=iceberg_snapshot,
         duration_ms=metrics.duration_ms,
         dry_run=dry_run,
         exit_code=int(code),

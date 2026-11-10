@@ -48,7 +48,10 @@ def test_clean_table_passes_doctor(flushed_catalog: CatalogHarness) -> None:
     assert result.exit_code == 0, result.stdout
     payload = _json(result.stdout)
     assert payload["problems"] == []
-    assert _steps(payload)[0] == {"step": "doctor", "exit_code": 0}
+    doctor = _steps(payload)[0]
+    assert doctor["step"] == "doctor"
+    assert doctor["exit_code"] == 0
+    assert doctor["report"]["summary"]["rules_errored"] == 0
 
 
 # --------------------------------------------------------------------------
@@ -66,7 +69,9 @@ def test_inlined_data_passes_doctor_and_dry_run_reports_the_flush(
     payload = _json(result.stdout)
     steps = _steps(payload)
     # the flush would resolve it, so the doctor stage does not block...
-    assert steps[0] == {"step": "doctor", "exit_code": 0}
+    assert steps[0]["step"] == "doctor"
+    assert steps[0]["exit_code"] == 0
+    assert steps[0]["report"]["summary"]["blocker"] > 0
     # ...and the dry run reports the pending flush instead of planning an
     # export that would not see the inlined rows
     assert [s["step"] for s in steps] == ["doctor", "checkpoint", "register"]
@@ -82,6 +87,7 @@ def test_inlined_data_passes_doctor_and_dry_run_reports_the_flush(
 def test_unsupported_type_blocks_sync(catalog: CatalogHarness) -> None:
     catalog.write("CREATE SCHEMA IF NOT EXISTS lake.main")
     catalog.write("CREATE TABLE lake.main.bad (id INTEGER, qty UINTEGER)")
+    catalog.write("INSERT INTO lake.main.bad VALUES (1, 1)")
     env = cli_env_for(catalog)
     with mock_aws():
         result = runner.invoke(app, ["sync", "--table", "main.bad", "--json"], env=env)
@@ -93,6 +99,7 @@ def test_unsupported_type_blocks_sync(catalog: CatalogHarness) -> None:
     assert blocked[0]["table"] == "main.bad"
     assert "unsupported-type" in blocked[0]["message"]
     assert "uint32" in blocked[0]["message"]
+    assert "inlined-data" not in blocked[0]["message"]
     # the pipeline stops at the doctor stage: nothing was flushed or exported
     steps = _steps(payload)
     assert [s["step"] for s in steps] == ["doctor"]

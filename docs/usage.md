@@ -157,6 +157,11 @@ Real envelopes also include `started_at`, `duration_ms`, redacted `config`,
 and per-table operational details/metrics. Stage lists vary: a failed doctor
 stops later stages; flushing can add a second doctor; dry runs can stop at
 pending inlined data. Do not hard-code a four-element array.
+Doctor steps include a `report` with individual rule outcomes and errors;
+`doctor_failed` stops publication even when encountered after a flush.
+On a no-op, the result/export metadata location and version identify the
+completed export, not an unwritten next version. A dry-run with pending
+changes can still describe a planned location that does not exist yet.
 
 Important fields:
 

@@ -18,7 +18,8 @@ from pyiceberg.manifest import DataFile, ManifestContent
 
 from ducklake_iceberg.errors import ExitCode
 from ducklake_iceberg.export import run_export
-from ducklake_iceberg.register import build_file_io, read_pointer
+from ducklake_iceberg.handoff import read_pointer
+from ducklake_iceberg.storage import build_file_io
 from ducklake_iceberg.writer.commit import load_base_snapshot
 from ducklake_iceberg.writer.metadata import read_metadata_json
 

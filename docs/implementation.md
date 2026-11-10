@@ -58,6 +58,10 @@ the connection; they must not treat it as a new independent transaction.
 
 `sync_table(settings, qualified, run_id=..., dry_run=..., envelope=...)`
 orchestrates one table and appends results/problems to the supplied envelope.
+Its private immutable `_SyncResult` carries the exit and optional typed
+`ExportResult` between orchestration layers; totals and locations no longer
+depend on reparsing serialized stage dictionaries. Doctor steps retain the
+complete report, and any pre/post-flush error stops before export.
 `problem_from_error()` preserves declared exit semantics even for lower-level
 exceptions outside the main error hierarchy.
 
@@ -392,6 +396,10 @@ Tests: [test_partition.py](../tests/mapping/test_partition.py),
 `map_transform()`, `build_spec_mapping()` and `build_partition_record()` are
 pure transformation/validation steps. `with_published_names()` preserves
 names needed by reusable historical manifests.
+The pure transform policy and `PartitionSpecError` live in
+[`mapping/transforms.py`](../src/ducklake_iceberg/mapping/transforms.py);
+`partition.py` re-exports them. Doctor and export use the same parser, including
+`bucket(N, column)` support and degradation for unsupported bracket syntax.
 
 ## Export planning and handoff
 
@@ -405,7 +413,7 @@ Tests: [test_export.py](../tests/integration/test_export.py),
 | Class | State and behavior |
 | --- | --- |
 | `ExportPlan` | Source/destination IDs and names, selected source snapshot/schema, table/metadata locations/version, `FileSet`, totals and added/removed data/delete counts. `is_incremental` checks for a base location; `has_changes` includes schema changes and initial export. No writes occur merely by constructing it. |
-| `ExportResult` | Plan, dry-run flag, paths written, exit, operation/snapshot ID, findings, and optional in-memory pointer/metadata for registration. `to_json()` intentionally emits the external result fields rather than serializing internal FileIO/PyIceberg objects. |
+| `ExportResult` | Plan, dry-run flag, paths written, exit, operation/snapshot ID, findings, and optional in-memory pointer/metadata for registration. `metadata_location` and `to_json()` report the existing handoff location/version on a no-op, not the unwritten next version in the plan. |
 | `_Base` | Previous pointer plus loaded `TableMetadataV2`, or no prior export. |
 | `_DeleteGroup` | Consolidated source data/delete pairs belonging to one spec/partition. Changing a group's source inputs changes its key/output. |
 | `_Desired` | Desired live data keyed by path, with source record/spec/partition; desired delete groups keyed by group identity. |
@@ -422,9 +430,10 @@ metadata ancestry. `_prepare()` computes the source/base delta;
 `_convert_added_deletes()` consolidates partition groups; `_write_handoff()`
 records completed export state.
 
-### `register.py`
+### `handoff.py` and `storage.py`
 
-Source: [register.py](../src/ducklake_iceberg/register.py).
+Sources: [handoff.py](../src/ducklake_iceberg/handoff.py),
+[storage.py](../src/ducklake_iceberg/storage.py).
 Tests: [test_export_register.py](../tests/test_export_register.py),
 [test_sync_e2e.py](../tests/integration/test_sync_e2e.py).
 
@@ -434,10 +443,17 @@ Tests: [test_export_register.py](../tests/test_export_register.py),
 | `PointerError` | Missing/unreadable/incompatible handoff or referenced metadata; configuration-style failure, not a guess about the latest filename. |
 | `PointerNotFoundError` | Special absence of first export; only this case can legitimately mean there is no base. Other pointer errors must propagate. |
 
-`build_file_io()` bridges resolved region/profile/endpoint/credentials to
+`storage.build_file_io()` bridges resolved region/profile/endpoint/credentials to
 PyIceberg and caches FileIO by its properties. `read_pointer()` validates
 format; `write_pointer()` overwrites the operational pointer after metadata
 is complete. `read_current_pointer()` returns null only for actual absence.
+`normalize_table_name()` and `table_location()` centralize destination naming.
+These shared contracts do not import Glue or the publication module.
+
+### `register.py`
+
+Source: [register.py](../src/ducklake_iceberg/register.py).
+
 `resolve_metadata_location()` supports explicit metadata location as a Python
 argument, otherwise the pointer; this is **not a current CLI flag**.
 `run_register()` accepts handoff/metadata to avoid rereads, cross-checks
@@ -461,20 +477,16 @@ Tests: [test_glue.py](../tests/test_glue.py),
 | `LakeFormationBlocked` | Publication/access blocked by Lake Formation, exit 2 with access guidance. |
 | `RegisterDiverged` | Verified metadata location does not match the intended chain/publication, exit 3. |
 
-`normalize_table_name()` determines destination naming.
 `ensure_database()` creates only when allowed/needed.
 `register()` validates S3 location and prefix separation, uses
 `register_table()` initially, or `_handle_existing()` / `_update_table()` for
 an ancestral pointer with optimistic `VersionId`. It rereads publication.
-`describe_table()` reads catalog metadata; `load_table()` /
-`load_table_state()` read Iceberg state; `load_table_state_fast()` uses a
-fast-path representation only when available. `reconcile_commit()` checks
-whether an uncertain attempt actually became visible.
-
-The active registration helpers have their own bounded transient retry
-settings (`_MAX_ATTEMPTS=5`, base 0.2s, cap 5s).
-Do not assume the separate generic `RetryPolicy` defaults below are CLI
-configuration for those helpers.
+`describe_table()` reads catalog metadata. Active updates use
+`commit_with_retry()`: reconciliation rereads Glue, recognizes an applied
+request, rejects unrelated metadata and supplies a fresh `VersionId` before
+retrying. The disconnected state-loading/reconciliation APIs have been removed.
+`GLUE_RETRY` uses the shared `RetryPolicy` defaults below; idempotent create
+calls use `call_with_retry()` with the same classification and backoff.
 
 ### `retry.py`
 
@@ -488,13 +500,13 @@ Tests: [test_retry.py](../tests/test_retry.py).
 | `AttemptLog` | Attempt index/outcome/error code, slept duration and optional base snapshot/metadata location for diagnostic history. |
 | `RetryContext` | Mutable policy, attempt list, sleep sum and monotonic start. `elapsed()` and `record()` maintain/log attempt history. |
 | `CommitExhausted` | Attempts/budget/deadline exhausted; includes attempt records, exit 1. |
-| `CommitStateUnknown` | Request outcome cannot be established; reconciliation is required rather than blind overwrite. |
 
 `classify_glue_error()` treats unknown cases conservatively. Connect errors
 before send can be retried; read timeouts/closed connections after send may
 mean a commit succeeded. `commit_with_retry()` accepts explicit planning,
-commit, reconciliation and guard callbacks. It is a reusable primitive,
-not the entire pipeline's implicit transaction manager.
+commit, reconciliation and guard callbacks and is used by Glue updates.
+`call_with_retry()` handles calls safe to resend. Both count retries; botocore
+records the actual API calls, avoiding duplicate call counters.
 
 ## Delete representation and validation
 
@@ -729,6 +741,9 @@ Tests: [test_state.py](../tests/sync/test_state.py),
 `build_summary_properties()` mirrors it into snapshot summaries with
 counters. `parse_sync_state()` parses strictly, while
 `malformed_properties()` identifies present but invalid values.
+`validate_identity()` is used by incremental export before writing: malformed
+properties, newer state versions and source identity/root mismatches stop
+publication rather than silently selecting a new timeline.
 Table properties include `ducklake.snapshot-id`, `ducklake.table-uuid`,
 `ducklake.schema-version`, `ducklake.data-path`,
 `ducklake_iceberg.state-version`, sync time/mode and tool version.

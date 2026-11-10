@@ -49,9 +49,6 @@ from ducklake_iceberg.catalog.files import (
     LiveDataFile,
     LiveDeleteFile,
 )
-from ducklake_iceberg.catalog.reader import (
-    TableIdentity,
-)
 from ducklake_iceberg.catalog.view import (
     CatalogView,
     check_initial_defaults,
@@ -72,6 +69,17 @@ from ducklake_iceberg.errors import (
     DuckLakeIcebergError,
     ExitCode,
 )
+from ducklake_iceberg.handoff import (
+    DELETE_FILE_LAYOUT_PARTITION_V1,
+    ExportPointer,
+    PointerNotFoundError,
+    normalize_table_name,
+    pointer_path,
+    read_pointer,
+    table_location,
+    utc_now_iso,
+    write_pointer,
+)
 from ducklake_iceberg.mapping.evolution import evolve_schema
 from ducklake_iceberg.mapping.partition import (
     SpecMapping,
@@ -79,16 +87,7 @@ from ducklake_iceberg.mapping.partition import (
     with_published_names,
 )
 from ducklake_iceberg.obs.metrics import add_call, add_work
-from ducklake_iceberg.register import (
-    DELETE_FILE_LAYOUT_PARTITION_V1,
-    ExportPointer,
-    PointerNotFoundError,
-    build_file_io,
-    pointer_path,
-    read_pointer,
-    utc_now_iso,
-    write_pointer,
-)
+from ducklake_iceberg.storage import build_file_io
 from ducklake_iceberg.sync.state import (
     PROP_SNAPSHOT_ID,
     PROP_TABLE_ID,
@@ -97,6 +96,8 @@ from ducklake_iceberg.sync.state import (
     DuckLakeSnapshot,
     SyncMode,
     build_sync_properties,
+    parse_sync_state,
+    validate_identity,
 )
 from ducklake_iceberg.writer.catalog_stats import (
     ColumnStats,
@@ -205,13 +206,23 @@ class ExportResult:
     handoff: ExportPointer | None = None
     metadata: TableMetadata | None = None
 
+    @property
+    def metadata_location(self) -> str:
+        if self.exit_code is ExitCode.NOTHING_TO_DO and self.handoff is not None:
+            return self.handoff.metadata_location
+        return self.plan.metadata_location
+
     def to_json(self) -> dict[str, object]:
         snapshot_time = self.plan.ducklake_snapshot_time
         return {
             "schema": self.plan.schema_name,
             "table": self.plan.table_name,
-            "metadata_location": self.plan.metadata_location,
-            "metadata_version": self.plan.metadata_version,
+            "metadata_location": self.metadata_location,
+            "metadata_version": (
+                self.handoff.metadata_version
+                if self.exit_code is ExitCode.NOTHING_TO_DO and self.handoff is not None
+                else self.plan.metadata_version
+            ),
             "previous_metadata_location": self.plan.previous_metadata_location,
             "ducklake_snapshot_id": self.plan.ducklake_snapshot_id,
             # commit time of the published snapshot: the newest data visible in Iceberg
@@ -248,16 +259,7 @@ class _Base:
     metadata: TableMetadataV2 | None
 
 
-def _table_location(settings: DuckLakeIcebergSettings, glue_table: str) -> str:
-    from ducklake_iceberg.glue import normalize_table_name
-
-    prefix = settings.iceberg_metadata_prefix.rstrip("/")
-    return f"{prefix}/{settings.glue_database}/{normalize_table_name(glue_table)}"
-
-
 def _glue_target(settings: DuckLakeIcebergSettings, glue_table: str) -> str:
-    from ducklake_iceberg.glue import normalize_table_name
-
     return f"{settings.glue_database}.{normalize_table_name(glue_table)}"
 
 
@@ -393,7 +395,19 @@ def _desired(view: CatalogView, schema: Schema) -> _Desired:
     return _Desired(data=data, deletes=deletes)
 
 
-def _check_identity(base: _Base, identity: TableIdentity, glue_target: str) -> None:
+def _source_identity(view: CatalogView) -> DuckLakeIdentity:
+    return DuckLakeIdentity(
+        table_id=view.identity.table_id,
+        table_uuid=str(view.identity.table_uuid),
+        schema_name=view.identity.ref.schema_name,
+        table_name=view.identity.ref.table_name,
+        data_path=view.files.layers.data_path,
+        partition_id=view.spec_mapping.default_spec_id or -1,
+        last_column_id=view.schema_mapping.last_column_id,
+    )
+
+
+def _check_identity(base: _Base, view: CatalogView, glue_target: str) -> None:
     """The published state must belong to the same DuckLake table.
 
     Two causes, with distinct messages: another DuckLake table with the same
@@ -403,12 +417,19 @@ def _check_identity(base: _Base, identity: TableIdentity, glue_target: str) -> N
     """
     if base.metadata is None:
         return
+    identity = view.identity
     props = base.metadata.properties
     published_uuid = props.get(PROP_TABLE_UUID)
     published_id = props.get(PROP_TABLE_ID)
     if (published_uuid is None or published_uuid == str(identity.table_uuid)) and (
         published_id is None or published_id == str(identity.table_id)
     ):
+        mismatches = validate_identity(parse_sync_state(props), _source_identity(view))
+        if mismatches:
+            raise DivergenceError(
+                f"invalid published sync state: {mismatches[0].detail}",
+                hint="inspect source identity and metadata; do not force the update",
+            )
         return
     where = base.pointer.metadata_location if base.pointer else "?"
     current = f"{identity.ref.schema_name}.{identity.ref.table_name}"
@@ -528,7 +549,9 @@ def _prepare(
     con: DuckLakeConnection | None = None,
 ) -> _Prepared | _Unchanged:
     io = build_file_io(settings)
-    location = _table_location(settings, table_name)
+    location = table_location(
+        settings.iceberg_metadata_prefix, settings.glue_database, table_name
+    )
     ref = f"{schema_name}.{table_name}"
     with timing.phase("export.base"):
         pointer = _read_base_pointer(io, location)
@@ -554,6 +577,7 @@ def _prepare(
 
     with timing.phase("export.base"):
         base = _load_base(io, location, pointer)
+    _check_identity(base, view, _glue_target(settings, table_name))
     previous_snapshot = (
         int(base.metadata.properties[PROP_SNAPSHOT_ID])
         if base.metadata is not None and PROP_SNAPSHOT_ID in base.metadata.properties
@@ -562,7 +586,7 @@ def _prepare(
     if previous_snapshot != view.table_changes_since:
         # successor adopted or pointer without the property: window recomputed
         view = read_view(previous_snapshot)
-    _check_identity(base, view.identity, _glue_target(settings, table_name))
+        _check_identity(base, view, _glue_target(settings, table_name))
     if base.metadata is not None:
         # specs already published keep their partition field names
         view = dataclasses.replace(
@@ -973,15 +997,7 @@ def _build_metadata(
         else (base_meta.current_snapshot_id if base_meta else None)
     )
     state = build_sync_properties(
-        DuckLakeIdentity(
-            table_id=view.identity.table_id,
-            table_uuid=str(view.identity.table_uuid),
-            schema_name=plan.schema_name,
-            table_name=plan.table_name,
-            data_path=view.files.layers.data_path,
-            partition_id=default_spec_id if default_spec_id != 0 else -1,
-            last_column_id=view.schema_mapping.last_column_id,
-        ),
+        _source_identity(view),
         DuckLakeSnapshot(
             snapshot_id=view.snapshot_id,
             snapshot_time=view.snapshot_time.astimezone(UTC),
@@ -1044,8 +1060,6 @@ def _write_handoff(
     plan: ExportPlan, settings: DuckLakeIcebergSettings, io: FileIO
 ) -> ExportPointer:
     """Step 6: the handoff pointer, written last."""
-    from ducklake_iceberg.glue import normalize_table_name
-
     pointer = ExportPointer(
         version=1,
         metadata_location=plan.metadata_location,
