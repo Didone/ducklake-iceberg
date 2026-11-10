@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import errno
-import fcntl
 import json
 import os
 import subprocess
@@ -13,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from ducklake_iceberg.sync import lock as lock_module
 from ducklake_iceberg.sync.lock import (
     LockError,
     LockHeld,
@@ -130,7 +130,7 @@ def test_corrupt_holder_file_still_raises_lockheld(
     path.write_bytes(content)
     fd = os.open(path, os.O_RDWR)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_module._try_lock(fd)
         with pytest.raises(LockHeld) as exc, table_lock("k5"):
             pass
     finally:
@@ -167,16 +167,16 @@ def test_wait_times_out_with_holder_info(
 def test_wait_acquires_when_released(
     state_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    real_flock = fcntl.flock
+    real_lock = lock_module._try_lock
     calls = [0]
 
-    def flaky(fd: int, op: int) -> None:
+    def flaky(fd: int) -> None:
         calls[0] += 1
         if calls[0] == 1:
             raise OSError(errno.EWOULDBLOCK, "busy")
-        real_flock(fd, op)
+        real_lock(fd)
 
-    monkeypatch.setattr("ducklake_iceberg.sync.lock.fcntl.flock", flaky)
+    monkeypatch.setattr(lock_module, "_try_lock", flaky)
     monkeypatch.setattr("ducklake_iceberg.sync.lock.time.sleep", lambda s: None)
     with table_lock("k7", wait_s=5) as info:
         assert info is not None
@@ -186,10 +186,10 @@ def test_wait_acquires_when_released(
 def test_unexpected_flock_error(
     state_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def broken(fd: int, op: int) -> None:
+    def broken(fd: int) -> None:
         raise OSError(errno.EBADF, "bad")
 
-    monkeypatch.setattr("ducklake_iceberg.sync.lock.fcntl.flock", broken)
+    monkeypatch.setattr(lock_module, "_try_lock", broken)
     with pytest.raises(LockError, match="Error acquiring"), table_lock("k8"):
         pass
 
@@ -218,14 +218,10 @@ def test_metadata_write_error_is_only_a_warning(
 def test_unlock_error_is_only_a_warning(
     state_dir: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    real_flock = fcntl.flock
+    def unlock(fd: int) -> None:
+        raise OSError(errno.EIO, "io")
 
-    def flock(fd: int, op: int) -> None:
-        if op == fcntl.LOCK_UN:
-            raise OSError(errno.EIO, "io")
-        real_flock(fd, op)
-
-    monkeypatch.setattr("ducklake_iceberg.sync.lock.fcntl.flock", flock)
+    monkeypatch.setattr(lock_module, "_unlock", unlock)
     with table_lock("k11"):
         pass
     assert "releasing lock" in caplog.text

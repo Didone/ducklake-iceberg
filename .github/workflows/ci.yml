@@ -85,6 +85,26 @@ jobs:
           test "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' ducklake-iceberg:ci)" = "$GITHUB_SHA"
           test "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.created" }}' ducklake-iceberg:ci)" != unknown
 
+  portability:
+    name: unit tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: lock
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pipx install poetry==${{ env.POETRY_VERSION }}
+      - run: poetry install --sync
+      - name: CLI starts
+        run: poetry run ducklake-iceberg --version
+      - name: Unit tests, per-table lock and the mapping/writer suites
+        run: poetry run pytest tests/unit tests/sync tests/mapping tests/writer -m "not postgres and not e2e and not minio" --cov-fail-under=0
+
   test:
     name: tests (py${{ matrix.python }})
     runs-on: ubuntu-latest
