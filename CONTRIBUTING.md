@@ -207,17 +207,24 @@ to the CLI, exit codes or envelope bump the minor version.
    python scripts/check_release_version.py vX.Y.Z --changelog CHANGELOG.md
    ```
 
-4. Merge to `main`, then tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+4. Rehearse on TestPyPI with a pre-release tag (`vX.Y.ZrcN`, with the same
+   version in `pyproject.toml` and a `## [X.Y.ZrcN]` changelog section): the
+   workflow publishes it to TestPyPI only. Check the install with
+   `pipx run --index-url https://test.pypi.org/simple/ --pip-args="--extra-index-url https://pypi.org/simple/" ducklake-iceberg --version`.
+5. Merge to `main`, then tag and push the final version:
+   `git tag vX.Y.Z && git push origin vX.Y.Z`.
 
 The `release` workflow validates that the tag matches `pyproject.toml` and the
 changelog, builds the sdist and wheel, smoke-tests the wheel and the container
-image, publishes to PyPI with
+image, and publishes with
 [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) (no API token
-is stored) and creates the GitHub release.
+is stored): pre-releases (`aN`, `bN`, `rcN`) to TestPyPI, final versions to
+PyPI, followed by the GitHub release.
 
 One-time setup for maintainers:
 
 - On PyPI, add a *trusted publisher* for the repository `Didone/ducklake-iceberg`,
-  workflow `release.yml`, environment `pypi`.
-- In GitHub, create the `pypi` environment (optionally with required
-  reviewers).
+  workflow `release.yml`, environment `pypi`; on TestPyPI, the same with the
+  environment `testpypi`.
+- In GitHub, create the `pypi` and `testpypi` environments (optionally with
+  required reviewers).

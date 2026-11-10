@@ -119,6 +119,16 @@ def test_release_workflow_publishes_to_pypi_with_trusted_publishing() -> None:
     assert any(u.startswith("pypa/gh-action-pypi-publish@") for u in uses)
     assert "secrets." not in str(publish)
 
+    # pre-releases rehearse on TestPyPI; only final versions reach PyPI
+    assert publish["if"] == "needs.build.outputs.prerelease == 'false'"
+    rehearsal = jobs["publish-testpypi"]
+    assert rehearsal["if"] == "needs.build.outputs.prerelease == 'true'"
+    assert rehearsal["environment"]["name"] == "testpypi"
+    assert rehearsal["permissions"] == {"id-token": "write"}
+    (upload,) = [s for s in rehearsal["steps"] if "pypi-publish" in s.get("uses", "")]
+    assert upload["with"]["repository-url"] == "https://test.pypi.org/legacy/"
+    assert "secrets." not in str(rehearsal)
+
     image = jobs["container-smoke"]
     image_run = _run_text(image)
     for arg in ("VERSION", "REVISION", "SOURCE", "CREATED"):
@@ -183,3 +193,39 @@ def test_dockerfile_runtime_contract_and_no_credentials() -> None:
         stripped = line.strip()
         if stripped.startswith(("ENV", "ARG")):
             assert forbidden.search(stripped) is None, stripped
+
+
+@pytest.mark.parametrize(
+    ("tag", "prerelease"),
+    [
+        ("v0.1.0", "false"),
+        ("v0.1.0rc1", "true"),
+        ("v1.2.0a3", "true"),
+        ("v2.0.0b1", "true"),
+    ],
+)
+def test_release_routes_prereleases_to_testpypi(
+    tag: str, prerelease: str, tmp_path: Path
+) -> None:
+    import shutil
+
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash unavailable")
+    (step,) = [
+        s
+        for s in _workflow("release.yml")["jobs"]["build"]["steps"]
+        if s.get("id") == "version"
+    ]
+    output = tmp_path / "github_output"
+    subprocess.run(  # noqa: S603 - the workflow's own script, fixed inputs
+        [bash, "-c", step["run"]],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={"GITHUB_REF_NAME": tag, "GITHUB_OUTPUT": str(output)},
+        timeout=30,
+    )
+    lines = output.read_text(encoding="utf-8").splitlines()
+    assert f"version={tag[1:]}" in lines
+    assert f"prerelease={prerelease}" in lines
