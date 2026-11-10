@@ -254,6 +254,22 @@
               },
               "exit_code": {
                 "$ref": "#/$defs/count"
+              },
+              "dry_run": {
+                "type": "boolean"
+              },
+              "glue": {
+                "enum": [
+                  "unpublished",
+                  "in_sync",
+                  "behind"
+                ]
+              },
+              "pending_inlined_rows": {
+                "$ref": "#/$defs/count"
+              },
+              "pending_inlined_deletions": {
+                "$ref": "#/$defs/count"
               }
             }
           }

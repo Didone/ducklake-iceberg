@@ -92,6 +92,10 @@ class PointerError(ConfigError):
     """Pointer missing, unreadable, or of an unsupported version (exit 1)."""
 
 
+class PointerNotFoundError(PointerError):
+    """The table was never exported: there is no pointer yet."""
+
+
 def utc_now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -159,7 +163,7 @@ def read_pointer(io: FileIO, location: str) -> ExportPointer:
         with io.new_input(path).open(seekable=False) as stream:
             raw = stream.read()
     except FileNotFoundError:
-        raise PointerError(
+        raise PointerNotFoundError(
             f"no export found at {location}",
             hint="run ducklake-iceberg sync",
         ) from None
@@ -199,6 +203,17 @@ def _table_location(settings: DuckLakeIcebergSettings, table_name: str) -> str:
     glue_table = normalize_table_name(table_name)
     prefix = settings.iceberg_metadata_prefix.rstrip("/")
     return f"{prefix}/{settings.glue_database}/{glue_table}"
+
+
+def read_current_pointer(
+    settings: DuckLakeIcebergSettings, table_name: str
+) -> ExportPointer | None:
+    """The table's last export pointer, or ``None`` before the first export."""
+    location = _table_location(settings, table_name)
+    try:
+        return read_pointer(build_file_io(settings), location)
+    except PointerNotFoundError:
+        return None
 
 
 def resolve_metadata_location(
@@ -352,6 +367,7 @@ __all__ = [
     "build_file_io",
     "clear_file_io_cache",
     "pointer_path",
+    "read_current_pointer",
     "read_pointer",
     "resolve_metadata_location",
     "run_register",

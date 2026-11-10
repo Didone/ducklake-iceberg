@@ -52,10 +52,10 @@ def test_clean_table_passes_doctor(flushed_catalog: CatalogHarness) -> None:
 
 
 # --------------------------------------------------------------------------
-# inlined data is not a doctor blocker: only the dry run's export refuses it
+# inlined data is not a doctor blocker: the dry run reports the pending flush
 # --------------------------------------------------------------------------
 @pytest.mark.usefixtures("aws_credentials")
-def test_inlined_data_passes_doctor_but_dry_run_cannot_export(
+def test_inlined_data_passes_doctor_and_dry_run_reports_the_flush(
     seeded_catalog: CatalogHarness,
 ) -> None:
     env = cli_env_for(seeded_catalog)
@@ -67,12 +67,12 @@ def test_inlined_data_passes_doctor_but_dry_run_cannot_export(
     steps = _steps(payload)
     # the flush would resolve it, so the doctor stage does not block...
     assert steps[0] == {"step": "doctor", "exit_code": 0}
-    # ...but a dry run does not flush, so the export refuses to lose the rows
-    assert [s["step"] for s in steps] == ["doctor", "export"]
-    assert result.exit_code == 2
-    (problem,) = payload["problems"]
-    assert problem["code"] == "blocked"
-    assert "inlined data" in problem["message"]
+    # ...and the dry run reports the pending flush instead of planning an
+    # export that would not see the inlined rows
+    assert [s["step"] for s in steps] == ["doctor", "checkpoint", "register"]
+    assert steps[1]["pending_inlined_rows"] > 0
+    assert result.exit_code == 0
+    assert payload["problems"] == []
 
 
 # --------------------------------------------------------------------------

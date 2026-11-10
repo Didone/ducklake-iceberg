@@ -57,7 +57,10 @@ def test_dry_run_does_not_flush(seeded_catalog: CatalogHarness) -> None:
     result = _dry_run(seeded_catalog, "main.pedidos")
     payload = json.loads(result.stdout)
     assert payload["dry_run"] is True
-    assert [s["step"] for s in _steps(result.stdout)] == ["doctor", "export"]
+    steps = _steps(result.stdout)
+    assert [s["step"] for s in steps] == ["doctor", "checkpoint", "register"]
+    assert steps[1]["dry_run"] is True
+    assert steps[1]["pending_inlined_rows"] > 0
     assert _max_snapshot(seeded_catalog) == before  # no snapshot created
 
 

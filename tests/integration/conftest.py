@@ -147,6 +147,41 @@ def catalog(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[CatalogH
         stop()
 
 
+def _wait_until_postgres_accepts(dbname: str, host: str, port: str) -> None:
+    """Block until the server answers queries steadily.
+
+    The postgres image starts a temporary server for the init scripts, stops
+    it and starts the real one: a container reported as started may still
+    refuse connections (or answer the TLS probe with garbage) for a moment.
+    Three consecutive successful queries mean the final server is up.
+    """
+    import time
+
+    con = duckdb.connect(":memory:")
+    try:
+        con.execute("INSTALL postgres")
+        con.execute("LOAD postgres")
+        streak, deadline = 0, time.monotonic() + 30
+        while streak < 3:
+            try:
+                con.execute(
+                    f"ATTACH 'dbname={dbname} host={host} port={port}' "
+                    "AS probe (TYPE postgres, READ_ONLY)"
+                )
+                try:
+                    con.execute("SELECT * FROM postgres_query('probe', 'SELECT 1')")
+                finally:
+                    con.execute("DETACH probe")
+                streak += 1
+            except duckdb.Error:
+                streak = 0
+                if time.monotonic() > deadline:
+                    raise
+            time.sleep(0.3)
+    finally:
+        con.close()
+
+
 def _start_postgres(tmp_path: Path) -> tuple[CatalogHarness, Callable[[], None]]:
     import os
 
@@ -154,24 +189,32 @@ def _start_postgres(tmp_path: Path) -> tuple[CatalogHarness, Callable[[], None]]
         warnings.simplefilter("ignore", DeprecationWarning)
         from testcontainers.postgres import PostgresContainer
 
-    container = PostgresContainer("postgres:16-alpine")
-    container.start()
-
-    host = container.get_container_host_ip()
-    port = container.get_exposed_port(5432)
-    user = container.username
-    password = container.password
-    dbname = container.dbname
-
-    # Credentials via libpq (never in the DSN): the DuckDB postgres extension
-    # reads them.
-    os.environ.update(
-        PGHOST=host,
-        PGPORT=str(port),
-        PGUSER=user,
-        PGPASSWORD=password,
-        PGDATABASE=dbname,
-    )
+    # Docker Desktop/WSL port forwarding occasionally never comes up for a
+    # fresh container: retry with a new one instead of failing the test.
+    for attempt in range(3):
+        container = PostgresContainer("postgres:16-alpine")
+        container.start()
+        host = container.get_container_host_ip()
+        port = container.get_exposed_port(5432)
+        user = container.username
+        password = container.password
+        dbname = container.dbname
+        # Credentials via libpq (never in the DSN): the DuckDB postgres
+        # extension reads them.
+        os.environ.update(
+            PGHOST=host,
+            PGPORT=str(port),
+            PGUSER=user,
+            PGPASSWORD=password,
+            PGDATABASE=dbname,
+        )
+        try:
+            _wait_until_postgres_accepts(dbname, host, str(port))
+            break
+        except duckdb.Error:
+            container.stop()
+            if attempt == 2:
+                raise
     data_dir = tmp_path / "data"
     data_dir.mkdir(exist_ok=True)
     harness = CatalogHarness(

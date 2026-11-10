@@ -131,7 +131,7 @@ ducklake-iceberg sync --table sales.orders
 | Option                | Description |
 | --------------------- | ----------- |
 | `--table schema.table` | Table to publish (required). |
-| `--dry-run`           | Write nothing: no flush of inlined data, no export. Still runs the pre-flight checks. |
+| `--dry-run`           | Write nothing (no flush, no metadata, no Glue change). Runs the pre-flight checks, plans the export and checks Glue read-only: use it to monitor (see below). |
 | `--json`              | Print the JSON envelope on stdout. |
 | `--profile`           | AWS profile. |
 | `--config`            | YAML configuration file. |
@@ -156,6 +156,21 @@ ducklake-iceberg sync --table sales.orders
 
 Logs go to stderr and the envelope to stdout, so they can be sent to different
 files. Alert on exit codes 1, 2 and 3 (see below).
+
+### Monitoring with `--dry-run`
+
+`--dry-run` is read-only and answers "is the mirror up to date?":
+
+| Exit | Meaning |
+| ---- | ------- |
+| `4`  | up to date: nothing to publish and Glue points at the last export |
+| `0`  | DuckLake has changes the next sync will publish (pending inlined rows are reported in the `checkpoint` step) |
+| `2`  | the next sync would be blocked by the pre-flight |
+| `3`  | the Iceberg table was written outside of ducklake-iceberg |
+| `1`  | error |
+
+The `register` step of the envelope carries `glue`: `unpublished`, `in_sync`
+or `behind` (a previous sync stopped before Glue; the next one advances it).
 
 ## Exit codes
 

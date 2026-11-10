@@ -19,7 +19,7 @@ from ducklake_iceberg.catalog.reader import (
     resolve_table,
     snapshot_at,
 )
-from ducklake_iceberg.checkpoint.detect import clean_snapshot
+from ducklake_iceberg.checkpoint.detect import clean_snapshot, detect_inlined
 from ducklake_iceberg.checkpoint.flush import flush_inlined
 from ducklake_iceberg.checkpoint.model import TableRef as CheckpointTableRef
 from ducklake_iceberg.concurrency import Limits, apply_limits
@@ -45,7 +45,11 @@ from ducklake_iceberg.obs.logging import bind, log_event
 from ducklake_iceberg.obs.metrics import RunMetrics, add_work, collect
 from ducklake_iceberg.obs.redaction import scrub
 from ducklake_iceberg.output import Envelope, Problem
-from ducklake_iceberg.register import run_register
+from ducklake_iceberg.register import (
+    ExportPointer,
+    read_current_pointer,
+    run_register,
+)
 from ducklake_iceberg.sync.lock import lock_key, table_lock
 
 if TYPE_CHECKING:
@@ -297,9 +301,20 @@ def _sync_steps(
         )
         return doctor_exit
 
-    # flush stage. Writes to DuckLake, so a dry run skips it: the export then
-    # plans against the latest snapshot without pending inlined data.
-    if not dry_run:
+    # flush stage. Writes to DuckLake, so a dry run only reports what it would
+    # flush; the export cannot be planned before the rows are in Parquet.
+    if dry_run:
+        pending = _pending_inlined(qualified, catalog.get())
+        if pending is not None:
+            steps.append(
+                {"step": "checkpoint", "exit_code": 0, "dry_run": True, **pending}
+            )
+            # still tell a monitor whether the published mirror diverged
+            check = _dry_run_glue_check(
+                settings, schema_name, table_name, None, steps, envelope, qualified
+            )
+            return ExitCode.SUCCESS if check is None else check
+    else:
         try:
             with timing.phase("checkpoint"):
                 flush = flush_inlined(settings, qualified, con=catalog.get())
@@ -344,7 +359,16 @@ def _sync_steps(
     catalog.invalidate()
 
     if dry_run:
-        return result.exit_code
+        diverged = _dry_run_glue_check(
+            settings,
+            schema_name,
+            table_name,
+            result.handoff,
+            steps,
+            envelope,
+            qualified,
+        )
+        return result.exit_code if diverged is None else diverged
 
     # register stage. It runs even when export exits 4: a previous sync may have
     # written the metadata.json and failed before reaching Glue.
@@ -384,6 +408,72 @@ def _sync_steps(
         steps.append({"step": "register", "exit_code": int(exit_of(exc))})
         envelope.problems.append(problem_from_error(exc, table=qualified))
         return exit_of(exc)
+
+
+def _pending_inlined(qualified: str, con: DuckLakeConnection) -> dict[str, int] | None:
+    """Pending inlined rows and deletions of the table, or ``None``."""
+    ref = parse_table_ref(qualified)
+    with con.read_transaction():
+        snapshot = current_snapshot(con)
+        identity = resolve_table(con, ref, snapshot)
+        status = detect_inlined(
+            con.raw,
+            con.meta,
+            CheckpointTableRef(
+                identity.ref.schema_name, identity.ref.table_name, identity.table_id
+            ),
+            snapshot.snapshot_id,
+        )
+    if not status.has_pending:
+        return None
+    return {
+        "pending_inlined_rows": status.pending_data_rows,
+        "pending_inlined_deletions": status.pending_delete_rows,
+    }
+
+
+def _dry_run_glue_check(
+    settings: DuckLakeIcebergSettings,
+    schema_name: str,
+    table_name: str,
+    handoff: ExportPointer | None,
+    steps: list[dict[str, Any]],
+    envelope: Envelope,
+    qualified: str,
+) -> ExitCode | None:
+    """Read-only Glue check of a dry run: ``DIVERGED``/``ERROR`` or ``None``.
+
+    Compares what Glue points at with the last export (the pointer) and
+    records it as the ``glue`` value of the ``register`` step:
+
+    * ``unpublished``: no export yet, the next sync registers the table;
+    * ``in_sync``: Glue points at the last export;
+    * ``behind``: Glue points at an ancestor of it (a previous sync failed
+      before registering); the next sync advances it;
+    * anything else is an external write (exit 3), the same verdict a real
+      sync would reach.
+    """
+    if handoff is None:
+        handoff = read_current_pointer(settings, table_name)
+    glue: str
+    if handoff is None:
+        glue = "unpublished"
+    else:
+        try:
+            with timing.phase("register"):
+                run_register(
+                    settings, schema_name, table_name, handoff=handoff, dry_run=True
+                )
+            glue = "behind"
+        except NothingToDo:
+            glue = "in_sync"
+        except Exception as exc:
+            LOG.debug("dry-run Glue check of %s failed", qualified, exc_info=exc)
+            steps.append({"step": "register", "exit_code": int(exit_of(exc))})
+            envelope.problems.append(problem_from_error(exc, table=qualified))
+            return exit_of(exc)
+    steps.append({"step": "register", "exit_code": 0, "dry_run": True, "glue": glue})
+    return None
 
 
 def _sync_locked(

@@ -108,7 +108,7 @@ from ducklake_iceberg.obs.metrics import add_call, add_work
 from ducklake_iceberg.register import (
     DELETE_FILE_LAYOUT_PARTITION_V1,
     ExportPointer,
-    PointerError,
+    PointerNotFoundError,
     build_file_io,
     pointer_path,
     read_pointer,
@@ -292,9 +292,7 @@ def _read_base_pointer(io: FileIO, location: str) -> ExportPointer | None:
     """Handoff pointer of the last export, or ``None`` (first export)."""
     try:
         return read_pointer(io, location)
-    except PointerError as exc:
-        if "no export found" not in exc.message:
-            raise
+    except PointerNotFoundError:
         return None
 
 
@@ -1052,6 +1050,7 @@ def _run_export(
             pointer_path=None,
             exit_code=ExitCode.SUCCESS,
             warnings=warnings,
+            handoff=prep.base.pointer,
         )
 
     # step 5b onward: writes

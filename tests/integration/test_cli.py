@@ -218,9 +218,15 @@ def test_dry_run(flushed_catalog: CatalogHarness) -> None:
     assert result.exit_code == 0
     payload = _json(result.stdout)
     assert payload["dry_run"] is True
-    steps = [s["step"] for s in payload["results"][0]["steps"]]
-    # a dry run neither flushes nor registers; it still plans the export
-    assert steps == ["doctor", "export"]
+    steps = payload["results"][0]["steps"]
+    # a dry run plans the export and checks Glue read-only; it registers nothing
+    assert [s["step"] for s in steps] == ["doctor", "export", "register"]
+    assert steps[-1] == {
+        "step": "register",
+        "exit_code": 0,
+        "dry_run": True,
+        "glue": "unpublished",
+    }
 
 
 @pytest.mark.usefixtures("aws_credentials")
@@ -233,10 +239,13 @@ def test_dry_run_does_not_flush(seeded_catalog: CatalogHarness) -> None:
             ["sync", "--table", "main.pedidos", "--dry-run", "--json"],
             env=env,
         )
+    assert result.exit_code == 0, result.stdout
     payload = _json(result.stdout)
-    steps = [s["step"] for s in payload["results"][0]["steps"]]
-    assert "checkpoint" not in steps
-    assert "register" not in steps
+    steps = payload["results"][0]["steps"]
+    assert [s["step"] for s in steps] == ["doctor", "checkpoint", "register"]
+    flush = steps[1]
+    assert flush["dry_run"] is True
+    assert flush["pending_inlined_rows"] > 0
 
 
 # --- log level from the environment; clean stdout ----------------------------

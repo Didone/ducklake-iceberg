@@ -39,7 +39,9 @@ First public release.
   delete files.
 - Iceberg field IDs equal to DuckLake `column_id`s, including nested types,
   renames and dropped columns.
-- `--dry-run`, `--json` envelope v1 with a published JSON schema, and a
+- `--dry-run` as a read-only monitor: plans the export, reports pending
+  inlined rows and checks Glue (exit 3 on an external write).
+- `--json` envelope v1 with a published JSON schema, and a
   structured log on stderr with credential redaction.
 - Per-phase timings and counters in each result; `DUCKLAKE_ICEBERG_TIMINGS=1`
   adds a `timings` key to the envelope.

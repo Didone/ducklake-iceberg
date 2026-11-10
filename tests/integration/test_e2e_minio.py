@@ -611,6 +611,61 @@ def test_second_run_changes_nothing(lake: Lake) -> None:
     assert lake.bucket_objects() == objects
 
 
+def _dry_run(lake: Lake, table: str, expect: int) -> list[dict[str, Any]]:
+    before_tree, before_bucket = lake.tree(), lake.bucket_objects()
+    result = runner.invoke(
+        app,
+        ["sync", "--table", table, "--dry-run", "--config", str(lake.config), "--json"],
+        env=lake.env,
+    )
+    assert result.exit_code == expect, result.stdout
+    assert lake.tree() == before_tree  # nothing flushed into DuckLake
+    assert lake.bucket_objects() == before_bucket  # no metadata written
+    steps: list[dict[str, Any]] = json.loads(result.stdout)["results"][0]["steps"]
+    return steps
+
+
+def test_dry_run_is_a_read_only_monitor(lake: Lake) -> None:
+    # up to date: exit 4, Glue already points at the last export
+    steps = _dry_run(lake, "sales.orders", expect=4)
+    assert steps[-1]["glue"] == "in_sync"
+
+    # new rows in DuckLake: exit 0 (something to publish), Glue would advance
+    lake.write(
+        "INSERT INTO lake.sales.orders (id, client) "
+        "SELECT i, 'monitor' FROM range(40000, 40300) t(i)"
+    )
+    steps = _dry_run(lake, "sales.orders", expect=0)
+    assert [s["step"] for s in steps] == ["doctor", "export", "register"]
+    assert steps[-1]["glue"] == "in_sync"  # the new export is not written
+
+    # pending inlined rows: exit 0, reported instead of planned
+    lake.write("INSERT INTO lake.sales.tiny VALUES (50, 'z')")
+    steps = _dry_run(lake, "sales.tiny", expect=0)
+    assert steps[1]["pending_inlined_rows"] == 1
+
+    # an external write to the mirror: exit 3, with nothing written
+    table = lake.iceberg("defaults")
+    table.append(
+        pa.table({"id": pa.array([999], pa.int64()), "p": pa.array([1], pa.int32())})
+    )
+    _dry_run(lake, "sales.defaults", expect=3)
+    # the external writer's data file is not ours; drop it so the bucket audit
+    # of the other tables keeps checking that the tool writes no data files
+    fs = pafs.S3FileSystem(
+        access_key=KEY,
+        secret_key=SECRET,
+        endpoint_override=lake.endpoint.removeprefix("http://"),
+        scheme="http",
+        region=REGION,
+    )
+    fs.delete_dir_contents(f"{BUCKET}/iceberg/{DATABASE}/defaults/data")
+
+    # the real sync of the pending changes still works afterwards
+    step(lake, "sales", "orders")
+    step(lake, "sales", "tiny", flush=True)
+
+
 # -- DuckLake data on S3: the production layout ------------------------------
 DATA_BUCKET = "data-bucket"
 
