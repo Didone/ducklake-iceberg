@@ -157,7 +157,7 @@ def _glue_client(target: GlueTarget) -> Any:
     return aws.client("glue", target.region, target.profile)
 
 
-def build_catalog(target: GlueTarget) -> GlueCatalog:
+def build_catalog(target: GlueTarget, *, file_io: FileIO | None = None) -> GlueCatalog:
     """Build the PyIceberg ``GlueCatalog`` from the target.
 
     The ``s3.*`` properties with the profile credential reach the FileIO that
@@ -168,7 +168,20 @@ def build_catalog(target: GlueTarget) -> GlueCatalog:
     # With ``glue.id`` PyIceberg registers the CatalogId on the client it builds
     # itself; without it, it reuses the process-wide client (no new Session).
     client = _glue_client(target) if target.catalog_id is None else None
-    return GlueCatalog(
+    catalog_type = GlueCatalog
+    if file_io is not None:
+        shared = file_io
+
+        class _SharedIOCatalog(GlueCatalog):
+            def _load_file_io(
+                self,
+                properties: dict[str, str] | None = None,
+                location: str | None = None,
+            ) -> FileIO:
+                return shared
+
+        catalog_type = _SharedIOCatalog
+    return catalog_type(
         "ducklake-iceberg",
         client,
         **_glue_properties(target),
@@ -346,6 +359,7 @@ def register(
     dry_run: bool = False,
     data_path: str | None = None,
     metadata: TableMetadata | None = None,
+    file_io: FileIO | None = None,
 ) -> RegisterResult:
     """Publish the pointer to the ``metadata.json`` in Glue.
 
@@ -361,7 +375,11 @@ def register(
     def get_catalog() -> GlueCatalog:
         nonlocal catalog
         if catalog is None:
-            catalog = build_catalog(target)
+            catalog = (
+                build_catalog(target, file_io=file_io)
+                if file_io is not None
+                else build_catalog(target)
+            )
             if metadata is None and not _metadata_exists(catalog, metadata_location):
                 raise GlueError(f"metadata.json not found at {metadata_location}")
         return catalog

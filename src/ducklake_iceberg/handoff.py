@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from ducklake_iceberg import timing
 from ducklake_iceberg.errors import ConfigError
-from ducklake_iceberg.obs.metrics import add_call, add_work
+from ducklake_iceberg.obs.metrics import add_file_call, add_work
 from ducklake_iceberg.storage import build_file_io
 
 if TYPE_CHECKING:
@@ -97,7 +97,7 @@ def write_pointer(io: FileIO, pointer: ExportPointer) -> str:
             # to the default create().
             with output.create() as stream:
                 stream.write(payload)
-        add_call("s3_put")
+        add_file_call(io, "s3_put")
         add_work("s3_put", items=1, byte_count=len(payload))
     return path
 

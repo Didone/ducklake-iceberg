@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Final
 
-from ducklake_iceberg.catalog.query import query_arrow
+from ducklake_iceberg.catalog.query import query_arrow, snapshot_rows
 from ducklake_iceberg.checkpoint.detect import detect_inlined
 from ducklake_iceberg.checkpoint.model import TableRef
 from ducklake_iceberg.doctor.model import Finding, Severity, quote_ident
@@ -783,15 +783,10 @@ def _table_stats_record_count(
 
 
 def _current_snapshot_id(con: duckdb.DuckDBPyConnection, meta: str) -> int:
-    q = quote_ident(meta)
-    rows = _q(
-        con,
-        f"SELECT max(snapshot_id) AS current_id FROM {q}.ducklake_snapshot",
-        {},
-    )
-    if not rows or rows[0]["current_id"] is None:
+    rows = snapshot_rows(con, meta).to_pylist()
+    if not rows:
         raise FileEnumerationError("catalog has no snapshots")
-    return _as_int(rows[0]["current_id"])
+    return _as_int(rows[0]["snapshot_id"])
 
 
 # -- orchestration -----------------------------------------------------------

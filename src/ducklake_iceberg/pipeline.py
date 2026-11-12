@@ -9,11 +9,13 @@ and failed before reaching Glue.
 from __future__ import annotations
 
 import logging
+from contextlib import ExitStack
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ducklake_iceberg import timing
 from ducklake_iceberg.catalog.connection import metadata_catalog, open_catalog
+from ducklake_iceberg.catalog.files import read_path_layers
 from ducklake_iceberg.catalog.reader import (
     current_snapshot,
     parse_table_ref,
@@ -30,6 +32,7 @@ from ducklake_iceberg.checkpoint.flush import flush_inlined
 from ducklake_iceberg.checkpoint.model import TableRef as CheckpointTableRef
 from ducklake_iceberg.concurrency import Limits, apply_limits
 from ducklake_iceberg.doctor import rules as doctor_rules
+from ducklake_iceberg.doctor.batch import prefetch
 from ducklake_iceberg.doctor.model import (
     DoctorContext,
     DoctorTarget,
@@ -45,7 +48,12 @@ from ducklake_iceberg.errors import (
     ExitCode,
     NothingToDo,
 )
-from ducklake_iceberg.export import ExportResult, run_export
+from ducklake_iceberg.export import (
+    ExportResult,
+    check_source_locations,
+    read_export_seed,
+    run_export,
+)
 from ducklake_iceberg.handoff import (
     ExportPointer,
     normalize_table_name,
@@ -167,6 +175,7 @@ def _run_rules(con: DuckLakeConnection, identity: TableIdentity) -> DoctorReport
         schema_version=identity.schema_version,
     )
     ctx = DoctorContext(con=con.raw, target=target)
+    prefetch(ctx)
     report = run_rules(ctx, list(doctor_rules.RULES), manage_transaction=False)
     add_work(
         "doctor",
@@ -218,7 +227,7 @@ def _doctor_gate(
     ref = parse_table_ref(qualified)
     with (
         metadata_catalog(settings, con) as ro,
-        ro.read_transaction(),
+        ro.borrow_read_transaction(),
         cache_inlined_reads(ro.raw),
     ):
         snapshot = current_snapshot(ro)
@@ -235,6 +244,10 @@ def _doctor_gate(
             if target != snapshot.snapshot_id:
                 snapshot = snapshot_at(ro, target)
                 identity = resolve_table(ro, ref, snapshot)
+        check_source_locations(
+            settings,
+            read_path_layers(ro.raw, ro.meta, identity.table_id, snapshot.snapshot_id),
+        )
         report = _run_rules(ro, identity)
     if before_flush and not report.has_error:
         blocking = _blockers(report, skip=frozenset(AUTO_REMEDIABLE_GATES))
@@ -285,16 +298,31 @@ class _SharedCatalog:
     def __init__(self, settings: DuckLakeIcebergSettings) -> None:
         self._settings = settings
         self._con: DuckLakeConnection | None = None
+        self._reads = ExitStack()
+        self._reading = False
 
     def get(self) -> DuckLakeConnection:
         if self._con is None:
             self._con = open_catalog(self._settings, read_only=True, s3=False)
+        if not self._reading:
+            self._reads.enter_context(self._con.read_transaction())
+            self._reads.enter_context(cache_inlined_reads(self._con.raw))
+            self._reading = True
         return self._con
 
+    def finish_read(self) -> None:
+        try:
+            self._reads.close()
+        finally:
+            self._reading = False
+
     def invalidate(self) -> None:
-        if self._con is not None:
-            self._con.close()
-            self._con = None
+        try:
+            self.finish_read()
+        finally:
+            if self._con is not None:
+                self._con.close()
+                self._con = None
 
 
 def _sync_steps(
@@ -307,6 +335,7 @@ def _sync_steps(
     envelope: Envelope,
 ) -> _SyncResult:
     qualified = qualified_table_name(schema_name, table_name)
+    seed = read_export_seed(settings, table_name)
     steps: list[dict[str, Any]] = []
     envelope.results.append({"table": qualified, "steps": steps})
 
@@ -341,6 +370,7 @@ def _sync_steps(
             steps.append(
                 {"step": "checkpoint", "exit_code": 0, "dry_run": True, **pending}
             )
+            catalog.finish_read()
             # still tell a monitor whether the published mirror diverged
             check = _dry_run_glue_check(
                 settings, schema_name, table_name, None, steps, envelope, qualified
@@ -349,9 +379,14 @@ def _sync_steps(
     else:
         try:
             with timing.phase("checkpoint"):
-                flush = flush_inlined(settings, qualified, con=catalog.get())
+                flush = flush_inlined(
+                    settings,
+                    qualified,
+                    con=catalog.get(),
+                    finish_read=catalog.finish_read,
+                )
                 if flush.wrote:
-                    catalog.invalidate()
+                    catalog.finish_read()
                 add_work("checkpoint", items=1 if flush.wrote else 0)
             steps.append({"step": "checkpoint", "exit_code": int(flush.exit_code)})
         except DuckLakeIcebergError as exc:
@@ -388,6 +423,8 @@ def _sync_steps(
                 dry_run=dry_run,
                 con=catalog.get(),
                 max_footer_workers=settings.max_footer_workers,
+                seed=seed,
+                finish_read=catalog.finish_read,
             )
         steps.append({"step": "export", **result.to_json()})
     except Exception as exc:
@@ -453,7 +490,7 @@ def _sync_steps(
 def _pending_inlined(qualified: str, con: DuckLakeConnection) -> dict[str, int] | None:
     """Pending inlined rows and deletions of the table, or ``None``."""
     ref = parse_table_ref(qualified)
-    with con.read_transaction():
+    with con.borrow_read_transaction():
         snapshot = current_snapshot(con)
         identity = resolve_table(con, ref, snapshot)
         status = detect_inlined(

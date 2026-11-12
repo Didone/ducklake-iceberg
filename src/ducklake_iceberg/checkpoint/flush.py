@@ -28,7 +28,12 @@ from ducklake_iceberg.catalog.connection import (
     metadata_catalog,
     open_catalog,
 )
-from ducklake_iceberg.catalog.reader import current_snapshot, parse_table_ref
+from ducklake_iceberg.catalog.reader import (
+    current_snapshot,
+    parse_table_ref,
+    resolve_table,
+    snapshot_at,
+)
 from ducklake_iceberg.checkpoint.detect import detect_inlined
 from ducklake_iceberg.checkpoint.model import CatalogFingerprint, TableRef
 from ducklake_iceberg.checkpoint.variant import (
@@ -37,7 +42,12 @@ from ducklake_iceberg.checkpoint.variant import (
     nested_variant_error,
     translate_checkpoint_error,
 )
-from ducklake_iceberg.errors import ConfigError, DivergenceError, ExitCode
+from ducklake_iceberg.errors import (
+    ConfigError,
+    DivergenceError,
+    ExitCode,
+    IdentityError,
+)
 from ducklake_iceberg.retry import RetryPolicy
 
 if TYPE_CHECKING:
@@ -123,28 +133,16 @@ def _resolve_table(
             f"--table requires a qualified name: <schema>.<table> (got {qualified!r})"
         )
     ref = parse_table_ref(qualified)
-    rows = _rows(
-        con,
-        "SELECT t.table_id FROM "
-        f'"{con.meta}".ducklake_table AS t '
-        f'JOIN "{con.meta}".ducklake_schema AS s ON s.schema_id = t.schema_id '
-        "WHERE s.schema_name = $schema_name AND t.table_name = $table_name "
-        "AND $snapshot_id >= t.begin_snapshot "
-        "AND ($snapshot_id < t.end_snapshot OR t.end_snapshot IS NULL) "
-        "AND $snapshot_id >= s.begin_snapshot "
-        "AND ($snapshot_id < s.end_snapshot OR s.end_snapshot IS NULL)",
-        {
-            "snapshot_id": snapshot_id,
-            "schema_name": ref.schema_name,
-            "table_name": ref.table_name,
-        },
+    snapshot = current_snapshot(con)
+    if snapshot.snapshot_id != snapshot_id:
+        snapshot = snapshot_at(con, snapshot_id)
+    try:
+        identity = resolve_table(con, ref, snapshot)
+    except IdentityError as exc:
+        raise ConfigError(str(exc)) from exc
+    return TableRef(
+        identity.ref.schema_name, identity.ref.table_name, identity.table_id
     )
-    if not rows:
-        raise ConfigError(
-            f"table {ref.schema_name}.{ref.table_name} does not exist in "
-            f"snapshot {snapshot_id}"
-        )
-    return TableRef(ref.schema_name, ref.table_name, int(rows[0]["table_id"]))
 
 
 def read_fingerprint(con: DuckLakeConnection) -> CatalogFingerprint:
@@ -198,11 +196,45 @@ def _flush_call(con: DuckLakeConnection, table: TableRef) -> int:
     return sum(int(r["rows_flushed"]) for r in rows)
 
 
+def _table_identity(con: DuckLakeConnection, table: TableRef) -> tuple[object, ...]:
+    rows = con.query_arrow(
+        "SELECT t.table_uuid, t.path AS table_path, "
+        "t.path_is_relative AS table_relative, "
+        "s.schema_id, s.path AS schema_path, s.path_is_relative AS schema_relative "
+        f'FROM "{con.meta}".ducklake_table t '
+        f'JOIN "{con.meta}".ducklake_schema s ON s.schema_id = t.schema_id '
+        "WHERE t.table_id = $table_id AND t.table_name = $table_name "
+        "AND s.schema_name = $schema_name AND t.end_snapshot IS NULL "
+        "AND s.end_snapshot IS NULL",
+        {
+            "table_id": table.table_id,
+            "table_name": table.table_name,
+            "schema_name": table.schema_name,
+        },
+    ).to_pylist()
+    if len(rows) != 1:
+        raise DivergenceError(
+            "source table identity changed before flush -- nothing was written"
+        )
+    return tuple(
+        rows[0][key]
+        for key in (
+            "table_uuid",
+            "table_path",
+            "table_relative",
+            "schema_id",
+            "schema_path",
+            "schema_relative",
+        )
+    )
+
+
 def flush_inlined(
     cfg: DuckLakeIcebergSettings,
     qualified: str,
     *,
     con: DuckLakeConnection | None = None,
+    finish_read: Callable[[], None] | None = None,
 ) -> FlushResult:
     """Flush the pending inlined data of ``schema.table``.
 
@@ -215,7 +247,7 @@ def flush_inlined(
         CheckpointError: the DuckLake call failed (exit 1).
         DivergenceError: the catalog opened for writing is not the one read.
     """
-    with metadata_catalog(cfg, con) as ro, ro.read_transaction():
+    with metadata_catalog(cfg, con) as ro, ro.borrow_read_transaction():
         with timing.phase("checkpoint.detect"):
             snapshot_before = current_snapshot(ro).snapshot_id
             table = _resolve_table(ro, qualified, snapshot_before)
@@ -234,8 +266,17 @@ def flush_inlined(
             return FlushResult(table, 0, snapshot_before, snapshot_before)
         with timing.phase("checkpoint.fingerprint"):
             fingerprint = read_fingerprint(ro)
+            table_identity = _table_identity(ro, table)
 
-    write = open_catalog(cfg, read_only=False)
+    if finish_read is not None:
+        finish_read()
+    borrowed = con is not None and finish_read is not None
+    if borrowed:
+        assert con is not None
+        con.reattach(read_only=False)
+        write = con
+    else:
+        write = open_catalog(cfg, read_only=False)
     try:
         with timing.phase("checkpoint.fingerprint"):
             divergence = fingerprint.divergence(read_fingerprint(write))
@@ -247,8 +288,19 @@ def flush_inlined(
             )
         try:
             with timing.phase("checkpoint.flush"):
+
+                def checked_flush() -> int:
+                    if fingerprint.divergence(read_fingerprint(write)) is not None:
+                        raise DivergenceError("catalog identity changed before flush")
+                    if _table_identity(write, table) != table_identity:
+                        raise DivergenceError(
+                            "source UUID/path changed before flush "
+                            "-- nothing was written"
+                        )
+                    return _flush_call(write, table)
+
                 rows_flushed = _retry_on_conflict(
-                    lambda: _flush_call(write, table), f"flush of {table.qualified}"
+                    checked_flush, f"flush of {table.qualified}"
                 )
         except duckdb.Error as exc:
             LOG.debug("flush of %s failed", table.qualified, exc_info=exc)
@@ -262,5 +314,8 @@ def flush_inlined(
             ) from exc
         snapshot_after = _max_snapshot(write)
     finally:
-        write.close()
+        if borrowed:
+            write.reattach(read_only=True)
+        else:
+            write.close()
     return FlushResult(table, rows_flushed, snapshot_before, snapshot_after)

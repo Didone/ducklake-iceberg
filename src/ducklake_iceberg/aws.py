@@ -66,13 +66,15 @@ def session(region: str, profile: str | None) -> boto3.Session:
         return cached
 
 
-def client(service: str, region: str, profile: str | None) -> Any:
+def client(
+    service: str, region: str, profile: str | None, *, endpoint_url: str | None = None
+) -> Any:
     """Boto3 client for ``service`` on the process-wide Session."""
-    key = (service, *_key(region, profile))
+    key = (service, endpoint_url, *_key(region, profile))
     with _LOCK:
         cached = _CLIENTS.get(key)
         if cached is None:
-            cached = session(region, profile).client(service)
+            cached = session(region, profile).client(service, endpoint_url=endpoint_url)
             _CLIENTS[key] = cached
         return cached
 

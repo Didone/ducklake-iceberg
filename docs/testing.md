@@ -243,3 +243,62 @@ PyPI, run `pip check`, `ducklake-iceberg --version` and `sync --help`, and
 verify that the GitHub release has the correct pre-release status/assets.
 Do not treat a successful build as evidence that publishing or installation
 from the index also succeeded.
+
+
+## Fresh-process local sync benchmark
+
+`scripts/bench_sync_e2e.py` runs real CLI processes against real DuckLake/SQLite
+and Parquet, with S3/Glue simulated by a loopback moto server. It needs the
+`moto[server]` development extra. It isolates configuration and AWS endpoint
+variables so inherited development settings cannot select a real catalog or
+AWS endpoint. Fixtures and reader audits run outside the timer.
+
+```bash
+poetry run python scripts/bench_sync_e2e.py --help
+```
+
+Pass absolute `--baseline-exe` / `--candidate-exe`, their revision labels,
+`--output` pointing to a new private directory, and optionally `--scenarios`.
+Defaults: seed 42, five warmups and 100 samples in five blocks, 60-second timeout.
+The parent may use Poetry; measured children invoke the executable directly.
+Use installed revisions with the same pinned dependencies, and keep timed
+commands serial. Existing output directories are never overwritten.
+
+Each attempt gets an independent 100,000-row/eight-file/four-partition fixture.
+N/I/A/F/D/U cover no-op, initial publication, append, inlined flush, delete and
+update. The harness verifies expected exits, exact PyIceberg values, source
+hashes, retained snapshots and no-op object/Glue stability. An installed DuckDB
+Iceberg extension supplies a second reader audit; unavailable support is labeled
+unverified. No extension installation is included in healthy measurements.
+
+Artifacts: `manifest.json`, durable `samples.jsonl`, `summary.json`, `report.md`
+and `validation.json`. All warmups/failures/timeouts remain visible; no outlier
+trimming or automatic sample replacement. Output omits raw CLI payloads and
+credentials. Results distinguish inclusive phases from wall time; the difference
+from envelope duration is `outside_envelope_ms`, not pure startup. HTTP server
+observations and SDK send hooks are separate views of the same requests, not
+counts to add together. Local simulation cannot establish AWS latency/budgets.
+
+The smaller `scripts/bench_sync.py` remains a quick p50/p95 diagnostic utility;
+its repeated command runs do not establish isolated mutation cohorts.
+
+
+For a third comparison arm, pass `--corrected-exe` and `--corrected-revision`
+with the safety-fixed pre-optimization revision. Pair order is randomized across
+all measured revisions. `scripts/bench_sync_validate.py OUTPUT_DIRECTORY`
+rebuilds statistics and checks cohort counts, blocks, fixture equivalence and
+candidate operation budgets from the durable ledger.
+
+Supporting tools run **after** the reference batch, never concurrently:
+
+- `scripts/bench_sync_diagnostics.py`: ten paired candidate control/traced
+  attempts per scenario, sanitized server traces and incremental observer
+  overhead. CLI counters remain enabled in both arms.
+- `scripts/bench_sync_scale.py`: live-file/published-history combinations and
+  optional million-row initial export; `--delta` measures a 1,000-row append
+  instead of no-op. Preparation is untimed; each measured
+  command is fresh. Characterization results remain separate from latency gates.
+- `scripts/bench_sync_install.py`: empty temporary extension directories,
+  installation timing and installed-build validation. Downloads require network
+  access; unavailable installation remains visible instead of substituting
+  preinstalled extensions.

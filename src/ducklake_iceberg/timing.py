@@ -75,7 +75,14 @@ def instrument_session(session: Any) -> None:
         count(f"aws.{model.service_model.service_name}.{model.name}")
         note_api_call()
 
+    def _before_send(event_name: str, **_: Any) -> None:
+        # before-send also runs for HTTP retries. Never retain the request,
+        # headers or URL: they may contain credentials/signatures.
+        service, operation = event_name.split(".")[-2:]
+        count(f"aws.http_attempts.{service}.{operation}")
+
     session.events.register("before-call.*.*", _before_call)
+    session.events.register("before-send.*.*", _before_send)
 
 
 def snapshot() -> dict[str, Any]:
