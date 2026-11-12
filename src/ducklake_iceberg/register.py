@@ -19,6 +19,7 @@ from ducklake_iceberg.handoff import (
     read_pointer,
     table_location,
 )
+from ducklake_iceberg.metadata_io import KnownMetadataFileIO
 from ducklake_iceberg.storage import build_file_io
 from ducklake_iceberg.sync.state import PROP_SNAPSHOT_ID
 
@@ -130,6 +131,17 @@ def run_register(
         dry_run=dry_run,
         data_path=settings.data_path,
         metadata=metadata,
+        file_io=(
+            KnownMetadataFileIO(
+                build_file_io(settings),
+                resolved,
+                metadata.model_dump_json(by_alias=True, exclude_none=True).encode(
+                    "utf-8"
+                ),
+            )
+            if metadata is not None
+            else None
+        ),
     )
 
 

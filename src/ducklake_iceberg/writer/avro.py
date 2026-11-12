@@ -28,7 +28,7 @@ from pyiceberg.types import IcebergType, ListType, MapType, StringType, StructTy
 
 from ducklake_iceberg import timing
 from ducklake_iceberg.concurrency import ContextThreadPoolExecutor, io_workers
-from ducklake_iceberg.obs.metrics import add_call, add_work
+from ducklake_iceberg.obs.metrics import add_file_call, add_work
 
 _FORMAT_VERSIONS: Final[frozenset[int]] = frozenset({1, 2, 3})
 
@@ -191,7 +191,7 @@ def upload_all(io: FileIO, payloads: Sequence[tuple[str, bytes]]) -> None:
                 ]:
                     future.result()
         for _ in payloads:
-            add_call("s3_put")
+            add_file_call(io, "s3_put")
         add_work(
             "s3_put",
             items=len(payloads),

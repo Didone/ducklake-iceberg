@@ -156,7 +156,10 @@ def test_sync_with_inlined_only_flushes(
     code, doc = _sync(config)
     assert code == 0, doc["problems"]
     assert maintenance_calls == ["main.t"]
-    assert False in opened  # the flush write
+    assert opened == [True]  # RW is a temporary attachment on the same root
+    assert timing.counter("ducklake.attach.successes") == 3
+    assert timing.counter("ducklake.reattach.rw") == 1
+    assert timing.counter("ducklake.reattach.ro") == 1
     # the flush changed the snapshot: post-checkpoint revalidation
     assert _steps(doc) == ["doctor", "checkpoint", "doctor", "export", "register"]
     assert timing.counter("inlining.cache_hits") >= 2

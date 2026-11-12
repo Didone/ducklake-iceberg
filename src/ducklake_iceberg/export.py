@@ -31,7 +31,7 @@ import dataclasses
 import hashlib
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
@@ -48,6 +48,7 @@ from ducklake_iceberg.catalog.files import (
     FileSet,
     LiveDataFile,
     LiveDeleteFile,
+    PathLayers,
     compose_path,
 )
 from ducklake_iceberg.catalog.reader import qualified_table_name
@@ -90,7 +91,7 @@ from ducklake_iceberg.mapping.partition import (
     build_partition_record,
     with_published_names,
 )
-from ducklake_iceberg.obs.metrics import add_call, add_work
+from ducklake_iceberg.obs.metrics import add_call, add_file_call, add_work
 from ducklake_iceberg.storage import build_file_io
 from ducklake_iceberg.sync.state import (
     PROP_DATA_PATH,
@@ -107,9 +108,7 @@ from ducklake_iceberg.sync.state import (
     validate_identity,
 )
 from ducklake_iceberg.writer.catalog_stats import (
-    ColumnStats,
     build_data_file_from_catalog,
-    read_file_column_stats,
 )
 from ducklake_iceberg.writer.commit import (
     BaseSnapshot,
@@ -619,29 +618,50 @@ def _unchanged_plan(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class ExportSeed:
+    """Remote export state fetched before opening a consistent source view."""
+
+    io: FileIO
+    location: str
+    pointer: ExportPointer | None
+
+
+def read_export_seed(settings: DuckLakeIcebergSettings, table_name: str) -> ExportSeed:
+    io = build_file_io(settings)
+    location = table_location(
+        settings.iceberg_metadata_prefix, settings.glue_database, table_name
+    )
+    with timing.phase("export.base"):
+        return ExportSeed(io, location, _read_base_pointer(io, location))
+
+
 def _prepare(
     settings: DuckLakeIcebergSettings,
     schema_name: str,
     table_name: str,
     con: DuckLakeConnection | None = None,
+    *,
+    seed: ExportSeed | None = None,
+    finish_read: Callable[[], None] | None = None,
 ) -> _Prepared | _Unchanged:
-    io = build_file_io(settings)
-    location = table_location(
-        settings.iceberg_metadata_prefix, settings.glue_database, table_name
-    )
+    seed = seed or read_export_seed(settings, table_name)
+    io, location, pointer = seed.io, seed.location, seed.pointer
     ref = qualified_table_name(schema_name, table_name)
-    with timing.phase("export.base"):
-        pointer = _read_base_pointer(io, location)
 
     def read_view(previous: int | None) -> CatalogView:
         with (
             timing.phase("export.catalog"),
             metadata_catalog(settings, con) as ro,
-            ro.read_transaction(),
+            ro.borrow_read_transaction(),
         ):
-            return read_catalog(ro, ref, previous)
+            return read_catalog(
+                ro, ref, previous, include_stats=settings.stats_source == "catalog"
+            )
 
     view = read_view(pointer.ducklake_snapshot_id if pointer is not None else None)
+    if finish_read is not None:
+        finish_read()
     _check_source_locations(settings, view)
     # work counters once per export, even if the view is re-read
     add_work("resolve", items=1)
@@ -747,7 +767,13 @@ def _prepare(
 def _check_source_locations(
     settings: DuckLakeIcebergSettings, view: CatalogView
 ) -> None:
-    layers = view.files.layers
+    check_source_locations(settings, view.files.layers)
+
+
+def check_source_locations(
+    settings: DuckLakeIcebergSettings, layers: PathLayers
+) -> None:
+    """Validate real source paths before the only permitted source write."""
     for source in (layers.data_path, compose_path(layers, "", True)):
         if _overlaps(source, settings.iceberg_metadata_prefix):
             raise ConfigError(
@@ -764,6 +790,8 @@ def run_export(
     dry_run: bool = False,
     con: DuckLakeConnection | None = None,
     max_footer_workers: int | None = None,
+    seed: ExportSeed | None = None,
+    finish_read: Callable[[], None] | None = None,
 ) -> ExportResult:
     """Full pipeline; ``dry_run`` stops before the first write.
 
@@ -778,6 +806,8 @@ def run_export(
             ro,
             dry_run=dry_run,
             max_footer_workers=max_footer_workers or settings.max_footer_workers,
+            seed=seed,
+            finish_read=finish_read,
         )
 
 
@@ -789,8 +819,12 @@ def _run_export(
     *,
     dry_run: bool,
     max_footer_workers: int = 8,
+    seed: ExportSeed | None = None,
+    finish_read: Callable[[], None] | None = None,
 ) -> ExportResult:
-    prep = _prepare(settings, schema_name, table_name, con)
+    prep = _prepare(
+        settings, schema_name, table_name, con, seed=seed, finish_read=finish_read
+    )
     plan = prep.plan
     warnings = _partition_warnings(prep.view)
 
@@ -967,14 +1001,7 @@ def _build_added_data_files(
                 ),
             )
         )
-    stats: dict[int, dict[int, ColumnStats]] = {}
-    if settings.stats_source == "catalog" and by_spec:
-        with metadata_catalog(settings, con) as ro, ro.read_transaction():
-            stats = read_file_column_stats(
-                ro,
-                prep.view.identity.table_id,
-                (f.data_file_id for items in by_spec.values() for f, _ in items),
-            )
+    stats = prep.view.file_column_stats if settings.stats_source == "catalog" else {}
     out: list[tuple[int, DataFile]] = []
     for spec_id, items in sorted(by_spec.items()):
         spec = prep.view.spec_mapping.specs[spec_id]
@@ -1059,7 +1086,7 @@ def _convert_added_deletes(
             out.append((spec_id, data_file))
     # one PutObject per delete file written
     for _ in out:
-        add_call("deletes")
+        add_file_call(prep.io, "deletes")
     add_work(
         "deletes",
         items=len(out),

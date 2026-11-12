@@ -362,3 +362,9 @@ __all__ = [
     "exit_phase",
     "note_api_call",
 ]
+
+
+def add_file_call(io: object, phase: Phase) -> None:
+    """Estimate native output calls only when SDK hooks do not observe them."""
+    if not getattr(io, "tracks_sdk_calls", False):
+        add_call(phase)

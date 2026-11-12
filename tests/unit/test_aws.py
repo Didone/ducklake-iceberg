@@ -152,3 +152,54 @@ def test_s3_endpoint_reaches_the_file_io_and_the_glue_catalog() -> None:
 def test_no_endpoint_keeps_the_aws_default() -> None:
     props = dict(build_file_io(_settings("ducklake_iceberg_test")).properties)
     assert "s3.endpoint" not in props
+
+
+def test_file_io_cache_follows_credential_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Refresh the same provider/client without keeping stale native credentials."""
+    from datetime import UTC, datetime, timedelta
+
+    import boto3
+    from botocore.credentials import RefreshableCredentials
+    from botocore.session import Session as BotocoreSession
+    from moto import mock_aws
+
+    from ducklake_iceberg import aws, storage
+
+    refreshes: list[int] = []
+
+    def replacement() -> dict[str, str]:
+        refreshes.append(1)
+        return {
+            "access_key": "local-refreshed",
+            "secret_key": "local-secret-two",
+            "token": "local-token-two",
+            "expiry_time": (datetime.now(UTC) + timedelta(hours=2)).isoformat(),
+        }
+
+    credentials = RefreshableCredentials.create_from_metadata(
+        metadata={
+            "access_key": "local-original",
+            "secret_key": "local-secret-one",
+            "token": "local-token-one",
+            "expiry_time": (datetime.now(UTC) + timedelta(hours=2)).isoformat(),
+        },
+        refresh_using=replacement,
+        method="local-test-provider",
+    )
+    backend = BotocoreSession()
+    backend._credentials = credentials
+    session = boto3.Session(botocore_session=backend, region_name="us-east-1")
+    monkeypatch.setattr(aws, "session", lambda region, profile: session)
+    with mock_aws():
+        settings = _settings(None)
+        first = storage.build_file_io(settings)
+        assert first.properties["s3.access-key-id"] == "local-original"
+        credentials._expiry_time = datetime.now(UTC) - timedelta(seconds=1)
+        second = storage.build_file_io(settings)
+        assert first is not second
+        assert second is storage.build_file_io(settings)
+        assert second.properties["s3.access-key-id"] == "local-refreshed"
+        assert refreshes == [1]
+        assert credentials.method == "local-test-provider"

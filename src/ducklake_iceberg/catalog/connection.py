@@ -13,7 +13,7 @@ import pyarrow as pa
 
 from ducklake_iceberg import timing
 from ducklake_iceberg.aws import s3_credential_properties
-from ducklake_iceberg.catalog.query import Params, query_arrow
+from ducklake_iceberg.catalog.query import Params, cache_reads, query_arrow
 from ducklake_iceberg.config import DuckLakeIcebergSettings
 from ducklake_iceberg.errors import AwsError, CatalogError, ProfileNotFoundError
 
@@ -122,6 +122,7 @@ class DuckLakeConnection:
         self._backend = _backend_of(settings.catalog_dsn)
         self._con: duckdb.DuckDBPyConnection | None = None
         self._in_transaction = False
+        self._loaded_extensions: set[str] = set()
         #: SQL of the last ATTACH issued; exposed for contract tests.
         self._last_attach_sql: str | None = None
 
@@ -152,9 +153,11 @@ class DuckLakeConnection:
 
     def open(self) -> Self:
         timing.count("duckdb.connect")
+        timing.count("duckdb.open.ro" if self._read_only else "duckdb.open.rw")
         with timing.phase("catalog_open"):
             with timing.phase("catalog.connect"):
                 self._con = duckdb.connect(":memory:", config=self._connect_config())
+                timing.count("duckdb.connect.successes")
             if self._settings.duckdb_threads is not None:
                 self.execute(f"SET threads = {self._settings.duckdb_threads}")
             if self._settings.duckdb_memory_limit is not None:
@@ -172,6 +175,34 @@ class DuckLakeConnection:
             with timing.phase("catalog.probe"):
                 self._probe_metadata_catalog()
         return self
+
+    def reattach(self, *, read_only: bool) -> None:
+        """Change attachment mode outside a transaction, preserving the root.
+
+        READ_ONLY is an attachment property, not a transaction switch. A fresh
+        attachment and postgres cache reset are required after a source write.
+        Any failed transition closes the root instead of lending a stale view.
+        """
+        if self._in_transaction:
+            raise CatalogError("cannot reattach inside a transaction")
+        try:
+            self.execute(f"DETACH {self.alias}")
+            self._read_only = read_only
+            if not read_only and not self._s3:
+                self._s3 = True
+                self._load_extensions()
+                self._create_s3_secret()
+            if self._backend == "postgres":
+                self.execute("CALL postgres_clear_cache()")
+            with timing.phase("catalog.attach"):
+                self._attach()
+            self._probe_metadata_catalog()
+            timing.count(
+                "ducklake.reattach.ro" if read_only else "ducklake.reattach.rw"
+            )
+        except BaseException:
+            self.close()
+            raise
 
     def _connect_config(self) -> dict[str, Any]:
         """Config for ``duckdb.connect``; includes the extension directory.
@@ -202,6 +233,8 @@ class DuckLakeConnection:
             with timing.phase("catalog.close"):
                 self._con.close()
             self._con = None
+            self._loaded_extensions.clear()
+            self._in_transaction = False
 
     def __enter__(self) -> Self:
         if self._con is None:
@@ -249,6 +282,7 @@ class DuckLakeConnection:
         """BEGIN/COMMIT; ROLLBACK on exception. Not reentrant."""
         if self._in_transaction:
             raise CatalogError("transaction() is not reentrant")
+        timing.count("catalog.transactions")
         self.execute("BEGIN TRANSACTION")
         self._in_transaction = True
         try:
@@ -262,9 +296,18 @@ class DuckLakeConnection:
             self._in_transaction = False
 
     @contextmanager
+    def borrow_read_transaction(self) -> Iterator[Self]:
+        """Borrow the pipeline's read view, or own a standalone transaction."""
+        if self._in_transaction:
+            yield self
+        else:
+            with self.read_transaction():
+                yield self
+
+    @contextmanager
     def read_transaction(self) -> Iterator[Self]:
         """Consistent read transaction; not reentrant."""
-        with self.transaction():
+        with self.transaction(), cache_reads(self.raw):
             yield self
 
     # -- opening steps -------------------------------------------------
@@ -278,6 +321,9 @@ class DuckLakeConnection:
 
     def _load_extensions(self) -> None:
         for name in self._required_extensions():
+            if name in self._loaded_extensions:
+                continue
+            timing.count(f"duckdb.extension.{name}.load")
             try:
                 try:
                     with timing.phase(f"catalog.extension.{name}.load"):
@@ -304,6 +350,7 @@ class DuckLakeConnection:
                         "pre-installed"
                     ),
                 ) from exc
+            self._loaded_extensions.add(name)
         loaded = self.environment().extensions
         missing = [
             EXTENSIONS[n]
@@ -406,39 +453,36 @@ class DuckLakeConnection:
             f"AS {self.alias} ({', '.join(opts)})"
         )
         self._last_attach_sql = sql
+        timing.count("ducklake.attach.attempts")
         self.execute(sql)
+        timing.count("ducklake.attach.successes")
 
     # -- diagnostics --------------------------------------------------------
 
     def environment(self) -> Environment:
-        con = self._require_con()
-        version_rows = con.execute("SELECT version()").fetchall()
-        version = str(version_rows[0][0])
-
-        registered = tuple(EXTENSIONS[n] for n in EXTENSIONS)
-        placeholders = ", ".join("?" for _ in registered)
-        ext_rows = con.execute(
-            "SELECT extension_name, loaded FROM duckdb_extensions() "
-            f"WHERE extension_name IN ({placeholders})",
-            list(registered),
-        ).fetchall()
-        extensions = {str(name): bool(loaded) for name, loaded in ext_rows}
-
-        db_rows = con.execute(
-            "SELECT database_name FROM duckdb_databases() ORDER BY database_name"
-        ).fetchall()
-        attached = tuple(str(r[0]) for r in db_rows)
-
-        secret_rows = con.execute(
-            "SELECT name FROM duckdb_secrets() ORDER BY name"
-        ).fetchall()
-        secrets = tuple(str(r[0]) for r in secret_rows)
-
+        timing.count("catalog.diagnostic_queries")
+        timing.count("catalog.queries")
+        result = self.raw.execute(
+            "SELECT version() AS version, "
+            "(SELECT list(struct_pack(name := extension_name, loaded := loaded)) "
+            " FROM duckdb_extensions() WHERE extension_name IN "
+            " (SELECT unnest($extensions::VARCHAR[]))) AS extensions, "
+            "(SELECT list(database_name ORDER BY database_name) "
+            " FROM duckdb_databases()) AS attached, "
+            "(SELECT list(name ORDER BY name) FROM duckdb_secrets()) AS secrets",
+            {"extensions": list(EXTENSIONS.values())},
+        ).fetchall()[0]
+        row = dict(
+            zip(("version", "extensions", "attached", "secrets"), result, strict=True)
+        )
         return Environment(
-            duckdb_version=version,
-            extensions=extensions,
-            attached=attached,
-            secrets=secrets,
+            duckdb_version=str(row["version"]),
+            extensions={
+                str(item["name"]): bool(item["loaded"])
+                for item in row["extensions"] or []
+            },
+            attached=tuple(row["attached"] or []),
+            secrets=tuple(row["secrets"] or []),
             read_only=self._read_only,
         )
 
@@ -447,7 +491,12 @@ def open_catalog(
     settings: DuckLakeIcebergSettings, *, read_only: bool = True, s3: bool = True
 ) -> DuckLakeConnection:
     """Factory used by the CLI; equivalent to `DuckLakeConnection(...).open()`."""
-    return DuckLakeConnection(settings, read_only=read_only, s3=s3).open()
+    connection = DuckLakeConnection(settings, read_only=read_only, s3=s3)
+    try:
+        return connection.open()
+    except BaseException:
+        connection.close()
+        raise
 
 
 @contextmanager

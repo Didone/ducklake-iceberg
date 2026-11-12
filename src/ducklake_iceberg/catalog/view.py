@@ -57,6 +57,7 @@ from ducklake_iceberg.mapping.schema import (
     read_columns,
     read_last_column_id,
 )
+from ducklake_iceberg.writer.catalog_stats import ColumnStats, read_file_column_stats
 from ducklake_iceberg.writer.stats import file_field_ids
 
 if TYPE_CHECKING:
@@ -90,13 +91,30 @@ class CatalogView:
     #: the absence of a token prove the table did not change
     table_changes_complete: bool = False
     historical_schemas: tuple[Schema, ...] = ()
+    file_column_stats: Mapping[int, Mapping[int, ColumnStats]] = dataclasses.field(
+        default_factory=dict
+    )
 
 
 def read_catalog(
-    con: DuckLakeConnection, ref_text: str, previous_snapshot: int | None
+    con: DuckLakeConnection,
+    ref_text: str,
+    previous_snapshot: int | None,
+    *,
+    include_stats: bool = False,
 ) -> CatalogView:
     with cache_inlined_reads(con.raw):
-        return _read_catalog(con, ref_text, previous_snapshot)
+        view = _read_catalog(con, ref_text, previous_snapshot)
+        if include_stats:
+            view = dataclasses.replace(
+                view,
+                file_column_stats=read_file_column_stats(
+                    con,
+                    view.identity.table_id,
+                    (f.data_file_id for f in view.files.files),
+                ),
+            )
+        return view
 
 
 def _read_catalog(

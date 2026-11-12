@@ -60,7 +60,7 @@ from pyiceberg.table.sorting import UNSORTED_SORT_ORDER
 from pyiceberg.utils.config import Config
 
 from ducklake_iceberg import __version__, timing
-from ducklake_iceberg.obs.metrics import add_call, add_work
+from ducklake_iceberg.obs.metrics import add_file_call, add_work
 from ducklake_iceberg.sync.state import (
     MANAGED_PREFIXES,
     PROP_SCHEMA_VERSION,
@@ -506,7 +506,7 @@ def write_metadata_json(io: FileIO, metadata: TableMetadata, path: str) -> None:
                 out.write(payload)
         except FileExistsError as exc:
             raise MetadataError(f"{path} already exists") from exc
-        add_call("s3_put")
+        add_file_call(io, "s3_put")
         add_work("s3_put", items=1, byte_count=len(payload))
 
 

@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Final
 from uuid import UUID
 
+from ducklake_iceberg.catalog.query import snapshot_rows
 from ducklake_iceberg.errors import CatalogError, ConfigError, IdentityError
 
 if TYPE_CHECKING:
@@ -167,12 +168,7 @@ def _split_identifier(ref: str) -> list[str]:
 
 def current_snapshot(con: DuckLakeConnection) -> Snapshot:
     """Highest snapshot_id in the catalog. IdentityError if there is none."""
-    meta = _meta(con)
-    table = con.query_arrow(
-        f"SELECT {_SNAPSHOT_COLUMNS} "
-        f"FROM {meta}.ducklake_snapshot "
-        "ORDER BY snapshot_id DESC LIMIT 1"
-    )
+    table = snapshot_rows(con.raw, con.meta)
     rows = _rows(table)
     if not rows:
         raise IdentityError(

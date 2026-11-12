@@ -163,6 +163,10 @@ _READ_CACHE: ContextVar[_ReadCache | None] = ContextVar(
 @contextmanager
 def cache_inlined_reads(con: duckdb.DuckDBPyConnection) -> Iterator[None]:
     """Reuse detection only within the caller's consistent read transaction."""
+    existing = _READ_CACHE.get()
+    if existing is not None and existing.con is con:
+        yield
+        return
     token = _READ_CACHE.set(_ReadCache(con))
     try:
         yield
@@ -489,6 +493,8 @@ def clean_snapshot(
     row older than the flush, temporal columns missing), returns
     ``snapshot_id``: the caller's inlined guard blocks as before.
     """
+    if not detect_inlined(con, meta, table, snapshot_id).has_pending:
+        return snapshot_id
     floor = _last_flush(con, meta, table.table_id, snapshot_id)
     if floor is None:
         return snapshot_id

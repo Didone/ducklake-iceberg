@@ -8,7 +8,12 @@ from typing import TYPE_CHECKING
 from pyiceberg.io import AWS_PROFILE_NAME, AWS_REGION, load_file_io
 
 from ducklake_iceberg import timing
-from ducklake_iceberg.aws import s3_credential_properties, s3_endpoint_properties
+from ducklake_iceberg.aws import (
+    client,
+    s3_credential_properties,
+    s3_endpoint_properties,
+)
+from ducklake_iceberg.metadata_io import MetadataFileIO
 
 if TYPE_CHECKING:
     from pyiceberg.io import FileIO
@@ -23,13 +28,30 @@ def build_file_io(settings: DuckLakeIcebergSettings) -> FileIO:
         props[AWS_PROFILE_NAME] = settings.aws_profile
     props.update(s3_credential_properties(settings.aws_region, settings.aws_profile))
     props.update(s3_endpoint_properties(settings.s3_endpoint))
-    return _file_io(tuple(sorted(props.items())))
+    return _file_io(
+        tuple(sorted(props.items())),
+        settings.iceberg_metadata_prefix,
+        settings.aws_region,
+        settings.aws_profile,
+        settings.s3_endpoint,
+    )
 
 
 @functools.lru_cache(maxsize=8)
-def _file_io(props: tuple[tuple[str, str], ...]) -> FileIO:
+def _file_io(
+    props: tuple[tuple[str, str], ...],
+    prefix: str,
+    region: str,
+    profile: str | None,
+    endpoint: str | None,
+) -> FileIO:
     timing.count("fileio")
-    return load_file_io(properties=dict(props))
+    delegate = load_file_io(properties=dict(props))
+    if prefix.startswith("s3://"):
+        return MetadataFileIO(
+            delegate, client("s3", region, profile, endpoint_url=endpoint), prefix
+        )
+    return delegate
 
 
 def clear_file_io_cache() -> None:
