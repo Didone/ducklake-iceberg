@@ -70,7 +70,7 @@ pytest = "^9.1.1"
 pytest-cov = "^7.1.0"
 ruff = "^0.17.2"
 mypy = "^2.4.0"
-moto = { version = "^5.2.4", extras = ["glue", "s3"] }
+moto = {version = "^5.2.4", extras = ["glue", "s3", "server"]}
 testcontainers = { version = "^4.15.0", extras = ["postgres"] }
 types-pyyaml = "^6.0.12"
 jsonschema = "^4.23.0"
@@ -132,6 +132,9 @@ ignore = ["S101"]  # assert is legitimate in tests
 # metadata catalog alias, schema/table names read from the DuckLake catalog and
 # fixed maintenance function names). User-provided values always travel as
 # named parameters.
+# Benchmark identifiers are generated UUIDs; numeric fixture bounds are internal.
+"scripts/bench_sync_e2e.py" = ["S608"]
+"scripts/bench_sync_scale.py" = ["S608"]
 "src/ducklake_iceberg/catalog/reader.py" = ["S608"]
 "src/ducklake_iceberg/catalog/files.py" = ["S608"]
 "src/ducklake_iceberg/checkpoint/flush.py" = ["S608"]
