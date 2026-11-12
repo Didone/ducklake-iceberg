@@ -16,9 +16,18 @@ from typing import Any
 #: Applied in order; each one replaces the secret with ``***``.
 SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # the ``\w*`` prefix catches ``aws_secret_access_key=``, ``aws_session_token=``
-    (re.compile(r"(?i)\b(\w*(?:password|passwd)|pwd)\s*=\s*\S+"), r"\1=***"),
     (
-        re.compile(r"(?i)\b(\w*(?:secret|token|credential)\w*)\s*=\s*\S+"),
+        re.compile(
+            r"(?i)\b(\w*(?:password|passwd)|pwd)\s*=\s*"
+            r"(?:'(?:\\.|[^'\\])*(?:'|$)|\"(?:\\.|[^\"\\])*(?:\"|$)|\S+)"
+        ),
+        r"\1=***",
+    ),
+    (
+        re.compile(
+            r"(?i)\b(\w*(?:secret|token|credential)\w*)\s*=\s*"
+            r"(?:'(?:\\.|[^'\\])*(?:'|$)|\"(?:\\.|[^\"\\])*(?:\"|$)|\S+)"
+        ),
         r"\1=***",
     ),
     (re.compile(r"(?i)://[^/\s:@]+:[^/\s@]+@"), "://***:***@"),

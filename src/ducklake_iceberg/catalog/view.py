@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Final
 
+from pyiceberg.schema import Schema
+
 from ducklake_iceberg import timing
 from ducklake_iceberg.catalog.files import (
     FileSet,
@@ -87,6 +89,7 @@ class CatalogView:
     #: the window has all snapshots (none expired in between): only then does
     #: the absence of a token prove the table did not change
     table_changes_complete: bool = False
+    historical_schemas: tuple[Schema, ...] = ()
 
 
 def read_catalog(
@@ -157,10 +160,26 @@ def _read_catalog(
         schema_id=identity.schema_version,
         last_column_id=read_last_column_id(con.raw, con.meta, identity.table_id),
     )
+    partition_infos = read_partition_specs(con.raw, con.meta, identity.table_id)
+    historical: list[Schema] = []
+    for info in partition_infos:
+        if all(c.column_id in schema_mapping.schema.field_ids for c in info.columns):
+            continue
+        old_columns = read_columns(
+            con.raw, con.meta, identity.table_id, info.begin_snapshot
+        )
+        historical.append(
+            build_iceberg_schema(
+                old_columns,
+                schema_id=identity.schema_version + len(historical) + 1,
+                last_column_id=schema_mapping.last_column_id,
+            ).schema
+        )
     spec_mapping = build_spec_mapping(
-        read_partition_specs(con.raw, con.meta, identity.table_id),
+        partition_infos,
         schema_mapping.schema,
         snapshot_id=snapshot.snapshot_id,
+        historical_schemas=historical,
     )
     values_by_file = read_partition_values(con.raw, con.meta, identity.table_id)
     defaults_added_at = _defaults_added_at(
@@ -185,6 +204,7 @@ def _read_catalog(
         defaults_added_at=defaults_added_at,
         table_changes_since=previous_snapshot,
         table_changes_complete=complete,
+        historical_schemas=tuple(historical),
     )
 
 

@@ -567,3 +567,28 @@ def test_envelope_redacts_fields_and_validates_schema() -> None:
     assert "do-not-export" not in serialized
     assert "db.local" not in serialized
     assert "data_file_encryption_key" not in serialized
+
+
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        "password = 'fake secret with spaces'",
+        'password = "fake secret with spaces"',
+        r"password = 'fake\' secret with spaces'",
+        "aws_session_token = 'fake secret with spaces'",
+        "password = 'fake secret with spaces",
+    ],
+)
+def test_quoted_secrets_are_fully_redacted_at_output_boundaries(
+    assignment: str,
+) -> None:
+    envelope = Envelope(command="sync", dry_run=True)
+    envelope.problems.append(Problem(code="error", message=assignment))
+    assert "with spaces" not in envelope.to_json()
+    stream = StringIO()
+    configure_logging("DEBUG", fmt="json", stream=stream)
+    logging.getLogger("ducklake_iceberg").error("failed: %s", assignment)
+    assert "with spaces" not in stream.getvalue()
+    assert "password=***" in redaction.scrub(
+        assignment
+    ) or "token=***" in redaction.scrub(assignment)

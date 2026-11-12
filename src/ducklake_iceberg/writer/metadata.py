@@ -403,8 +403,9 @@ def _expire(
     Same semantics as Iceberg's ``expire_snapshots`` with
     ``min-snapshots-to-keep = 1``: the current snapshot is always kept, and
     the ``parent-snapshot-id`` of the oldest retained one may cite a snapshot
-    that no longer exists. The ``metadata-log`` loses the old versions except
-    the last one (this commit's base), which the next ``export`` checks.
+    that no longer exists. The metadata log is retained independently: Glue
+    may still point at an older version after a failed publication, and its
+    ancestry must remain provable on a later retry.
     Files that become unreachable are left to ``clean``; nothing is deleted
     here.
     """
@@ -417,11 +418,7 @@ def _expire(
     return (
         kept,
         [e for e in snapshot_log if e.snapshot_id in kept_ids],
-        [
-            e
-            for i, e in enumerate(metadata_log)
-            if e.timestamp_ms >= cutoff_ms or i == len(metadata_log) - 1
-        ],
+        list(metadata_log),
     )
 
 

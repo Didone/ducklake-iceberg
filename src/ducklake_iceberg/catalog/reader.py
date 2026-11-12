@@ -40,7 +40,18 @@ class TableRef:
     table_name: str
 
     def __str__(self) -> str:
-        return f"{self.schema_name}.{self.table_name}"
+        return qualified_table_name(self.schema_name, self.table_name)
+
+
+def qualified_table_name(schema_name: str, table_name: str) -> str:
+    """Serialize a table reference without losing quoted identifier boundaries."""
+
+    def component(value: str) -> str:
+        if value and all(c.isalnum() or c == "_" for c in value):
+            return value
+        return '"' + value.replace('"', '""') + '"'
+
+    return f"{component(schema_name)}.{component(table_name)}"
 
 
 @dataclass(frozen=True, slots=True)

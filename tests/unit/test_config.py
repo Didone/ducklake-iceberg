@@ -364,3 +364,21 @@ def test_s3_endpoint_rejects_invalid_values(tmp_path: Path, value: str) -> None:
     data = {**_BASE, "s3_endpoint": value}
     with pytest.raises(ConfigError, match="s3_endpoint"):
         load_settings(config_file=_write_yaml(tmp_path, data))
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "ducklake:postgres:dbname=lake password = 'fake secret with spaces'",
+        "ducklake:postgres:dbname=lake user\t= someone",
+        "ducklake:postgres:dbname=lake pwd = fake",
+        "ducklake:postgres:postgresql://someone:fake@localhost/lake",
+    ],
+)
+def test_dsn_credentials_cannot_bypass_validation_with_whitespace(
+    tmp_path: Path,
+    dsn: str,
+) -> None:
+    path = _write_yaml(tmp_path, _BASE | {"catalog_dsn": dsn})
+    with pytest.raises(ConfigError, match="credentials in the DSN"):
+        load_settings(config_file=path)
