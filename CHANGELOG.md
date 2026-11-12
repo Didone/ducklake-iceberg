@@ -20,6 +20,23 @@ example: "envelope v1: optional key `timings`".
 
 ## [Unreleased]
 
+### Added
+
+- A fresh-process local benchmark harness with isolated fixtures, exact reader
+  audits, durable samples, mean/p50/p95 comparisons and loopback HTTP counts.
+- Envelope v1: optional timing counters for attachment modes, transaction read
+  reuse, batched reads and SDK HTTP attempts, separate from logical API calls.
+
+### Changed
+
+- Reuse one DuckDB root during sync, including flush through read-only/write/
+  read-only attachments; freshly validate the source after each write.
+- Use single GETs for metadata reads and conditional single PUTs for small
+  generated objects; large outputs use bounded multipart uploads. Source
+  Parquet reads keep native ranged I/O.
+- Share a consistent read transaction across preflight and export, materialize
+  file statistics with enumeration and batch independent compatibility reads.
+
 ### Fixed
 
 - Validate the source UUID and data path before the unchanged-export shortcut;

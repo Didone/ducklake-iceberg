@@ -328,3 +328,37 @@ separation, sequence inheritance, summary/live-set reconstruction, explicit
 divergence and secret redaction. Tests named in the
 [class reference](implementation.md) and [testing guide](testing.md) make
 these contracts executable.
+
+
+## Sync read views and flush lifecycle
+
+Sync fetches the export handoff before its source read transaction. Doctor,
+inline detection, validated enumeration and catalog statistics share that view;
+equivalent reads are cached only inside the transaction. The export materializes
+statistics before ending the view, so remote manifest/footer work and Glue
+publication hold no source read transaction. Recovery requiring a different
+checkpoint opens and validates a fresh view.
+
+Without pending inlined work, sync uses one read-only DuckDB root/attachment.
+Flush ends the old read transaction, reattaches the same root for writing,
+validates source UUID/paths and catalog fingerprint, and runs only the scoped
+flush call. It reattaches read-only afterward and revalidates a new transaction.
+This uses one root and three attachments; READ_ONLY is an attachment property.
+Extension loads are reused, while attachment/backend state is refreshed.
+The local table lock spans publication but is not a distributed transaction.
+
+Independent doctor SELECTs may be materialized together without changing their
+Arrow types or per-rule findings. A failed batch falls back to individual reads
+so the existing rule error classifications remain visible. No shared DuckDB
+connection is sent to worker threads.
+
+
+Metadata FileIO routes JSON/Avro reads under the configured metadata prefix to
+one SDK GET, without an implicit HEAD. Generated outputs up to 8 MiB use one
+conditional PUT (`If-None-Match: *` for immutable artifacts); only the handoff
+permits overwrite. Larger outputs spool to disk and commit bounded, sequential
+multipart uploads with the same immutable commit condition. Failed writers do
+not commit their buffered contents. SDK clients share the existing credential
+session and retain refresh support. Source Parquet inputs continue through the
+native ranged reader; the adapter cannot write/delete outside its metadata
+prefix. This avoids whole-source-body reads to optimize metadata traffic.
