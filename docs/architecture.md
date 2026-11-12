@@ -304,17 +304,20 @@ Registration never lists `metadata/` and picks the largest filename.
 ## Failure and concurrency boundaries
 
 There is no cross-system transaction. Partial exports can leave unreferenced
-immutable artifacts. A missing pointer after a completed next metadata file
-is recovered only when successor ancestry is proven; arbitrary files are
-not adopted. A completed export with failed registration is retried by a
-subsequent normal sync.
+immutable artifacts. Without a handoff, a completed `v1.metadata.json` is
+recovered only after its provenance, source identity and manifests validate.
+Later successors require proven ancestry. A normal recovery repairs the
+handoff even without new source changes; dry-run does not write it. Arbitrary
+files are not adopted. A completed export with failed registration is retried
+by a subsequent normal sync.
 
 Local locks do not protect two ECS tasks/hosts. Glue CAS protects the catalog
 pointer update, not simultaneous writes to a shared export prefix. Operate
 one writer/schedule per destination table.
 
-Snapshot retention prunes metadata history, not objects; source cleanup is
-external. Removing a data file still referenced by an Iceberg snapshot breaks
+Snapshot retention prunes snapshot history, not objects. The metadata log is
+retained so Glue publication can prove ancestry after an extended failure.
+Source cleanup is external. Removing a data file still referenced by an Iceberg snapshot breaks
 that snapshot. There is no `clean` CLI to repair this.
 
 ## Maintainer invariants

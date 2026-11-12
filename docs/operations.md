@@ -102,8 +102,11 @@ not assume the source was unchanged just because later export failed.
 
 Some immutable outputs may exist but remain unreferenced. Never list
 `metadata/` and manually publish the numerically largest JSON file.
-The exporter can adopt a completed successor only after proving ancestry
-and source coherence; otherwise it stops.
+The exporter can recover a completed first `v1.metadata.json` after checking
+its provenance, source identity and manifests. A later successor additionally
+requires proven ancestry. A normal retry repairs the handoff even when there
+are no new rows; a dry-run never writes the repair. Inconsistent artifacts
+stop recovery.
 
 Preserve the error, pointer and metadata locations. Retry the normal command
 after addressing transient I/O/credentials. If it detects an inconsistent

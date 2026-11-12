@@ -145,7 +145,11 @@ class DuckLakeIcebergSettings(BaseSettings):
         if not value.startswith("ducklake:"):
             raise ValueError("DSN must start with 'ducklake:'")
         lowered = value.lower()
-        if any(token in lowered for token in _CREDENTIAL_TOKENS):
+        if (
+            any(token in lowered for token in _CREDENTIAL_TOKENS)
+            or re.search(r"\b(?:password|passwd|pwd|user)\s*=", lowered)
+            or re.search(r"://[^/\s@]+@", value)
+        ):
             raise ValueError("credentials in the DSN; use CREATE SECRET")
         return value
 

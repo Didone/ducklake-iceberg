@@ -266,6 +266,7 @@ def build_spec_mapping(
     *,
     snapshot_id: int,
     partial_degrade: bool = False,
+    historical_schemas: Sequence[Schema] = (),
 ) -> SpecMapping:
     """Pure. Allocates spec-ids and field IDs; does not access the database."""
     field_ids = _allocate_field_ids(infos)
@@ -286,9 +287,14 @@ def build_spec_mapping(
     degraded: list[Finding] = []
 
     for info in infos:
+        sources = {c.column_id for c in info.columns}
+        available = next(
+            (s for s in (schema, *historical_schemas) if sources <= s.field_ids),
+            schema,
+        )
         spec, findings = _build_one_spec(
             info,
-            schema_field_ids,
+            set(available.field_ids),
             field_ids,
             partial_degrade=partial_degrade,
             column_names=column_names,

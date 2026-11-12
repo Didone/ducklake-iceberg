@@ -434,7 +434,7 @@ def _aged(meta: TableMetadataV2, hours: float) -> TableMetadataV2:
     )
 
 
-def test_retention_expires_old_history_and_keeps_base_entry() -> None:
+def test_retention_expires_snapshots_but_keeps_publication_ancestry() -> None:
     old = _aged(_next(_meta(SCHEMA), 2), hours=48)  # snapshots 1 and 2, 48 h ago
     nxt = _next(old, 3, retention_ms=24 * 3_600_000)
     assert [s.snapshot_id for s in nxt.snapshots] == [3]
@@ -443,9 +443,10 @@ def test_retention_expires_old_history_and_keeps_base_entry() -> None:
     assert (
         nxt.snapshots[0].parent_snapshot_id == 2
     )  # cites the expired one, as in Iceberg
-    # the old log is dropped, but this commit's base stays (the next export checks it)
+    # A failed Glue update can leave the published pointer several versions behind.
     assert [e.metadata_file for e in nxt.metadata_log] == [
-        "s3://b/t/metadata/v3.metadata.json"
+        "s3://b/t/metadata/v2.metadata.json",
+        "s3://b/t/metadata/v3.metadata.json",
     ]
 
 

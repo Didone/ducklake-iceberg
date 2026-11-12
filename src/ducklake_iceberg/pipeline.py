@@ -17,6 +17,7 @@ from ducklake_iceberg.catalog.connection import metadata_catalog, open_catalog
 from ducklake_iceberg.catalog.reader import (
     current_snapshot,
     parse_table_ref,
+    qualified_table_name,
     resolve_table,
     snapshot_at,
 )
@@ -305,7 +306,7 @@ def _sync_steps(
     dry_run: bool,
     envelope: Envelope,
 ) -> _SyncResult:
-    qualified = f"{schema_name}.{table_name}"
+    qualified = qualified_table_name(schema_name, table_name)
     steps: list[dict[str, Any]] = []
     envelope.results.append({"table": qualified, "steps": steps})
 
@@ -529,7 +530,7 @@ def _sync_locked(
         glue_database=settings.glue_database,
         glue_table=normalize_table_name(table_name),
     )
-    qualified = f"{schema_name}.{table_name}"
+    qualified = qualified_table_name(schema_name, table_name)
     catalog = _SharedCatalog(settings)
     try:
         with table_lock(key, metadata={"table": qualified}, skip=dry_run):
@@ -583,7 +584,7 @@ def sync_table(
             f"--table requires a qualified name: <schema>.<table> (got {qualified!r})"
         )
     schema_name, table_name = ref.schema_name, ref.table_name
-    qualified = f"{schema_name}.{table_name}"
+    qualified = qualified_table_name(schema_name, table_name)
     log_event("table.start", table=qualified)
     metrics = RunMetrics(run_id, "sync", table=qualified)
     with bind(table=qualified), collect(metrics):

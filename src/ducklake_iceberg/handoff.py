@@ -47,6 +47,8 @@ class ExportPointer:
     exported_at: str  # ISO-8601 UTC
     ducklake_iceberg_version: str
     delete_file_layout: str = DELETE_FILE_LAYOUT_LEGACY
+    table_uuid: str | None = None
+    data_path: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)
@@ -144,6 +146,8 @@ def _pointer_from_dict(data: dict[str, Any]) -> ExportPointer:
         delete_file_layout=str(
             data.get("delete_file_layout", DELETE_FILE_LAYOUT_LEGACY)
         ),
+        table_uuid=data.get("table_uuid"),
+        data_path=data.get("data_path"),
     )
 
 

@@ -48,7 +48,9 @@ from ducklake_iceberg.catalog.files import (
     FileSet,
     LiveDataFile,
     LiveDeleteFile,
+    compose_path,
 )
+from ducklake_iceberg.catalog.reader import qualified_table_name
 from ducklake_iceberg.catalog.view import (
     CatalogView,
     check_initial_defaults,
@@ -58,6 +60,7 @@ from ducklake_iceberg.concurrency import (
     ContextThreadPoolExecutor,
     io_workers,
 )
+from ducklake_iceberg.config import _overlaps
 from ducklake_iceberg.deletes.convert import (
     delete_file_path,
     read_visible_positions,
@@ -65,6 +68,7 @@ from ducklake_iceberg.deletes.convert import (
 from ducklake_iceberg.deletes.writer import PositionDelete, write_position_delete_file
 from ducklake_iceberg.doctor.model import Finding
 from ducklake_iceberg.errors import (
+    ConfigError,
     DivergenceError,
     DuckLakeIcebergError,
     ExitCode,
@@ -89,9 +93,12 @@ from ducklake_iceberg.mapping.partition import (
 from ducklake_iceberg.obs.metrics import add_call, add_work
 from ducklake_iceberg.storage import build_file_io
 from ducklake_iceberg.sync.state import (
+    PROP_DATA_PATH,
+    PROP_SCHEMA_VERSION,
     PROP_SNAPSHOT_ID,
     PROP_TABLE_ID,
     PROP_TABLE_UUID,
+    PROP_VERSION,
     DuckLakeIdentity,
     DuckLakeSnapshot,
     SyncMode,
@@ -208,7 +215,9 @@ class ExportResult:
 
     @property
     def metadata_location(self) -> str:
-        if self.exit_code is ExitCode.NOTHING_TO_DO and self.handoff is not None:
+        if self.handoff is not None and (
+            self.exit_code is ExitCode.NOTHING_TO_DO or not self.dry_run
+        ):
             return self.handoff.metadata_location
         return self.plan.metadata_location
 
@@ -220,7 +229,8 @@ class ExportResult:
             "metadata_location": self.metadata_location,
             "metadata_version": (
                 self.handoff.metadata_version
-                if self.exit_code is ExitCode.NOTHING_TO_DO and self.handoff is not None
+                if self.handoff is not None
+                and (self.exit_code is ExitCode.NOTHING_TO_DO or not self.dry_run)
                 else self.plan.metadata_version
             ),
             "previous_metadata_location": self.plan.previous_metadata_location,
@@ -257,6 +267,7 @@ class ExportResult:
 class _Base:
     pointer: ExportPointer | None
     metadata: TableMetadataV2 | None
+    recovered: bool = False
 
 
 def _glue_target(settings: DuckLakeIcebergSettings, glue_table: str) -> str:
@@ -271,9 +282,63 @@ def _read_base_pointer(io: FileIO, location: str) -> ExportPointer | None:
         return None
 
 
-def _load_base(io: FileIO, location: str, pointer: ExportPointer | None) -> _Base:
+def _initial_pointer(
+    metadata: TableMetadataV2, location: str, settings: DuckLakeIcebergSettings
+) -> ExportPointer:
+    """Recover only a v1 export with complete source provenance."""
+    props = metadata.properties
+    required = (
+        PROP_TABLE_UUID,
+        PROP_TABLE_ID,
+        PROP_DATA_PATH,
+        PROP_SNAPSHOT_ID,
+        PROP_SCHEMA_VERSION,
+        PROP_VERSION,
+        "ducklake.catalog",
+        "ducklake.schema",
+        "ducklake.table",
+        "ducklake_iceberg.exported_at",
+    )
+    if metadata.location.rstrip("/") != location.rstrip("/") or metadata.metadata_log:
+        raise MetadataError("initial metadata has an unrelated location or lineage")
+    if any(not props.get(key) for key in required):
+        raise MetadataError("initial metadata has incomplete export provenance")
+    try:
+        return ExportPointer(
+            version=1,
+            metadata_location=next_metadata_path(location, 1),
+            metadata_version=1,
+            location=location,
+            glue_database=settings.glue_database,
+            glue_table=normalize_table_name(props["ducklake.table"]),
+            ducklake_catalog=props["ducklake.catalog"],
+            ducklake_schema=props["ducklake.schema"],
+            ducklake_table=props["ducklake.table"],
+            table_id=int(props[PROP_TABLE_ID]),
+            ducklake_snapshot_id=int(props[PROP_SNAPSHOT_ID]),
+            schema_version=int(props[PROP_SCHEMA_VERSION]),
+            exported_at=props["ducklake_iceberg.exported_at"],
+            ducklake_iceberg_version=props[PROP_VERSION],
+            delete_file_layout=DELETE_FILE_LAYOUT_PARTITION_V1,
+            table_uuid=props[PROP_TABLE_UUID],
+            data_path=props[PROP_DATA_PATH],
+        )
+    except ValueError as exc:
+        raise MetadataError("initial metadata has invalid export provenance") from exc
+
+
+def _load_base(
+    io: FileIO,
+    location: str,
+    pointer: ExportPointer | None,
+    settings: DuckLakeIcebergSettings,
+) -> _Base:
+    recovered = pointer is None
     if pointer is None:
-        return _Base(pointer=None, metadata=None)
+        initial = read_metadata_or_none(io, next_metadata_path(location, 1))
+        if initial is None:
+            return _Base(pointer=None, metadata=None)
+        pointer = _initial_pointer(initial, location, settings)
     # the pointer's metadata.json and the successor probe go out together (2
     # parallel GETs; a missing successor is the common case)
     with ContextThreadPoolExecutor(max_workers=2) as pool:
@@ -290,6 +355,7 @@ def _load_base(io: FileIO, location: str, pointer: ExportPointer | None) -> _Bas
     # metadata-log entry); otherwise v{N+1} is from another chain and the
     # export stops.
     while candidate is not None:
+        recovered = True
         successor = next_metadata_path(location, pointer.metadata_version + 1)
         log = candidate.metadata_log
         if not log or log[-1].metadata_file != pointer.metadata_location:
@@ -306,12 +372,15 @@ def _load_base(io: FileIO, location: str, pointer: ExportPointer | None) -> _Bas
                     PROP_SNAPSHOT_ID, str(pointer.ducklake_snapshot_id)
                 )
             ),
+            schema_version=int(candidate.properties[PROP_SCHEMA_VERSION]),
+            table_uuid=candidate.properties.get(PROP_TABLE_UUID),
+            data_path=candidate.properties.get(PROP_DATA_PATH),
         )
         metadata = candidate
         candidate = read_metadata_or_none(
             io, next_metadata_path(location, pointer.metadata_version + 1)
         )
-    return _Base(pointer=pointer, metadata=metadata)
+    return _Base(pointer=pointer, metadata=metadata, recovered=recovered)
 
 
 # -- desired vs. published (step 3) ------------------------------------------
@@ -361,10 +430,16 @@ def _desired(view: CatalogView, schema: Schema) -> _Desired:
             else mapping.spec_id_by_partition_id.get(f.partition_id, 0)
         )
         spec = mapping.specs[spec_id]
+        sources = {field.source_id for field in spec.fields}
+        partition_schema = next(
+            candidate
+            for candidate in (schema, *view.historical_schemas)
+            if sources <= candidate.field_ids
+        )
         data[f.canonical_path] = (
             f,
             spec_id,
-            _partition_record(f, mapping, spec, schema, view.values_by_file),
+            _partition_record(f, mapping, spec, partition_schema, view.values_by_file),
         )
         if f.delete_file is not None:
             partition = data[f.canonical_path][2]
@@ -507,6 +582,8 @@ def _unchanged_since(pointer: ExportPointer, view: CatalogView) -> bool:
     identity = view.identity
     return (
         pointer.table_id == identity.table_id
+        and pointer.table_uuid == str(identity.table_uuid)
+        and pointer.data_path == view.files.layers.data_path
         and pointer.ducklake_schema == identity.ref.schema_name
         and pointer.ducklake_table == identity.ref.table_name
         and pointer.schema_version == identity.schema_version
@@ -552,7 +629,7 @@ def _prepare(
     location = table_location(
         settings.iceberg_metadata_prefix, settings.glue_database, table_name
     )
-    ref = f"{schema_name}.{table_name}"
+    ref = qualified_table_name(schema_name, table_name)
     with timing.phase("export.base"):
         pointer = _read_base_pointer(io, location)
 
@@ -565,6 +642,7 @@ def _prepare(
             return read_catalog(ro, ref, previous)
 
     view = read_view(pointer.ducklake_snapshot_id if pointer is not None else None)
+    _check_source_locations(settings, view)
     # work counters once per export, even if the view is re-read
     add_work("resolve", items=1)
     add_work(
@@ -576,7 +654,7 @@ def _prepare(
         return _Unchanged(_unchanged_plan(location, pointer, view), view, pointer)
 
     with timing.phase("export.base"):
-        base = _load_base(io, location, pointer)
+        base = _load_base(io, location, pointer, settings)
     _check_identity(base, view, _glue_target(settings, table_name))
     previous_snapshot = (
         int(base.metadata.properties[PROP_SNAPSHOT_ID])
@@ -586,6 +664,7 @@ def _prepare(
     if previous_snapshot != view.table_changes_since:
         # successor adopted or pointer without the property: window recomputed
         view = read_view(previous_snapshot)
+        _check_source_locations(settings, view)
         _check_identity(base, view, _glue_target(settings, table_name))
     if base.metadata is not None:
         # specs already published keep their partition field names
@@ -665,6 +744,18 @@ def _prepare(
     )
 
 
+def _check_source_locations(
+    settings: DuckLakeIcebergSettings, view: CatalogView
+) -> None:
+    layers = view.files.layers
+    for source in (layers.data_path, compose_path(layers, "", True)):
+        if _overlaps(source, settings.iceberg_metadata_prefix):
+            raise ConfigError(
+                "iceberg_metadata_prefix must not overlap the actual DuckLake "
+                "source location read from the catalog"
+            )
+
+
 def run_export(
     settings: DuckLakeIcebergSettings,
     schema_name: str,
@@ -704,16 +795,32 @@ def _run_export(
     warnings = _partition_warnings(prep.view)
 
     if isinstance(prep, _Unchanged) or not plan.has_changes:
+        recovering = isinstance(prep, _Prepared) and prep.base.recovered and not dry_run
+        if recovering and isinstance(prep, _Prepared):
+            assert prep.base.pointer is not None
+            write_pointer(prep.io, prep.base.pointer)
         return ExportResult(
             plan=plan,
             dry_run=dry_run,
             manifest_paths=(),
             manifest_list_path="",
-            pointer_path=None,
-            exit_code=ExitCode.NOTHING_TO_DO,
+            pointer_path=pointer_path(plan.location) if recovering else None,
+            exit_code=ExitCode.SUCCESS if recovering else ExitCode.NOTHING_TO_DO,
             warnings=warnings,
             handoff=(
                 prep.pointer if isinstance(prep, _Unchanged) else prep.base.pointer
+            ),
+            metadata=(
+                prep.base.metadata
+                if recovering and isinstance(prep, _Prepared)
+                else None
+            ),
+            snapshot_id=(
+                prep.base.metadata.current_snapshot_id
+                if recovering
+                and isinstance(prep, _Prepared)
+                and prep.base.metadata is not None
+                else None
             ),
         )
     # `_load_base` just proved that v{N+1} does not exist; the write with
@@ -764,7 +871,10 @@ def _run_export(
                 deletes=delete_change,
                 schema=prep.schema,
                 specs=specs,
-                schemas=base_meta.schemas if base_meta else (),
+                schemas=(
+                    *prep.view.historical_schemas,
+                    *(base_meta.schemas if base_meta else ()),
+                ),
                 snapshot_id=snapshot_id,
                 parent_snapshot_id=base_meta.current_snapshot_id if base_meta else None,
                 sequence_number=sequence_number,
@@ -790,7 +900,7 @@ def _run_export(
     )
     with timing.phase("export.write"):
         write_metadata_json(prep.io, metadata, plan.metadata_location)
-        handoff = _write_handoff(plan, settings, prep.io)
+        handoff = _write_handoff(plan, settings, prep.io, prep.view)
 
     return ExportResult(
         plan=plan,
@@ -1026,7 +1136,7 @@ def _build_metadata(
     if base_meta is None:
         assert files is not None
         assert summary is not None
-        return build_table_metadata(
+        metadata = build_table_metadata(
             prep.schema,
             specs[default_spec_id],
             plan.location,
@@ -1039,25 +1149,37 @@ def _build_metadata(
             last_column_id=view.schema_mapping.last_column_id,
             summary=summary,
         )
-
-    assert prep.base.pointer is not None
-    return build_next_metadata(
-        base_meta,
-        prep.base.pointer.metadata_location,
-        schema=prep.schema,
-        specs=list(specs.values()),
-        default_spec_id=default_spec_id,
-        manifest_list_path=files.manifest_list_path if files else None,
-        summary=summary,
-        snapshot_id=snapshot_id,
-        properties=provenance_properties(provenance, state),
-        last_column_id=view.schema_mapping.last_column_id,
-        retention_ms=retention_ms,
-    )
+    else:
+        assert prep.base.pointer is not None
+        metadata = build_next_metadata(
+            base_meta,
+            prep.base.pointer.metadata_location,
+            schema=prep.schema,
+            specs=list(specs.values()),
+            default_spec_id=default_spec_id,
+            manifest_list_path=files.manifest_list_path if files else None,
+            summary=summary,
+            snapshot_id=snapshot_id,
+            properties=provenance_properties(provenance, state),
+            last_column_id=view.schema_mapping.last_column_id,
+            retention_ms=retention_ms,
+        )
+    schemas = list(metadata.schemas)
+    for historical in view.historical_schemas:
+        if any(s.as_struct() == historical.as_struct() for s in schemas):
+            continue
+        schemas.append(
+            historical.model_copy(
+                update={
+                    "schema_id": max(s.schema_id for s in schemas) + 1,
+                }
+            )
+        )
+    return metadata.model_copy(update={"schemas": schemas})
 
 
 def _write_handoff(
-    plan: ExportPlan, settings: DuckLakeIcebergSettings, io: FileIO
+    plan: ExportPlan, settings: DuckLakeIcebergSettings, io: FileIO, view: CatalogView
 ) -> ExportPointer:
     """Step 6: the handoff pointer, written last."""
     pointer = ExportPointer(
@@ -1076,6 +1198,8 @@ def _write_handoff(
         exported_at=utc_now_iso(),
         ducklake_iceberg_version=__version__,
         delete_file_layout=DELETE_FILE_LAYOUT_PARTITION_V1,
+        table_uuid=str(view.identity.table_uuid),
+        data_path=view.files.layers.data_path,
     )
     write_pointer(io, pointer)
     return pointer

@@ -20,6 +20,23 @@ example: "envelope v1: optional key `timings`".
 
 ## [Unreleased]
 
+### Fixed
+
+- Validate the source UUID and data path before the unchanged-export shortcut;
+  older handoffs without these fields take the full identity-validation path.
+- Reject credentials in DSNs with whitespace around assignments or URL user
+  information, and redact complete quoted secrets in logs and envelope v1.
+- Recover a completed first export after a failed handoff write, and repair
+  recovered successor handoffs without rewriting immutable artifacts. Recovery
+  verifies source provenance and manifests; dry-run remains read-only.
+- Preserve metadata ancestry when expiring snapshots so pending Glue updates
+  remain recoverable across the retention window.
+- Resolve historical partition specs with historical schemas after a partition
+  source column is dropped, including first exports and subsequent deletes.
+- Reject metadata prefixes overlapping actual source locations from the catalog,
+  even when the configured data path differs from the source.
+- Preserve quoted schema/table identifiers throughout sync, flush and export.
+
 ## [0.1.1rc1] - 2026-11-10
 
 ### Added
