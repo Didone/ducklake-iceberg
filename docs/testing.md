@@ -23,6 +23,12 @@ network or a read-only HOME needs an appropriate extension directory.
 
 No AWS credentials are needed for the default SQLite/moto tests. Do not run
 experiments against production AWS while relying on a missing mock.
+For local-only runs on a machine with AWS profiles, point `AWS_CONFIG_FILE` and
+`AWS_SHARED_CREDENTIALS_FILE` to empty files, unset `AWS_PROFILE` and
+`AWS_DEFAULT_PROFILE`, set fictitious `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`,
+and set `AWS_EC2_METADATA_DISABLED=true`. This prevents ambient SSO refresh and
+metadata credential discovery; tests that install their own fake profiles still
+exercise profile selection and credential errors.
 
 ## Standard commands
 

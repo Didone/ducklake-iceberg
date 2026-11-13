@@ -44,7 +44,7 @@ Query = Callable[[str], str]
 
 @pytest.fixture
 def reader() -> Iterator[duckdb.DuckDBPyConnection]:
-    con = duckdb.connect(":memory:")
+    con = duckdb.connect(":memory:", config={"threads": 2})
     try:
         con.execute("LOAD iceberg")
     except duckdb.Error:
@@ -78,21 +78,6 @@ def _aggregates_sql(relation: str, where: str = "") -> str:
     return f"SELECT {', '.join(parts)} FROM {relation}{clause}"
 
 
-def _ducklake(lake: Lake, sql_for: Query, snapshot_id: int) -> list[tuple[Any, ...]]:
-    con = duckdb.connect(":memory:")
-    try:
-        for ext in ("ducklake", lake.catalog.backend):
-            con.execute(f"LOAD {ext}")
-        con.execute(
-            f"ATTACH '{lake.catalog.dsn}' AS lake "
-            f"(METADATA_CATALOG 'lake_meta', READ_ONLY)"
-        )
-        relation = f"lake.main.t AT (VERSION => {int(snapshot_id)})"
-        return con.execute(sql_for(relation)).fetchall()
-    finally:
-        con.close()
-
-
 def _iceberg(
     reader: duckdb.DuckDBPyConnection, sql_for: Query, location: str
 ) -> list[tuple[Any, ...]]:
@@ -113,11 +98,21 @@ def assert_second_reader_agrees(
         lambda rel: _aggregates_sql(rel, PREDICATE),
         lambda rel: f"SELECT id, v, s FROM {rel} WHERE {PREDICATE} ORDER BY id",
     ]
-    for query in queries:
-        expected = _ducklake(lake, query, snapshot_id)
-        assert expected, "an empty scenario proves nothing"
-        got = _iceberg(reader, query, location)
-        assert got == expected, query(f"<snapshot {snapshot_id}>")
+    # All comparisons address the same immutable source snapshot. Own one
+    # read-only attachment for this assertion; never retain it across writes.
+    with duckdb.connect(":memory:", config={"threads": 2}) as source:
+        for extension in ("ducklake", lake.catalog.backend):
+            source.execute(f"LOAD {extension}")
+        source.execute(
+            f"ATTACH '{lake.catalog.dsn}' AS lake "
+            "(METADATA_CATALOG 'lake_meta', READ_ONLY)"
+        )
+        relation = f"lake.main.t AT (VERSION => {int(snapshot_id)})"
+        for query in queries:
+            expected = source.execute(query(relation)).fetchall()
+            assert expected, "an empty scenario proves nothing"
+            got = _iceberg(reader, query, location)
+            assert got == expected, query(f"<snapshot {snapshot_id}>")
 
 
 def _delete_files(reader: duckdb.DuckDBPyConnection, location: str) -> int:

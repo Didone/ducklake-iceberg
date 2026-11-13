@@ -37,6 +37,8 @@ example: "envelope v1: optional key `timings`".
 - Reuse a session-owned PostgreSQL test service with isolated databases per case,
   batch setup statements without merging commits, and make the complete MinIO
   lifecycle independently runnable.
+- Reuse one source attachment per snapshot comparison in second-reader tests and
+  copy only required extensions into isolated extension-directory fixtures.
 - Reuse one DuckDB root during sync, including flush through read-only/write/
   read-only attachments; freshly validate the source after each write.
 - Use single GETs for metadata reads and conditional single PUTs for small

@@ -19,6 +19,7 @@ import pytest
 
 from ducklake_iceberg.catalog.connection import (
     CONNECT_CONFIG,
+    EXTENSIONS,
     DuckLakeConnection,
     open_catalog,
 )
@@ -42,21 +43,30 @@ def extension_dir(tmp_path: Path) -> Path:
 
     Reproduces the ``<root>/v<version>/<platform>/`` layout DuckDB expects.
     """
-    con = duckdb.connect(":memory:")
+    con = duckdb.connect(":memory:", config={"threads": 2})
     try:
         for name in _EXTENSOES:
             con.execute(f"INSTALL {name}")
-        row = con.execute(
+        rows = con.execute(
             "SELECT install_path FROM duckdb_extensions() "
-            "WHERE extension_name = 'ducklake'"
-        ).fetchone()
+            "WHERE extension_name IN (SELECT unnest($names::VARCHAR[]))",
+            {"names": [EXTENSIONS[name] for name in _EXTENSOES]},
+        ).fetchall()
     finally:
         con.close()
-    assert row is not None
-    platform_dir = Path(str(row[0])).parent
+    assert len(rows) == len(_EXTENSOES)
+    paths = [Path(str(row[0])) for row in rows]
+    platform_dir = paths[0].parent
     root = tmp_path / "ext"
     target = root / platform_dir.parent.name / platform_dir.name
-    shutil.copytree(platform_dir, target)
+    target.mkdir(parents=True)
+    # Each case owns real copies of its prerequisites, without copying unrelated
+    # extensions from a developer's cache or sharing mutable files between cases.
+    for path in paths:
+        shutil.copy2(path, target / path.name)
+        info = path.with_suffix(path.suffix + ".info")
+        if info.exists():
+            shutil.copy2(info, target / info.name)
     return root
 
 
