@@ -16,7 +16,7 @@ from __future__ import annotations
 import uuid
 import warnings
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -100,7 +100,7 @@ class CatalogHarness:
 
 
 class Lake:
-    """DuckLake + Iceberg prefix of a test."""
+    """Read/export helpers for the file-backed catalog prepared by lake."""
 
     def __init__(self, catalog: CatalogHarness, prefix: Path) -> None:
         self.catalog = catalog
@@ -108,7 +108,6 @@ class Lake:
         self.settings: DuckLakeIcebergSettings = catalog.settings(
             iceberg_metadata_prefix=str(prefix)
         )
-        catalog.write("CALL lake.set_option('data_inlining_row_limit', 0)")
 
     def write(self, *statements: str) -> None:
         self.catalog.write(*statements)
@@ -144,8 +143,8 @@ class Lake:
         assert self.iceberg_rows(result) == self.rows(table)
 
 
-def sync_config(catalog: CatalogHarness, tmp_path: Path, *, inlining: int) -> Path:
-    catalog.write(f"CALL lake.set_option('data_inlining_row_limit', {inlining})")
+def sync_config(catalog: CatalogHarness, tmp_path: Path) -> Path:
+    """Write CLI settings; source preparation belongs to the caller."""
     path = tmp_path / "ducklake-iceberg.yaml"
     path.write_text(
         f"catalog_dsn: '{catalog.dsn}'\n"
@@ -209,29 +208,34 @@ def _make_sqlite(tmp_path: Path) -> CatalogHarness:
     )
 
 
-@pytest.fixture(
-    params=[
-        "sqlite",
-        pytest.param("postgres", marks=pytest.mark.postgres),
-    ]
-)
-def catalog(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[CatalogHarness]:
-    """Empty catalog harness, parametrized by backend (sqlite/postgres).
+_CATALOG_BACKENDS = [
+    "sqlite",
+    pytest.param("postgres", marks=pytest.mark.postgres),
+]
 
-    Seeds a `vendas` schema (first snapshot) and yields the harness.
-    PostgreSQL uses a unique database on the session-owned local service.
-    """
-    backend = request.param
-    if backend == "sqlite":
-        harness = _make_sqlite(tmp_path)
-        harness.write("CREATE SCHEMA IF NOT EXISTS lake.vendas")
+
+@contextmanager
+def _catalog_case(
+    request: pytest.FixtureRequest, tmp_path: Path, *statements: str
+) -> Iterator[CatalogHarness]:
+    """Own a fresh catalog; close explicit bootstrap SQL before the test."""
+    manager: AbstractContextManager[CatalogHarness]
+    if request.param == "sqlite":
+        manager = nullcontext(_make_sqlite(tmp_path))
+    else:
+        # Share the service, never a database, attachment or data namespace.
+        manager = postgres_catalog(
+            request.getfixturevalue("postgres_service"), tmp_path
+        )
+    with manager as harness:
+        harness.write("CREATE SCHEMA IF NOT EXISTS lake.vendas", *statements)
         yield harness
-        return
 
-    # Share the service, never a DuckLake database or filesystem namespace.
-    service = request.getfixturevalue("postgres_service")
-    with postgres_catalog(service, tmp_path) as harness:
-        harness.write("CREATE SCHEMA IF NOT EXISTS lake.vendas")
+
+@pytest.fixture(params=_CATALOG_BACKENDS)
+def catalog(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[CatalogHarness]:
+    """Empty catalog with a vendas schema (first snapshot), on either backend."""
+    with _catalog_case(request, tmp_path) as harness:
         yield harness
 
 
@@ -378,29 +382,50 @@ def postgres_catalog(container: Any, tmp_path: Path) -> Iterator[CatalogHarness]
             raise RuntimeError("test ended with active PostgreSQL work")
 
 
-@pytest.fixture
-def seeded_catalog(catalog: CatalogHarness) -> CatalogHarness:
+_SEED_PEDIDOS = (
+    "CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR)",
+    "INSERT INTO lake.main.pedidos VALUES (1, 'MG'), (2, 'SP')",
+)
+
+
+@pytest.fixture(params=_CATALOG_BACKENDS)
+def seeded_catalog(
+    request: pytest.FixtureRequest, tmp_path: Path
+) -> Iterator[CatalogHarness]:
     """Harness with a `main.pedidos` table holding 2 inlined rows."""
-    catalog.write(
-        "CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR)",
-        "INSERT INTO lake.main.pedidos VALUES (1, 'MG'), (2, 'SP')",
-    )
-    return catalog
+    with _catalog_case(request, tmp_path, *_SEED_PEDIDOS) as harness:
+        yield harness
 
 
-@pytest.fixture
-def flushed_catalog(seeded_catalog: CatalogHarness) -> CatalogHarness:
+@pytest.fixture(params=_CATALOG_BACKENDS)
+def flushed_catalog(
+    request: pytest.FixtureRequest, tmp_path: Path
+) -> Iterator[CatalogHarness]:
     """`seeded_catalog` with the flush applied: the preflight is clean (exit 0).
 
     The inlined data becomes a data file, so the `inlined-data` rule does not
     block and `doctor` exits 0 - a state suited to exercising the CLI plumbing
     (envelope, --json, flags) without the compatibility blocker.
     """
-    seeded_catalog.write(
+    with _catalog_case(
+        request,
+        tmp_path,
+        *_SEED_PEDIDOS,
         "CALL ducklake_flush_inlined_data('lake', schema_name => 'main', "
-        "table_name => 'pedidos')"
-    )
-    return seeded_catalog
+        "table_name => 'pedidos')",
+    ) as harness:
+        yield harness
+
+
+@pytest.fixture(params=_CATALOG_BACKENDS)
+def lake(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[Lake]:
+    """File-backed source and Iceberg target, isolated for one case."""
+    with _catalog_case(
+        request, tmp_path, "CALL lake.set_option('data_inlining_row_limit', 0)"
+    ) as harness:
+        prefix = tmp_path / "iceberg"
+        prefix.mkdir()
+        yield Lake(harness, prefix)
 
 
 @pytest.fixture

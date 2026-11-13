@@ -28,8 +28,9 @@ def glue_env() -> Iterator[None]:
 def test_reference_logical_budgets(
     catalog: CatalogHarness, tmp_path: Path, glue_env: None, scenario: str, cap: int
 ) -> None:
-    config = sync_config(catalog, tmp_path, inlining=0)
+    config = sync_config(catalog, tmp_path)
     catalog.write(
+        "CALL lake.set_option('data_inlining_row_limit', 0)",
         "CREATE TABLE lake.main.t (id BIGINT, p INTEGER, payload VARCHAR)",
         "ALTER TABLE lake.main.t SET PARTITIONED BY (p)",
     )

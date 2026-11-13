@@ -41,7 +41,7 @@ from pyiceberg.types import (
 
 from ducklake_iceberg.export import ExportResult
 
-from .conftest import CatalogHarness, Lake
+from .conftest import Lake
 
 pytestmark = pytest.mark.integration
 
@@ -50,13 +50,6 @@ UTC = dt.UTC
 
 def _expr(kind: Any, column: str, value: Any) -> BooleanExpression:
     return cast("BooleanExpression", cast("Any", kind)(column, value))
-
-
-@pytest.fixture
-def lake(catalog: CatalogHarness, tmp_path: Path) -> Lake:
-    prefix = tmp_path / "iceberg"
-    prefix.mkdir()
-    return Lake(catalog, prefix)
 
 
 @pytest.fixture

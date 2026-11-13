@@ -27,8 +27,9 @@ def glue_env() -> Iterator[None]:
 def test_noop_file_and_source_history_scaling(
     catalog: CatalogHarness, tmp_path: Path, glue_env: None, files: int, history: int
 ) -> None:
-    config = sync_config(catalog, tmp_path, inlining=0)
+    config = sync_config(catalog, tmp_path)
     with open_catalog(catalog.settings(), read_only=False, s3=False) as source:
+        source.execute("CALL lake.set_option('data_inlining_row_limit', 0)")
         source.execute("CREATE TABLE lake.main.t(id BIGINT)")
         source.execute("CREATE TABLE lake.main.other(id BIGINT)")
         for i in range(files):

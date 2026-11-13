@@ -24,16 +24,9 @@ from ducklake_iceberg.errors import CompatibilityError, DivergenceError, ExitCod
 from ducklake_iceberg.export import run_export
 from ducklake_iceberg.writer.commit import referenced_data_file
 
-from .conftest import CatalogHarness, Lake
+from .conftest import Lake
 
 pytestmark = pytest.mark.integration
-
-
-@pytest.fixture
-def lake(catalog: CatalogHarness, tmp_path: Path) -> Lake:
-    prefix = tmp_path / "iceberg"
-    prefix.mkdir()
-    return Lake(catalog, prefix)
 
 
 # -- incremental cycles (acceptance) -----------------------------------------

@@ -103,20 +103,24 @@ from one test can leak into the next.
 [`tests/integration/conftest.py`](../tests/integration/conftest.py) defines
 `CatalogHarness`:
 
-- `write(sql)` opens a fresh writer attachment and commits source changes.
+- `write(*statements)` opens a fresh writer attachment and commits each SQL
+  statement separately; setup roots use two threads.
 - `settings(**overrides)` builds a validated application configuration.
 - `meta_exec(sql)` deliberately modifies metadata to test impossible/corrupt
   states. This is a test escape hatch, **not operational repair guidance**.
 - `catalog` parametrizes SQLite and PostgreSQL.
 - `seeded_catalog` creates a table with inlined rows.
 - `flushed_catalog` makes those rows available as files.
+- `lake` supplies a file-backed source and an independent Iceberg target.
+- Compound fixtures prepare schema, rows, options and flush through one owned
+  bootstrap connection, closing it before the test. They keep fresh catalogs and
+  statement-level commits; no read view or application connection is shared.
 - One PostgreSQL service runs per pytest process; each case owns a fresh database,
   data/output paths and scoped `PG*` environment. Service readiness is checked once.
   Database teardown terminates retained idle clients; active work is cleaned up
   and reported as an error. The owned container stops at session teardown.
-- `CatalogHarness.write(*statements)` owns one setup connection and commits each
-  statement separately. It does not combine source transactions or share an
-  application connection across sync invocations. Setup roots use two threads.
+- `sync_config` only writes YAML. A scenario's source options belong in its
+  explicit preparation SQL, alongside the table and data setup.
 
 These are test-only classes/fixtures, not part of the production API.
 

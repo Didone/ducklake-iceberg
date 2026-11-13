@@ -42,8 +42,9 @@ def test_publication_failure_and_dry_run_recovery(
     successor: bool,
     boundary: str,
 ) -> None:
-    config = sync_config(catalog, tmp_path, inlining=0)
+    config = sync_config(catalog, tmp_path)
     catalog.write(
+        "CALL lake.set_option('data_inlining_row_limit', 0)",
         "CREATE TABLE lake.main.t(id BIGINT)",
         "INSERT INTO lake.main.t SELECT * FROM range(100)",
     )

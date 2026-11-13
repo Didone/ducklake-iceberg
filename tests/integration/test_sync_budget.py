@@ -80,8 +80,9 @@ def test_sync_without_inlined_uses_one_read_only_connection(
     maintenance_calls: list[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config = sync_config(catalog, tmp_path, inlining=0)
+    config = sync_config(catalog, tmp_path)
     catalog.write(
+        "CALL lake.set_option('data_inlining_row_limit', 0)",
         "CREATE TABLE lake.main.t (id INTEGER)",
         "INSERT INTO lake.main.t SELECT * FROM range(10)",
     )
@@ -105,8 +106,9 @@ def test_sync_without_inlined_uses_one_read_only_connection(
 def test_sync_resolves_aws_session_once(
     catalog: CatalogHarness, tmp_path: Path, glue_env: None
 ) -> None:
-    config = sync_config(catalog, tmp_path, inlining=0)
+    config = sync_config(catalog, tmp_path)
     catalog.write(
+        "CALL lake.set_option('data_inlining_row_limit', 0)",
         "CREATE TABLE lake.main.t (id INTEGER)",
         "INSERT INTO lake.main.t SELECT * FROM range(10)",
     )
@@ -126,8 +128,9 @@ def test_sync_with_inlined_only_flushes(
     opened: list[bool],
     maintenance_calls: list[str],
 ) -> None:
-    config = sync_config(catalog, tmp_path, inlining=1000)
+    config = sync_config(catalog, tmp_path)
     catalog.write(
+        "CALL lake.set_option('data_inlining_row_limit', 1000)",
         "CREATE TABLE lake.main.t (id INTEGER)",
         "INSERT INTO lake.main.t SELECT * FROM range(10)",
     )
@@ -162,8 +165,9 @@ def test_unchanged_sync_reads_only_pointer_and_glue(
     glue_env: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config = sync_config(catalog, tmp_path, inlining=0)
+    config = sync_config(catalog, tmp_path)
     catalog.write(
+        "CALL lake.set_option('data_inlining_row_limit', 0)",
         "CREATE TABLE lake.main.t (id INTEGER)",
         "INSERT INTO lake.main.t SELECT * FROM range(10)",
     )
@@ -197,8 +201,9 @@ def test_changed_sync_register_does_not_reread(
     glue_env: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config = sync_config(catalog, tmp_path, inlining=0)
+    config = sync_config(catalog, tmp_path)
     catalog.write(
+        "CALL lake.set_option('data_inlining_row_limit', 0)",
         "CREATE TABLE lake.main.t (id INTEGER)",
         "INSERT INTO lake.main.t SELECT * FROM range(10)",
     )
@@ -227,8 +232,9 @@ def test_unchanged_after_upgrade_takes_full_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Different tool version in the pointer: the shortcut does not apply."""
-    config = sync_config(catalog, tmp_path, inlining=0)
+    config = sync_config(catalog, tmp_path)
     catalog.write(
+        "CALL lake.set_option('data_inlining_row_limit', 0)",
         "CREATE TABLE lake.main.t (id INTEGER)",
         "INSERT INTO lake.main.t SELECT * FROM range(10)",
     )
@@ -264,8 +270,9 @@ def test_unchanged_shortcut_refuses_window_with_expired_snapshots(
     """
     if catalog.backend != "sqlite":
         pytest.skip("state is forged directly in SQLite")
-    config = sync_config(catalog, tmp_path, inlining=0)
+    config = sync_config(catalog, tmp_path)
     catalog.write(
+        "CALL lake.set_option('data_inlining_row_limit', 0)",
         "CREATE TABLE lake.main.t (id INTEGER)",
         "INSERT INTO lake.main.t SELECT * FROM range(10)",
     )

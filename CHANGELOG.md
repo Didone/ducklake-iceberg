@@ -41,6 +41,9 @@ example: "envelope v1: optional key `timings`".
   copy only required extensions into isolated extension-directory fixtures.
 - Bound common integration scenarios to two DuckDB threads while retaining
   explicit native-default and custom-limit coverage on both catalog backends.
+- Prepare compound catalog fixtures through one owned bootstrap connection,
+  centralize the file-backed Lake fixture, and keep sync YAML creation free of
+  source-data side effects. Every SQL statement retains its own commit.
 - Reuse one DuckDB root during sync, including flush through read-only/write/
   read-only attachments; freshly validate the source after each write.
 - Use single GETs for metadata reads and conditional single PUTs for small

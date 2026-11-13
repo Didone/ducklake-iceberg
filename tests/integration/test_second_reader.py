@@ -28,7 +28,7 @@ import pytest
 from ducklake_iceberg.errors import ExitCode
 from ducklake_iceberg.export import ExportResult
 
-from .conftest import CatalogHarness, Lake
+from .conftest import Lake
 
 pytestmark = pytest.mark.integration
 
@@ -54,13 +54,6 @@ def reader() -> Iterator[duckdb.DuckDBPyConnection]:
         yield con
     finally:
         con.close()
-
-
-@pytest.fixture
-def lake(catalog: CatalogHarness, tmp_path: Path) -> Lake:
-    prefix = tmp_path / "iceberg"
-    prefix.mkdir()
-    return Lake(catalog, prefix)
 
 
 def _aggregates_sql(relation: str, where: str = "") -> str:
