@@ -33,12 +33,12 @@ def test_reference_logical_budgets(
         "CALL lake.set_option('data_inlining_row_limit', 0)",
         "CREATE TABLE lake.main.t (id BIGINT, p INTEGER, payload VARCHAR)",
         "ALTER TABLE lake.main.t SET PARTITIONED BY (p)",
-    )
-    for i in range(4):
-        catalog.write(
+        *(
             f"INSERT INTO lake.main.t SELECT id, {i}, 'value' "
             f"FROM range({i * 100},{(i + 1) * 100}) t(id)"
-        )
+            for i in range(4)
+        ),
+    )
     if scenario != "I":
         code, doc = run_sync(config)
         assert code == 0, doc["problems"]

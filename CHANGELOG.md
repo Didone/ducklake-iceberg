@@ -44,6 +44,8 @@ example: "envelope v1: optional key `timings`".
 - Prepare compound catalog fixtures through one owned bootstrap connection,
   centralize the file-backed Lake fixture, and keep sync YAML creation free of
   source-data side effects. Every SQL statement retains its own commit.
+- Batch the reference workload's four file-producing inserts on one source
+  connection, with regression coverage for separate snapshots and physical files.
 - Reuse one DuckDB root during sync, including flush through read-only/write/
   read-only attachments; freshly validate the source after each write.
 - Use single GETs for metadata reads and conditional single PUTs for small
