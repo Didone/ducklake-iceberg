@@ -10,8 +10,7 @@ import pytest
 from moto import mock_aws
 
 from ducklake_iceberg import timing
-from tests.integration.conftest import CatalogHarness
-from tests.integration.test_sync_budget import _config, _sync
+from tests.integration.conftest import CatalogHarness, run_sync, sync_config
 
 pytestmark = [pytest.mark.integration, pytest.mark.aws]
 
@@ -29,7 +28,7 @@ def glue_env() -> Iterator[None]:
 def test_reference_logical_budgets(
     catalog: CatalogHarness, tmp_path: Path, glue_env: None, scenario: str, cap: int
 ) -> None:
-    config = _config(catalog, tmp_path, inlining=0)
+    config = sync_config(catalog, tmp_path, inlining=0)
     catalog.write("CREATE TABLE lake.main.t (id BIGINT, p INTEGER, payload VARCHAR)")
     catalog.write("ALTER TABLE lake.main.t SET PARTITIONED BY (p)")
     for i in range(4):
@@ -38,7 +37,7 @@ def test_reference_logical_budgets(
             f"FROM range({i * 100},{(i + 1) * 100}) t(id)"
         )
     if scenario != "I":
-        code, doc = _sync(config)
+        code, doc = run_sync(config)
         assert code == 0, doc["problems"]
     if scenario == "A":
         catalog.write("INSERT INTO lake.main.t VALUES (500, 0, 'new')")
@@ -49,7 +48,7 @@ def test_reference_logical_budgets(
         catalog.write("DELETE FROM lake.main.t WHERE id = 1")
     elif scenario == "U":
         catalog.write("UPDATE lake.main.t SET payload = 'changed' WHERE id = 1")
-    code, doc = _sync(config)
+    code, doc = run_sync(config)
     assert code == (4 if scenario == "N" else 0), doc["problems"]
     assert timing.counter("catalog.queries") <= cap, timing.snapshot()["counters"]
     assert timing.counter("duckdb.connect") == 1

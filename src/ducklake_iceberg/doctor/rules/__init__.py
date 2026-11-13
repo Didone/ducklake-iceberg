@@ -11,8 +11,7 @@ from __future__ import annotations
 from ducklake_iceberg.doctor.model import Rule
 from ducklake_iceberg.doctor.rules import (
     calendar_transform,
-    delete_parquet,
-    delete_puffin,
+    delete_files,
     encryption_key,
     inlined_data,
     mapping_divergence,
@@ -25,8 +24,8 @@ from ducklake_iceberg.doctor.rules import (
 RULES: tuple[Rule, ...] = (
     inlined_data.RULE,
     partial_files.RULE,
-    delete_parquet.RULE,
-    delete_puffin.RULE,
+    delete_files.PARQUET_RULE,
+    delete_files.PUFFIN_RULE,
     mapping_divergence.RULE,
     encryption_key.RULE,
     unsupported_type.RULE,

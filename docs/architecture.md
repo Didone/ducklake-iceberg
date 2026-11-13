@@ -60,7 +60,7 @@ sequenceDiagram
 
     P->>S: Run doctor in a consistent read transaction
     opt Pending inlined rows or deletes
-        P->>S: Verify fingerprint and flush through a separate write connection
+        P->>S: Verify fingerprint and flush through writable reattachment
         P->>S: Invalidate shared connection and revalidate doctor
     end
     P->>S: Build coherent CatalogView at a clean target

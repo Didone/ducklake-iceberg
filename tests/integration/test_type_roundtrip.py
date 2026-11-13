@@ -41,8 +41,7 @@ from pyiceberg.types import (
 
 from ducklake_iceberg.export import ExportResult
 
-from .conftest import CatalogHarness
-from .test_incremental import Lake
+from .conftest import CatalogHarness, Lake
 
 pytestmark = pytest.mark.integration
 

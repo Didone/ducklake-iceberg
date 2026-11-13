@@ -29,6 +29,12 @@ example: "envelope v1: optional key `timings`".
 
 ### Changed
 
+- Group delete-format compatibility rules, keep batched reads beside their runner,
+  and remove an unused partition forwarding helper without changing sync behavior.
+- Share local benchmark service/environment cleanup across profiles and use
+  explicit fixture injection for extension-install measurements.
+- Make the contributor guide the starting point for tracing and changing a sync.
+
 - Reuse one DuckDB root during sync, including flush through read-only/write/
   read-only attachments; freshly validate the source after each write.
 - Use single GETs for metadata reads and conditional single PUTs for small

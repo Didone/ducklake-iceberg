@@ -9,7 +9,10 @@ import os
 import random
 import statistics
 import subprocess
+import tempfile
 import time
+from collections.abc import Callable, Iterator
+from contextlib import ExitStack, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -272,6 +275,70 @@ class LocalHttpObserver:
             return start_response(status, headers, exc_info)
 
         return self.app(environ, observed_response)
+
+
+@contextmanager
+def local_services(
+    prefix: str = "sync-bench-",
+    observer_factory: Callable[[Any], LocalHttpObserver] = LocalHttpObserver,
+) -> Iterator[tuple[str, LocalHttpObserver, Path]]:
+    """Own the loopback server, fake credentials and temporary fixture workspace.
+
+    All benchmark profiles use this same lifecycle. Restore both inherited and
+    newly introduced environment keys, even when fixture setup or audit fails.
+    """
+    import boto3
+    from moto.server import ThreadedMotoServer
+
+    def isolated(key: str) -> bool:
+        return (
+            key.startswith(("AWS_", "DUCKLAKE_ICEBERG_"))
+            or key == "PYICEBERG_MAX_WORKERS"
+        )
+
+    old_env = {key: value for key, value in os.environ.items() if isolated(key)}
+    old_session = boto3.DEFAULT_SESSION
+    try:
+        with ExitStack() as stack:
+            server = ThreadedMotoServer(ip_address="127.0.0.1", port=0, verbose=False)
+            server.start()
+            stack.callback(server.stop)
+            assert server._server is not None
+            observer = observer_factory(server._server.app)
+            server._server.app = observer
+            host, port = server.get_host_and_port()
+            endpoint = f"http://{host}:{port}"
+            for key in list(os.environ):
+                if isolated(key):
+                    os.environ.pop(key)
+            os.environ.update(
+                {
+                    "AWS_ACCESS_KEY_ID": "testing",
+                    "AWS_SECRET_ACCESS_KEY": "testing",
+                    "AWS_DEFAULT_REGION": "us-east-1",
+                    "AWS_ENDPOINT_URL": endpoint,
+                    "AWS_ENDPOINT_URL_S3": endpoint,
+                    "AWS_ENDPOINT_URL_GLUE": endpoint,
+                    "AWS_IGNORE_CONFIGURED_ENDPOINT_URLS": "false",
+                    "AWS_EC2_METADATA_DISABLED": "true",
+                    "PYICEBERG_MAX_WORKERS": "8",
+                }
+            )
+            boto3.DEFAULT_SESSION = None
+            s3 = boto3.client("s3", endpoint_url=endpoint, region_name="us-east-1")
+            stack.callback(s3.close)
+            glue = boto3.client("glue", endpoint_url=endpoint, region_name="us-east-1")
+            stack.callback(glue.close)
+            s3.create_bucket(Bucket="benchmark-metadata")
+            glue.create_database(DatabaseInput={"Name": "benchmark"})
+            workspace = stack.enter_context(tempfile.TemporaryDirectory(prefix=prefix))
+            yield endpoint, observer, Path(workspace)
+    finally:
+        boto3.DEFAULT_SESSION = old_session
+        for key in list(os.environ):
+            if isolated(key):
+                os.environ.pop(key)
+        os.environ.update(old_env)
 
 
 def operation_budgets(

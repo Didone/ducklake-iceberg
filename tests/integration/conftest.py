@@ -17,11 +17,18 @@ import warnings
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import duckdb
 import pytest
 
 from ducklake_iceberg.config import DuckLakeIcebergSettings
+
+if TYPE_CHECKING:
+    from pyiceberg.table import StaticTable
+
+    from ducklake_iceberg.export import ExportResult
+
 
 SettingsFactory = Callable[..., DuckLakeIcebergSettings]
 Writer = Callable[[str], None]
@@ -82,6 +89,80 @@ class CatalogHarness:
                 con.close()
             return
         _postgres_meta_exec(sql)
+
+
+class Lake:
+    """DuckLake + Iceberg prefix of a test."""
+
+    def __init__(self, catalog: CatalogHarness, prefix: Path) -> None:
+        self.catalog = catalog
+        self.prefix = prefix
+        self.settings: DuckLakeIcebergSettings = catalog.settings(
+            iceberg_metadata_prefix=str(prefix)
+        )
+        catalog.write("CALL lake.set_option('data_inlining_row_limit', 0)")
+
+    def write(self, *statements: str) -> None:
+        for sql in statements:
+            self.catalog.write(sql)
+
+    def rows(self, table: str = "main.t") -> list[tuple[Any, ...]]:
+        con = duckdb.connect(":memory:")
+        try:
+            for ext in ("ducklake", self.catalog.backend):
+                con.execute(f"LOAD {ext}")
+            con.execute(
+                f"ATTACH '{self.catalog.dsn}' AS lake "
+                f"(METADATA_CATALOG 'lake_meta', READ_ONLY)"
+            )
+            return sorted(con.execute(f"SELECT * FROM lake.{table}").fetchall())
+        finally:
+            con.close()
+
+    def export(self, table: str = "t") -> ExportResult:
+        from ducklake_iceberg.export import run_export
+
+        return run_export(self.settings, "main", table)
+
+    def iceberg(self, result: ExportResult) -> StaticTable:
+        from pyiceberg.table import StaticTable
+
+        return StaticTable.from_metadata("file://" + result.plan.metadata_location)
+
+    def iceberg_rows(self, result: ExportResult) -> list[tuple[Any, ...]]:
+        arrow = self.iceberg(result).scan().to_arrow()
+        return sorted(tuple(r.values()) for r in arrow.to_pylist())
+
+    def assert_mirrors(self, result: ExportResult, table: str = "main.t") -> None:
+        assert self.iceberg_rows(result) == self.rows(table)
+
+
+def sync_config(catalog: CatalogHarness, tmp_path: Path, *, inlining: int) -> Path:
+    catalog.write(f"CALL lake.set_option('data_inlining_row_limit', {inlining})")
+    path = tmp_path / "ducklake-iceberg.yaml"
+    path.write_text(
+        f"catalog_dsn: '{catalog.dsn}'\n"
+        f"data_path: '{catalog.data_path}'\n"
+        f"iceberg_metadata_prefix: '{tmp_path / 'iceberg'}'\n"
+        f"glue_database: analytics\n"
+        f"aws_region: us-east-1\n"
+    )
+    return path
+
+
+def run_sync(config: Path, *extra: str) -> tuple[int, dict[str, Any]]:
+    import json
+
+    from typer.testing import CliRunner
+
+    from ducklake_iceberg import timing
+    from ducklake_iceberg.cli import app
+
+    timing.reset()
+    result = CliRunner().invoke(
+        app, ["sync", "--table", "main.t", "--config", str(config), "--json", *extra]
+    )
+    return result.exit_code, json.loads(result.stdout)
 
 
 def _postgres_meta_exec(sql: str) -> None:

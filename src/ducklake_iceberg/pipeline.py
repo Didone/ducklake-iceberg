@@ -32,7 +32,6 @@ from ducklake_iceberg.checkpoint.flush import flush_inlined
 from ducklake_iceberg.checkpoint.model import TableRef as CheckpointTableRef
 from ducklake_iceberg.concurrency import Limits, apply_limits
 from ducklake_iceberg.doctor import rules as doctor_rules
-from ducklake_iceberg.doctor.batch import prefetch
 from ducklake_iceberg.doctor.model import (
     DoctorContext,
     DoctorTarget,
@@ -41,6 +40,7 @@ from ducklake_iceberg.doctor.model import (
     Severity,
 )
 from ducklake_iceberg.doctor.report import AUTO_REMEDIABLE_GATES, DoctorReport
+from ducklake_iceberg.doctor.runner import prefetch
 from ducklake_iceberg.doctor.runner import run as run_rules
 from ducklake_iceberg.errors import (
     ConfigError,

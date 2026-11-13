@@ -11,8 +11,7 @@ from moto import mock_aws
 
 from ducklake_iceberg import timing
 from ducklake_iceberg.catalog.connection import open_catalog
-from tests.integration.conftest import CatalogHarness
-from tests.integration.test_sync_budget import _config, _sync
+from tests.integration.conftest import CatalogHarness, run_sync, sync_config
 
 pytestmark = [pytest.mark.integration, pytest.mark.aws]
 
@@ -28,18 +27,18 @@ def glue_env() -> Iterator[None]:
 def test_noop_file_and_source_history_scaling(
     catalog: CatalogHarness, tmp_path: Path, glue_env: None, files: int, history: int
 ) -> None:
-    config = _config(catalog, tmp_path, inlining=0)
+    config = sync_config(catalog, tmp_path, inlining=0)
     with open_catalog(catalog.settings(), read_only=False, s3=False) as source:
         source.execute("CREATE TABLE lake.main.t(id BIGINT)")
         source.execute("CREATE TABLE lake.main.other(id BIGINT)")
         for i in range(files):
             source.execute("INSERT INTO lake.main.t VALUES ($id)", {"id": i})
-    code, doc = _sync(config)
+    code, doc = run_sync(config)
     assert code == 0, doc["problems"]
     with open_catalog(catalog.settings(), read_only=False, s3=False) as source:
         for i in range(history - 1):
             source.execute("INSERT INTO lake.main.other VALUES ($id)", {"id": i})
-    code, doc = _sync(config)
+    code, doc = run_sync(config)
     assert code == 4, doc["problems"]
     assert timing.counter("duckdb.connect") == 1
     assert timing.counter("aws.glue.GetTable") == 1

@@ -22,8 +22,7 @@ from ducklake_iceberg.doctor.model import (
 )
 from ducklake_iceberg.doctor.rules import (
     calendar_transform,
-    delete_parquet,
-    delete_puffin,
+    delete_files,
     encryption_key,
     mapping_divergence,
     parquet_compression,
@@ -85,8 +84,8 @@ def test_shared_delete_read_preserves_format_and_snapshot_filters() -> None:
         report = run(
             ctx,
             [
-                delete_parquet.DeleteParquetRule(requires=()),
-                delete_puffin.DeletePuffinRule(requires=()),
+                delete_files.DeleteParquetRule(requires=()),
+                delete_files.DeletePuffinRule(requires=()),
             ],
         )
         parquet, puffin = report.results
@@ -195,7 +194,7 @@ def _dp_row(fmt: str = "parquet", deletes: int = 37) -> dict[str, Any]:
 
 def test_delete_parquet_blocks_without_capability() -> None:
     table = _table([_dp_row()], _DP_SCHEMA)
-    findings = delete_parquet.classify(table, _ctx(), "delete-parquet")
+    findings = delete_files.classify_parquet(table, _ctx(), "delete-parquet")
     assert findings[0].severity is Severity.BLOCKER
     assert findings[0].data["delete_count"] == 37
 
@@ -203,21 +202,21 @@ def test_delete_parquet_blocks_without_capability() -> None:
 def test_delete_parquet_degraded_with_capability() -> None:
     table = _table([_dp_row()], _DP_SCHEMA)
     ctx = _ctx(capabilities=frozenset({Capability.POSITION_DELETES}))
-    findings = delete_parquet.classify(table, ctx, "delete-parquet")
+    findings = delete_files.classify_parquet(table, ctx, "delete-parquet")
     assert findings[0].severity is Severity.DEGRADED
 
 
 def test_delete_unknown_format_always_blocks() -> None:
     table = _table([_dp_row(fmt="orc")], _DP_SCHEMA)
     ctx = _ctx(capabilities=frozenset({Capability.POSITION_DELETES}))
-    findings = delete_parquet.classify(table, ctx, "delete-parquet")
+    findings = delete_files.classify_parquet(table, ctx, "delete-parquet")
     assert findings[0].severity is Severity.BLOCKER
     assert "unsupported" in findings[0].detail
 
 
 def test_delete_parquet_empty_passes() -> None:
     table = _table([], _DP_SCHEMA)
-    assert delete_parquet.classify(table, _ctx(), "delete-parquet") == []
+    assert delete_files.classify_parquet(table, _ctx(), "delete-parquet") == []
 
 
 # --------------------------------------------------------------------------
@@ -255,7 +254,7 @@ def test_puffin_file_blocks() -> None:
         _PUFFIN_SCHEMA,
     )
     option = _table([], _OPTION_SCHEMA)
-    findings = delete_puffin.classify(puffin, option, _ctx(), "delete-puffin")
+    findings = delete_files.classify_puffin(puffin, option, _ctx(), "delete-puffin")
     assert findings[0].severity is Severity.BLOCKER
     assert findings[0].data["delete_count"] == 37
 
@@ -263,7 +262,7 @@ def test_puffin_file_blocks() -> None:
 def test_puffin_option_only_is_info() -> None:
     puffin = _table([], _PUFFIN_SCHEMA)
     option = _table([{"value": "true", "scope": None}], _OPTION_SCHEMA)
-    findings = delete_puffin.classify(puffin, option, _ctx(), "delete-puffin")
+    findings = delete_files.classify_puffin(puffin, option, _ctx(), "delete-puffin")
     assert len(findings) == 1
     assert findings[0].severity is Severity.INFO
 
@@ -271,7 +270,7 @@ def test_puffin_option_only_is_info() -> None:
 def test_puffin_clean_passes() -> None:
     puffin = _table([], _PUFFIN_SCHEMA)
     option = _table([], _OPTION_SCHEMA)
-    assert delete_puffin.classify(puffin, option, _ctx(), "delete-puffin") == []
+    assert delete_files.classify_puffin(puffin, option, _ctx(), "delete-puffin") == []
 
 
 # --------------------------------------------------------------------------
