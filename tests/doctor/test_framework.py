@@ -123,10 +123,9 @@ def ctx(target: DoctorTarget) -> DoctorContext:
 
 
 @pytest.fixture(autouse=True)
-def _clean_registry() -> Any:
-    registry._reset()
-    yield
-    registry._reset()
+def _clean_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Own synthetic registrations without erasing another test's rules."""
+    monkeypatch.setattr(registry, "_REGISTRY", {})
 
 
 # --------------------------------------------------------------------------

@@ -23,6 +23,15 @@ network or a read-only HOME needs an appropriate extension directory.
 
 No AWS credentials are needed for the default SQLite/moto tests. Do not run
 experiments against production AWS while relying on a missing mock.
+For local-only runs on a machine with AWS profiles, point `AWS_CONFIG_FILE` and
+`AWS_SHARED_CREDENTIALS_FILE` to empty files, unset `AWS_PROFILE` and
+`AWS_DEFAULT_PROFILE`, set fictitious `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`,
+and set `AWS_EC2_METADATA_DISABLED=true`. This prevents ambient SSO refresh and
+metadata credential discovery; tests that install their own fake profiles still
+exercise profile selection and credential errors.
+The shared integration harness uses two DuckDB threads for its small fixtures
+and generated sync configurations. Explicit overrides and the native default
+remain tested; the application's configuration default is unchanged.
 
 ## Standard commands
 
@@ -94,15 +103,32 @@ from one test can leak into the next.
 [`tests/integration/conftest.py`](../tests/integration/conftest.py) defines
 `CatalogHarness`:
 
-- `write(sql)` opens a fresh writer attachment and commits source changes.
+- `write(*statements)` opens a fresh writer attachment and commits each SQL
+  statement separately; setup roots use two threads.
 - `settings(**overrides)` builds a validated application configuration.
 - `meta_exec(sql)` deliberately modifies metadata to test impossible/corrupt
   states. This is a test escape hatch, **not operational repair guidance**.
 - `catalog` parametrizes SQLite and PostgreSQL.
+- `make_catalog(*initial_sql)` prepares one fresh catalog with the scenario's
+  initial SQL, then closes its writer before returning. Its fixture owns the
+  catalog until teardown. Cases whose other fixtures already own the source keep
+  using `catalog`; they must not create a second source.
 - `seeded_catalog` creates a table with inlined rows.
 - `flushed_catalog` makes those rows available as files.
-- The PostgreSQL fixture supplies `PG*` variables, waits for a stable server
-  and stops the container on teardown.
+- `lake` supplies a file-backed source and an independent Iceberg target.
+- Compound fixtures prepare schema, rows, options and flush through one owned
+  bootstrap connection, closing it before the test. They keep fresh catalogs and
+  statement-level commits; no read view or application connection is shared.
+- One PostgreSQL service runs per pytest process; each case owns a fresh database,
+  data/output paths and scoped `PG*` environment. Service readiness is checked once.
+  Database teardown terminates retained idle clients; active work is cleaned up
+  and reported as an error. The owned container stops at session teardown.
+- `sync_config` only writes YAML. A scenario's source options belong in its
+  explicit preparation SQL, alongside the table and data setup.
+
+Tests that replace the doctor rule registry use a scoped replacement and restore
+the previous registry. Import-time rule registration must not depend on which
+test ran before the current case.
 
 These are test-only classes/fixtures, not part of the production API.
 
@@ -121,8 +147,9 @@ patch is limited to tests.
 The MinIO suite exercises actual S3-compatible FileIO and hashes source
 files before/after operations. Its `Lake` helper wraps source writes,
 syncs, source-tree hashes, bucket objects and reader comparisons. The
-lifecycle tests in that file share one lake and depend on order; run the
-entire suite, not a later stateful test in isolation.
+lifecycle case explicitly executes all seven original phases, including IAM,
+resetting process state between phases. Run `test_complete_zero_copy_lifecycle`
+individually or as part of the suite; it has no dependency on earlier pytest cases.
 
 Set `DUCKLAKE_ICEBERG_MINIO_IMAGE` only when intentionally testing another
 image; reproducibility otherwise relies on the test's pinned default.

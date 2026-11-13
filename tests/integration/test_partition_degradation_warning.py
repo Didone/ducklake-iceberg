@@ -36,9 +36,9 @@ REGION = "us-east-1"
 
 @pytest.fixture
 def config(catalog: CatalogHarness, tmp_path: Path) -> Path:
-    catalog.write("CALL lake.set_option('data_inlining_row_limit', 0)")
     catalog.write(
-        "CREATE TABLE lake.main.t_part (id INTEGER, category VARCHAR, data DATE)"
+        "CALL lake.set_option('data_inlining_row_limit', 0)",
+        "CREATE TABLE lake.main.t_part (id INTEGER, category VARCHAR, data DATE)",
     )
     path = tmp_path / "ducklake-iceberg.yaml"
     path.write_text(
@@ -139,7 +139,9 @@ def test_historical_degraded_spec_without_files_has_no_warning(
     catalog: CatalogHarness, config: Path
 ) -> None:
     """Only a degraded spec with live files warns: a historical one does not."""
-    catalog.write("ALTER TABLE lake.main.t_part SET PARTITIONED BY (year(data))")
-    catalog.write("ALTER TABLE lake.main.t_part SET PARTITIONED BY (epoch_year(data))")
+    catalog.write(
+        "ALTER TABLE lake.main.t_part SET PARTITIONED BY (year(data))",
+        "ALTER TABLE lake.main.t_part SET PARTITIONED BY (epoch_year(data))",
+    )
     _insert(catalog)
     assert _export_step(config)["warnings"] == []

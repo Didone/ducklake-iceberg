@@ -16,8 +16,7 @@ from ducklake_iceberg.doctor.plan import PLAN_ORDER, execution_plan
 from ducklake_iceberg.doctor.rules import (
     RULES,
     calendar_transform,
-    delete_parquet,
-    delete_puffin,
+    delete_files,
     encryption_key,
     inlined_data,
     mapping_divergence,
@@ -29,8 +28,8 @@ from ducklake_iceberg.doctor.rules import (
 # modules with a public _sql(ctx) -> str function for static inspection
 _SQL_BUILDERS = {
     "partial-files": [partial_files._sql],
-    "delete-parquet": [delete_parquet._sql],
-    "delete-puffin": [delete_puffin._sql_puffin, delete_puffin._sql_option],
+    "delete-parquet": [delete_files._sql_parquet],
+    "delete-puffin": [delete_files._sql_puffin, delete_files._sql_puffin_option],
     "unsupported-type": [unsupported_type._sql],
     "calendar-transform": [calendar_transform._sql],
     "parquet-compression": [parquet_compression._sql],

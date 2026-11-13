@@ -12,7 +12,6 @@ import logging
 import os
 import random
 import shutil
-import tempfile
 import time
 import uuid
 from collections import defaultdict
@@ -24,6 +23,7 @@ from bench_sync_support import (
     LocalHttpObserver,
     append_sample,
     distribution,
+    local_services,
     measure,
     summarize,
     write_json,
@@ -69,9 +69,6 @@ class TraceObserver(LocalHttpObserver):
 
 
 def run(opts: argparse.Namespace) -> int:
-    import boto3
-    from moto.server import ThreadedMotoServer
-
     opts.output.mkdir(parents=True, exist_ok=False)
     (opts.output / "traces").mkdir()
     manifest = {
@@ -85,46 +82,14 @@ def run(opts: argparse.Namespace) -> int:
         "scope": "incremental server observer; CLI counters enabled in both arms",
     }
     write_json(opts.output / "manifest.json", manifest)
-    keys = {
-        key
-        for key in os.environ
-        if key.startswith("DUCKLAKE_ICEBERG_") or key.startswith("AWS_")
-    } | {"PYICEBERG_MAX_WORKERS", "DUCKLAKE_ICEBERG_STATE_DIR"}
-    old = {key: os.environ.get(key) for key in keys}
-    old_session = boto3.DEFAULT_SESSION
-    server = ThreadedMotoServer(ip_address="127.0.0.1", port=0, verbose=False)
     samples: list[dict[str, Any]] = []
     rng = random.Random(opts.seed)  # noqa: S311 - reproducible paired order
     try:
-        server.start()
-        assert server._server is not None
-        observer = TraceObserver(server._server.app)
-        server._server.app = observer
-        host, port = server.get_host_and_port()
-        endpoint = f"http://{host}:{port}"
-        for key in keys:
-            os.environ.pop(key, None)
-        os.environ.update(
-            {
-                "AWS_ACCESS_KEY_ID": "testing",
-                "AWS_SECRET_ACCESS_KEY": "testing",
-                "AWS_DEFAULT_REGION": "us-east-1",
-                "AWS_ENDPOINT_URL": endpoint,
-                "AWS_ENDPOINT_URL_S3": endpoint,
-                "AWS_ENDPOINT_URL_GLUE": endpoint,
-                "AWS_IGNORE_CONFIGURED_ENDPOINT_URLS": "false",
-                "AWS_EC2_METADATA_DISABLED": "true",
-                "PYICEBERG_MAX_WORKERS": "8",
-            }
-        )
-        boto3.DEFAULT_SESSION = None
-        boto3.client(
-            "s3", endpoint_url=endpoint, region_name="us-east-1"
-        ).create_bucket(Bucket="benchmark-metadata")
-        boto3.client(
-            "glue", endpoint_url=endpoint, region_name="us-east-1"
-        ).create_database(DatabaseInput={"Name": "benchmark"})
-        with tempfile.TemporaryDirectory(prefix="sync-diagnostics-") as workspace:
+        with local_services("sync-diagnostics-", TraceObserver) as (
+            endpoint,
+            observer,
+            workspace,
+        ):
             for scenario in SCENARIOS:
                 for pair in range(opts.pairs):
                     arms = ["control", "trace"]
@@ -189,13 +154,6 @@ def run(opts: argparse.Namespace) -> int:
                             f"{scenario} {pair} {arm}: {sample['correct']}", flush=True
                         )
     finally:
-        server.stop()
-        boto3.DEFAULT_SESSION = old_session
-        for key, value in old.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
         groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for sample in samples:
             groups[sample["scenario"] + "." + sample["arm"]].append(sample)

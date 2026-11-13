@@ -35,19 +35,13 @@ _SCHEMA = json.loads((Path(__file__).parent / "schema" / "doctor-v1.json").read_
 
 
 @pytest.fixture(autouse=True)
-def _ensure_real_rules_registered() -> None:
-    """Put the real rules back into the registry.
-
-    `test_framework.py` has an autouse `registry._reset()` that can leave
-    `_REGISTRY` empty depending on module order; here we make sure
-    `all_rules()`/`select_plan()` see the real rules.
-    """
+def _ensure_real_rules_registered(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use real rules in an owned registry, restoring prior state afterward."""
     from ducklake_iceberg.doctor import registry
 
-    registry._reset()
+    monkeypatch.setattr(registry, "_REGISTRY", {})
     for rule in real_rules.RULES:
-        if rule.id not in {r.id for r in registry.all_rules()}:
-            registry.register(rule)
+        registry.register(rule)
 
 
 class FakeRule:

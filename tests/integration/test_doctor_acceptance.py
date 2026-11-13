@@ -16,7 +16,7 @@ from moto import mock_aws
 from typer.testing import CliRunner
 
 from ducklake_iceberg.cli import app
-from tests.integration.conftest import CatalogHarness, cli_env_for
+from tests.integration.conftest import CatalogFactory, CatalogHarness, cli_env_for
 
 pytestmark = [pytest.mark.integration, pytest.mark.aws]
 
@@ -84,10 +84,12 @@ def test_inlined_data_passes_doctor_and_dry_run_reports_the_flush(
 # table with a blocked type -> exit 2, `blocked` problem names the finding
 # --------------------------------------------------------------------------
 @pytest.mark.usefixtures("aws_credentials")
-def test_unsupported_type_blocks_sync(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE SCHEMA IF NOT EXISTS lake.main")
-    catalog.write("CREATE TABLE lake.main.bad (id INTEGER, qty UINTEGER)")
-    catalog.write("INSERT INTO lake.main.bad VALUES (1, 1)")
+def test_unsupported_type_blocks_sync(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
+        "CREATE SCHEMA IF NOT EXISTS lake.main",
+        "CREATE TABLE lake.main.bad (id INTEGER, qty UINTEGER)",
+        "INSERT INTO lake.main.bad VALUES (1, 1)",
+    )
     env = cli_env_for(catalog)
     with mock_aws():
         result = runner.invoke(app, ["sync", "--table", "main.bad", "--json"], env=env)
@@ -110,9 +112,11 @@ def test_unsupported_type_blocks_sync(catalog: CatalogHarness) -> None:
 # human-readable output also reports the blocker
 # --------------------------------------------------------------------------
 @pytest.mark.usefixtures("aws_credentials")
-def test_blocked_human_output(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE SCHEMA IF NOT EXISTS lake.main")
-    catalog.write("CREATE TABLE lake.main.bad (id INTEGER, qty UINTEGER)")
+def test_blocked_human_output(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
+        "CREATE SCHEMA IF NOT EXISTS lake.main",
+        "CREATE TABLE lake.main.bad (id INTEGER, qty UINTEGER)",
+    )
     env = cli_env_for(catalog)
     with mock_aws():
         result = runner.invoke(app, ["sync", "--table", "main.bad"], env=env)

@@ -1,234 +1,128 @@
 # Contributing to ducklake-iceberg
 
-For the complete learning path, architecture, class reference and operations,
-start with the [documentation](docs/README.md). The
-[testing guide](docs/testing.md) explains fixtures, test selection and CI.
+This utility publishes a read-only Iceberg v2 mirror of a DuckLake table in
+AWS Glue. It references the source Parquet files; it does not copy or own them.
+Contributions are licensed under the [MIT License](LICENSE).
 
-Thanks for your interest in improving `ducklake-iceberg`! Bug reports, feature requests
-and pull requests are welcome.
+## Start locally
 
-By participating you agree that your contributions are licensed under the
-[MIT License](LICENSE).
-
-## Development setup
-
-The project uses [Poetry](https://python-poetry.org/) (2.x), a `src/` layout and
-supports Python 3.11 to 3.14.
+Use Python 3.11–3.14 and Poetry 2.x:
 
 ```bash
 git clone https://github.com/Didone/ducklake-iceberg.git
 cd ducklake-iceberg
 poetry install
+poetry run ducklake-iceberg --help
+poetry run pytest tests/unit/test_config.py --no-cov
 ```
 
-### Quality checks
+Follow the [local walkthrough](docs/getting-started.md) to create a source table.
+Configuration loading and unit tests need no AWS account. SQLite integration
+uses real local catalogs; PostgreSQL and MinIO tests require Docker. Extensions
+need network access once unless already installed. Test setup, markers and
+troubleshooting live in [docs/testing.md](docs/testing.md).
 
-These are the same checks that CI runs:
+## Understand one sync
+
+A **snapshot** identifies a committed table state. **Field IDs** identify columns
+across renames. A **position delete** hides specific rows without rewriting source
+data. The **handoff** points to a completed export that Glue publication can retry.
+
+`cli.py` loads settings and calls `pipeline.sync_table`. Under a local table lock:
+
+1. **Doctor** checks one consistent source view. Unsupported data blocks sync.
+2. **Flush**, only when needed, writes pending inline rows/deletes to source
+   files. The same DuckDB root is reattached RO → RW → RO, with identity checks
+   before writing and fresh validation afterward.
+3. **Export** translates schema/partitions, validates the live files and writes
+   Iceberg metadata and necessary delete files, followed by the handoff.
+4. **Register** checks lineage and updates Glue optimistically. Even a no-op
+   export reaches registration so an earlier failed publication can recover.
+
+A blocker, divergence or error stops publication. `--dry-run` checks without
+flushing or publishing. No transaction spans DuckLake, S3 and Glue. The full
+failure/recovery contract is in [operations](docs/operations.md); the read/write
+boundaries are in [architecture](docs/architecture.md).
+
+## Find the code to change
+
+Paths below are under `src/ducklake_iceberg/`.
+
+| Responsibility | Start here | Relevant tests |
+| --- | --- | --- |
+| Flags and configuration | `cli.py`, `config.py` | `tests/unit/test_config.py`, `tests/integration/test_cli.py` |
+| Source view and files | `catalog/`, `checkpoint/` | `tests/catalog/`, connection/flush/transaction integration tests |
+| Compatibility rules | `doctor/` | `tests/doctor/`, `tests/integration/test_rules.py` |
+| Types, columns and partitions | `mapping/` | `tests/mapping/`, type/partition integration tests |
+| Artifacts, deletes and recovery | `export.py`, `writer/`, `deletes/`, `handoff.py` | writer/delete/incremental/recovery tests |
+| Glue publication | `register.py`, `glue.py` | `tests/test_glue.py`, `tests/test_export_register.py` |
+| Errors, JSON, logs and credentials | `errors.py`, `output.py`, `obs/`, `aws.py`, `storage.py` | envelope/redaction/credential tests |
+
+The [implementation reference](docs/implementation.md) describes individual
+classes/functions. Each module should own a coherent responsibility; prefer a
+direct call to an unnecessary forwarding layer or new generic abstraction.
+
+## Make a small change
+
+For a configuration-validation fix:
+
+1. Read the setting and validators in `config.py`, then the corresponding
+   examples in [configuration](docs/configuration.md).
+2. Add a regression case to `tests/unit/test_config.py`. For example, extend
+   the invalid-endpoint cases if fixing endpoint validation. Run the focused
+   test and confirm the new case fails for the intended reason before fixing it.
+3. Make the smallest correction; preserve valid inputs, defaults and precedence
+   (CLI > environment > YAML > default). Run the focused tests again.
+4. Check CLI/envelope effects, update the relevant documentation and changelog,
+   then run quality and applicable integration checks.
+
+Use American English and Conventional Commit messages. Test observable behavior,
+not a copy of the implementation. For persisted artifacts, check exact reader
+values, IDs and deletes, not just file existence. Type/schema changes must retain
+SQLite/PostgreSQL parity and supported evolution behavior.
+
+## Preserve the contracts
+
+- Never copy, overwrite or delete source Parquet. Only table-scoped inline flush
+  may write source; no source compaction, expiry or cleanup.
+- Preserve field IDs and Iceberg v2, snapshot visibility, delete applicability,
+  validated enumeration and immutable metadata outside source paths. Use
+  `register_table`, not an API that reassigns IDs. Reject unsupported inputs.
+- Keep source identity, lineage, optimistic publication, bounded retries,
+  recovery and read-only mirror protection. Local locks are not distributed locks.
+- Preserve exit codes 0 success, 1 error, 2 blocked, 3 diverged, 4 nothing to do;
+  public exception names; stdout JSON/stderr logs; envelope/log version rules.
+  See [usage](docs/usage.md) and [CHANGELOG](CHANGELOG.md) for public contracts.
+- Bind SQL values; validate/quote identifiers. Keep credentials out of SQL DSNs
+  and logs; PostgreSQL uses libpq `PG*`. No AWS credentials in repository files.
+- Route worker limits through `concurrency.py`; reset process caches, credentials,
+  metrics and logging in test fixtures. Do not share DuckDB connections across threads.
+- Keep exact dependency/extension pins. Pin changes need explicit compatibility
+  validation, including round trips, as described in [testing](docs/testing.md#dependency-pins-and-extension-changes).
+
+## Validate
 
 ```bash
-poetry check --lock                 # poetry.lock must match pyproject.toml
+poetry check --lock
 poetry run ruff check .
 poetry run ruff format --check .
-poetry run mypy                     # strict; checks src and tests
-```
-
-### Tests
-
-```bash
-# Fast path: SQLite catalog and moto (what CI runs on every Python version)
+poetry run mypy
 poetry run pytest -m "not postgres and not e2e and not minio"
-
-# Postgres catalog through testcontainers (needs Docker)
 poetry run pytest -m postgres --cov-fail-under=0
-
-# End to end against a MinIO container (needs Docker): zero-copy audit of
-# create/insert/delete/update/merge, schema evolution and partition evolution
 poetry run pytest -m minio --cov-fail-under=0
-
-# A single test (disable the coverage gate or the run fails)
-poetry run pytest tests/sync/test_lock.py --no-cov
-poetry run pytest -k "some_pattern" --no-cov
 ```
 
-pytest is configured with `--strict-markers`, a coverage gate of 85% and
-`filterwarnings = ["error"]`, so any warning fails a test.
-
-Markers:
-
-| Marker        | Meaning |
-| ------------- | ------- |
-| `integration` | Needs a real DuckLake catalog (SQLite by default) |
-| `postgres`    | Needs a Postgres container (testcontainers) |
-| `minio`       | End to end against a MinIO container (testcontainers + Docker) |
-| `aws`         | Uses simulated S3/Glue (moto) |
-| `e2e`         | Needs a real AWS account; never runs in CI |
-| `roundtrip`   | Writer output is read back by the PyIceberg reader |
-| `pins`        | Checks the pinned DuckDB, extension and PyIceberg versions |
-
-The `tests/integration` `catalog` fixture runs the **same** suite against both
-the SQLite and the Postgres backends; that parity is an acceptance requirement.
-
-### Conventions
-
-- Code comments, docstrings, messages and documentation are written in
-  American English (en-US).
-- Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/)
-  (`feat:`, `fix:`, `docs:`, `test:`, `chore:`, ...).
-- Add or update tests for every behavior change, and an entry under
-  `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md) for user-visible changes.
-
-## Architecture notes
-
-`ducklake-iceberg` is a Typer CLI that publishes DuckLake tables as Iceberg v2 tables in
-the AWS Glue Data Catalog **without copying data**. Sync is one-way
-(DuckLake to Iceberg).
-
-### Pipeline
-
-`sync` (`cli.py`, `pipeline.py`) runs the per-table stages under a per-table
-process lock (`sync/lock.py`):
-
-1. **doctor** (`doctor/`): Iceberg v2 compatibility pre-flight. Rules live in
-   `doctor/rules/` and are registered in `doctor/registry.py`. A blocker exits
-   with code 2.
-2. **flush** (`checkpoint/flush.py`): the only code that **writes to DuckLake**.
-   It flushes pending inlined data (`ducklake_flush_inlined_data`) and nothing
-   else: no compaction, no snapshot expiry, no file cleanup. The doctor runs
-   again on the snapshot that will be exported.
-3. **export** (`export.py`): reads the catalog, computes the delta against the
-   last exported snapshot and writes the Iceberg metadata through `writer/`
-   (Avro manifests and manifest lists via fastavro, then `vN.metadata.json`).
-   DuckLake deletes become v2 position delete files (`deletes/`). Exits with
-   code 4 when nothing changed.
-4. **register** (`register.py`, `glue.py`): `register_table` the first time,
-   then a Glue `UpdateTable` with optimistic locking. If Glue points at a
-   `metadata.json` that is not an ancestor of ours (an external write), it
-   exits with code 3.
-
-The sync state (the last exported snapshot, etc.) is stored in the Iceberg
-table properties (`sync/state.py`), not in local files.
-
-### Exit codes and output contract
-
-`ExitCode` in `errors.py` is a public contract: 0 success, 1 error, 2 blocked
-(compatibility), 3 diverged, 4 nothing to do. Exceptions carry their exit code
-(`DuckLakeIcebergError` subclasses). `--json` emits a versioned envelope (`output.py`,
-schema `src/ducklake_iceberg/schemas/envelope-v1.json`). Optional keys may be added;
-renaming or removing keys, or changing a key's type or meaning, requires a new
-envelope version. Logs go to stderr (`obs/`, with credential redaction in
-`obs/redaction.py`).
-
-Exception names such as `NothingToDo`, `RecordCountMismatch` and
-`TableAlreadyRegistered` are part of the public contract. Do not rename them.
-
-### Design decisions that must not be broken
-
-- **Zero-copy.** Data Parquet files are never copied or deleted by ducklake-iceberg.
-  Only delete files are rewritten. Physical cleanup of data files is DuckLake's
-  job.
-- **Own metadata writer.** PyIceberg is used as the data model and reader, but
-  its `add_files` fails on DuckLake Parquet files
-  (`_ducklake_internal_row_id`), so manifests are written by hand. Every Avro
-  file written must round-trip through PyIceberg's reader in tests.
-- **`register_table`, never `create_table`.** `create_table` reassigns field
-  IDs. Iceberg field IDs must equal DuckLake `column_id`s (including nested
-  types, renames and drops), otherwise readers silently return null columns.
-- **Read-only mirror.** External writes to the Iceberg table are detected and
-  block the sync.
-- **Metadata location.** Iceberg metadata lives under `iceberg_metadata_prefix`,
-  **outside** DuckLake's `data_path`; otherwise DuckLake's orphan cleanup would
-  delete it.
-- **Catalog access only through DuckDB** (`catalog/connection.py`), never
-  through psycopg. The catalog is attached with an explicit
-  `METADATA_CATALOG` so that `lake_meta.ducklake_*` tables are queryable.
-  Connections are `READ_ONLY` except for the flush, which also prevents a
-  mistyped DSN from silently creating an empty lake. Reads run inside a
-  transaction for a consistent view. File enumeration uses
-  `ducklake_list_files(...)`, cross-checked against `ducklake_data_file`; any
-  divergence aborts.
-- **One DuckLake table snapshot range is one Iceberg snapshot.**
-- **Iceberg v2 only**, because Athena only supports v2: no deletion vectors,
-  variant, geometry or nanosecond timestamps.
-
-### SQL safety
-
-DuckDB cannot bind identifiers, so SQL interpolates only identifiers validated
-at configuration load time (`metadata_catalog` and `catalog_alias`, see
-`config.py`) or passed through `quote_ident`. All values go through named
-parameters (`$table_id`, `$snapshot_id`, ...). Each module that interpolates SQL
-has a per-file `S608` ignore in `pyproject.toml` with a justification comment;
-adding one requires the same justification. Credentials never go in the DSN;
-PostgreSQL uses the libpq `PG*` environment variables.
-
-### Process-level caches
-
-boto3 sessions and clients (`aws.py`), the PyIceberg FileIO cache
-(`register.py`) and the `timing.py` counters are process-global.
-`tests/conftest.py` resets them around every test; a new process-level cache
-needs the same reset. Concurrency limits are centralized in `concurrency.py`.
-
-Configuration (`config.py`, pydantic-settings) is resolved as: CLI flag >
-`DUCKLAKE_ICEBERG_*` environment variable > `ducklake-iceberg.yaml` > default.
-
-### Performance measurements
-
-`DUCKLAKE_ICEBERG_TIMINGS=1` adds a `timings` key (per-phase milliseconds and counters
-for DuckDB connections, boto3 sessions and AWS calls) to the `--json` envelope.
-`scripts/bench_sync.py` runs a command N times and reports p50/p95. On WSL,
-benchmark from the Linux filesystem (not `/mnt/c`) and call the virtualenv
-executable directly instead of `poetry run`.
-
-## Pinned dependencies
-
-`duckdb` and `pyiceberg` are pinned to exact versions in `pyproject.toml`,
-and the extension builds (`ducklake`, `postgres`, `httpfs`, `aws`) are pinned
-in `src/ducklake_iceberg/deps.py`. `python -m ducklake_iceberg.deps` compares the environment
-with those pins (the Docker image build runs it), and the weekly,
-non-blocking `compat-latest` workflow runs the suite against the newest
-versions.
-
-To bump them:
-
-1. Update the `==` pin in `pyproject.toml` and run `poetry lock`.
-2. Update `src/ducklake_iceberg/deps.py` with the new extension hashes.
-3. Run `poetry run pytest -m "pins or roundtrip"` and the full suite.
+The fast suite enforces >=85% coverage; focused runs can use `--no-cov`.
+The subset coverage override does not weaken the full-suite gate. Warnings are
+errors. Real-AWS `e2e` runs need explicit authorization. Benchmark tools and
+measurement limits are documented in [testing](docs/testing.md#fresh-process-local-sync-benchmark).
 
 ## Releasing
 
-Versions follow [Semantic Versioning](https://semver.org/): `X.Y.Z` with an
-optional pre-release suffix `aN`, `bN` or `rcN`. Before 1.0.0, breaking changes
-to the CLI, exit codes or envelope bump the minor version.
-
-1. Move the `## [Unreleased]` entries of [CHANGELOG.md](CHANGELOG.md) under a
-   new `## [X.Y.Z] - YYYY-MM-DD` section and update the compare links.
-2. Set `version = "X.Y.Z"` in `pyproject.toml`.
-3. Verify locally:
-
-   ```bash
-   poetry check --lock
-   poetry build
-   poetry run twine check --strict dist/*
-   python scripts/check_release_version.py vX.Y.Z --changelog CHANGELOG.md
-   ```
-
-4. Rehearse on PyPI with a pre-release tag (`vX.Y.ZrcN`, with the same
-   version in `pyproject.toml` and a `## [X.Y.ZrcN]` changelog section): the
-   workflow publishes it to PyPI and creates a GitHub pre-release. Check the
-   install with `pipx run --spec "ducklake-iceberg==X.Y.ZrcN" ducklake-iceberg --version`.
-5. Merge to `main`, then tag and push the final version:
-   `git tag vX.Y.Z && git push origin vX.Y.Z`.
-
-The `release` workflow validates that the tag matches `pyproject.toml` and the
-changelog, builds the sdist and wheel, smoke-tests the wheel and the container
-image, and publishes with
-[Trusted Publishing](https://docs.pypi.org/trusted-publishers/) (no API token
-is stored): both pre-releases (`aN`, `bN`, `rcN`) and final versions go to PyPI,
-followed by a GitHub release. Pre-releases are marked as such on GitHub and
-are not marked as the latest release.
-
-One-time setup for maintainers:
-
-- On PyPI, add a *trusted publisher* for the repository `Didone/ducklake-iceberg`,
-  workflow `release.yml`, environment `pypi`.
-- In GitHub, create the `pypi` environment (optionally with
-  required reviewers).
+Release only a commit whose CI passed. Choose the version, update
+`pyproject.toml` and move Unreleased entries into the dated version section of
+`CHANGELOG.md`. Validate the clean distributions and container, then create/push
+the matching `vX.Y.Z` tag. The [release checklist](docs/testing.md#continuous-integration-and-releases)
+has the exact commands, Trusted Publishing setup and post-publication checks.
+Candidates such as `vX.Y.ZrcN` also publish to real PyPI and are marked GitHub
+pre-releases. Existing PyPI versions/files cannot be overwritten.

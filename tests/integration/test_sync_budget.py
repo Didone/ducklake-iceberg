@@ -9,7 +9,6 @@ inlined data is pending, and a single Session.
 
 from __future__ import annotations
 
-import json
 import os
 from collections.abc import Iterator
 from pathlib import Path
@@ -23,38 +22,20 @@ os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "testing")
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 
 from moto import mock_aws
-from typer.testing import CliRunner
 
 from ducklake_iceberg import timing
 from ducklake_iceberg.catalog.connection import DuckLakeConnection
 from ducklake_iceberg.checkpoint.model import TableRef
-from ducklake_iceberg.cli import app
 
-from .conftest import CatalogHarness
+from .conftest import CatalogFactory, CatalogHarness, run_sync, sync_config
 
 pytestmark = [pytest.mark.integration, pytest.mark.aws]
-
-runner = CliRunner()
-REGION = "us-east-1"
 
 
 @pytest.fixture
 def glue_env() -> Iterator[None]:
     with mock_aws(), mock.patch("ducklake_iceberg.glue._validate_metadata_location"):
         yield
-
-
-def _config(catalog: CatalogHarness, tmp_path: Path, *, inlining: int) -> Path:
-    catalog.write(f"CALL lake.set_option('data_inlining_row_limit', {inlining})")
-    path = tmp_path / "ducklake-iceberg.yaml"
-    path.write_text(
-        f"catalog_dsn: '{catalog.dsn}'\n"
-        f"data_path: '{catalog.data_path}'\n"
-        f"iceberg_metadata_prefix: '{tmp_path / 'iceberg'}'\n"
-        f"glue_database: analytics\n"
-        f"aws_region: {REGION}\n"
-    )
-    return path
 
 
 @pytest.fixture
@@ -87,32 +68,27 @@ def maintenance_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return calls
 
 
-def _sync(config: Path, *extra: str) -> tuple[int, dict[str, Any]]:
-    timing.reset()
-    result = runner.invoke(
-        app, ["sync", "--table", "main.t", "--config", str(config), "--json", *extra]
-    )
-    return result.exit_code, json.loads(result.stdout)
-
-
 def _steps(doc: dict[str, Any]) -> list[str]:
     return [s["step"] for s in doc["results"][0]["steps"]]
 
 
 def test_sync_without_inlined_uses_one_read_only_connection(
-    catalog: CatalogHarness,
+    make_catalog: CatalogFactory,
     tmp_path: Path,
     glue_env: None,
     opened: list[bool],
     maintenance_calls: list[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config = _config(catalog, tmp_path, inlining=0)
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t SELECT * FROM range(10)")
+    catalog = make_catalog(
+        "CALL lake.set_option('data_inlining_row_limit', 0)",
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t SELECT * FROM range(10)",
+    )
+    config = sync_config(catalog, tmp_path)
     _forbid(monkeypatch, "ducklake_iceberg.checkpoint.flush.read_fingerprint")
 
-    code, doc = _sync(config)
+    code, doc = run_sync(config)
     assert code == 0, doc["problems"]
     assert opened == [True]
     assert maintenance_calls == []
@@ -120,7 +96,7 @@ def test_sync_without_inlined_uses_one_read_only_connection(
     assert _steps(doc) == ["doctor", "checkpoint", "export", "register"]
 
     opened.clear()
-    code, doc = _sync(config)
+    code, doc = run_sync(config)
     assert code == 4
     assert opened == [True]
     assert timing.counter("duckdb.connect") == 1
@@ -128,13 +104,16 @@ def test_sync_without_inlined_uses_one_read_only_connection(
 
 
 def test_sync_resolves_aws_session_once(
-    catalog: CatalogHarness, tmp_path: Path, glue_env: None
+    make_catalog: CatalogFactory, tmp_path: Path, glue_env: None
 ) -> None:
-    config = _config(catalog, tmp_path, inlining=0)
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t SELECT * FROM range(10)")
+    catalog = make_catalog(
+        "CALL lake.set_option('data_inlining_row_limit', 0)",
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t SELECT * FROM range(10)",
+    )
+    config = sync_config(catalog, tmp_path)
 
-    code, doc = _sync(config)
+    code, doc = run_sync(config)
     assert code == 0, doc["problems"]
     # export (FileIO) and register (FileIO, GlueCatalog, GetTable/UpdateTable)
     # share the process-wide Session and FileIO
@@ -143,17 +122,20 @@ def test_sync_resolves_aws_session_once(
 
 
 def test_sync_with_inlined_only_flushes(
-    catalog: CatalogHarness,
+    make_catalog: CatalogFactory,
     tmp_path: Path,
     glue_env: None,
     opened: list[bool],
     maintenance_calls: list[str],
 ) -> None:
-    config = _config(catalog, tmp_path, inlining=1000)
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t SELECT * FROM range(10)")
+    catalog = make_catalog(
+        "CALL lake.set_option('data_inlining_row_limit', 1000)",
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t SELECT * FROM range(10)",
+    )
+    config = sync_config(catalog, tmp_path)
 
-    code, doc = _sync(config)
+    code, doc = run_sync(config)
     assert code == 0, doc["problems"]
     assert maintenance_calls == ["main.t"]
     assert opened == [True]  # RW is a temporary attachment on the same root
@@ -178,15 +160,18 @@ def _forbid(monkeypatch: pytest.MonkeyPatch, *targets: str) -> None:
 
 
 def test_unchanged_sync_reads_only_pointer_and_glue(
-    catalog: CatalogHarness,
+    make_catalog: CatalogFactory,
     tmp_path: Path,
     glue_env: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config = _config(catalog, tmp_path, inlining=0)
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t SELECT * FROM range(10)")
-    code, doc = _sync(config)
+    catalog = make_catalog(
+        "CALL lake.set_option('data_inlining_row_limit', 0)",
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t SELECT * FROM range(10)",
+    )
+    config = sync_config(catalog, tmp_path)
+    code, doc = run_sync(config)
     assert code == 0, doc["problems"]
 
     published = doc["results"][0]["metadata_location"]
@@ -200,7 +185,7 @@ def test_unchanged_sync_reads_only_pointer_and_glue(
         "ducklake_iceberg.register._read_metadata_properties",
         "ducklake_iceberg.glue._read_metadata",
     )
-    code, doc = _sync(config)
+    code, doc = run_sync(config)
     assert code == 4, doc["problems"]
     steps = {s["step"]: s for s in doc["results"][0]["steps"]}
     assert steps["export"]["exit_code"] == 4
@@ -211,15 +196,18 @@ def test_unchanged_sync_reads_only_pointer_and_glue(
 
 
 def test_changed_sync_register_does_not_reread(
-    catalog: CatalogHarness,
+    make_catalog: CatalogFactory,
     tmp_path: Path,
     glue_env: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config = _config(catalog, tmp_path, inlining=0)
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t SELECT * FROM range(10)")
-    code, doc = _sync(config)
+    catalog = make_catalog(
+        "CALL lake.set_option('data_inlining_row_limit', 0)",
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t SELECT * FROM range(10)",
+    )
+    config = sync_config(catalog, tmp_path)
+    code, doc = run_sync(config)
     assert code == 0, doc["problems"]
 
     catalog.write("INSERT INTO lake.main.t SELECT * FROM range(10, 20)")
@@ -230,7 +218,7 @@ def test_changed_sync_register_does_not_reread(
         "ducklake_iceberg.glue._read_metadata",
         "ducklake_iceberg.glue._metadata_exists",
     )
-    code, doc = _sync(config)
+    code, doc = run_sync(config)
     assert code == 0, doc["problems"]
     steps = {s["step"]: s for s in doc["results"][0]["steps"]}
     assert steps["register"]["outcome"] == "updated"
@@ -238,16 +226,19 @@ def test_changed_sync_register_does_not_reread(
 
 
 def test_unchanged_after_upgrade_takes_full_path(
-    catalog: CatalogHarness,
+    make_catalog: CatalogFactory,
     tmp_path: Path,
     glue_env: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Different tool version in the pointer: the shortcut does not apply."""
-    config = _config(catalog, tmp_path, inlining=0)
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t SELECT * FROM range(10)")
-    code, doc = _sync(config)
+    catalog = make_catalog(
+        "CALL lake.set_option('data_inlining_row_limit', 0)",
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t SELECT * FROM range(10)",
+    )
+    config = sync_config(catalog, tmp_path)
+    code, doc = run_sync(config)
     assert code == 0, doc["problems"]
 
     from ducklake_iceberg import export
@@ -261,7 +252,7 @@ def test_unchanged_after_upgrade_takes_full_path(
 
     monkeypatch.setattr(export, "load_base_snapshot", spy)
     monkeypatch.setattr(export, "__version__", "9.9.9")
-    code, doc = _sync(config)
+    code, doc = run_sync(config)
     assert code == 4, doc["problems"]
     assert calls  # full path: manifests re-read and compared
 
@@ -279,14 +270,19 @@ def test_unchanged_shortcut_refuses_window_with_expired_snapshots(
     """
     if catalog.backend != "sqlite":
         pytest.skip("state is forged directly in SQLite")
-    config = _config(catalog, tmp_path, inlining=0)
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t SELECT * FROM range(10)")
-    code, doc = _sync(config)
+    config = sync_config(catalog, tmp_path)
+    catalog.write(
+        "CALL lake.set_option('data_inlining_row_limit', 0)",
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t SELECT * FROM range(10)",
+    )
+    code, doc = run_sync(config)
     assert code == 0, doc["problems"]
 
-    catalog.write("INSERT INTO lake.main.t SELECT * FROM range(10, 15)")
-    catalog.write("CREATE TABLE lake.main.outra (x INTEGER)")
+    catalog.write(
+        "INSERT INTO lake.main.t SELECT * FROM range(10, 15)",
+        "CREATE TABLE lake.main.outra (x INTEGER)",
+    )
     for table in ("ducklake_snapshot_changes", "ducklake_snapshot"):
         catalog.meta_exec(
             f"DELETE FROM {table} WHERE snapshot_id = (SELECT snapshot_id FROM "
@@ -294,7 +290,7 @@ def test_unchanged_shortcut_refuses_window_with_expired_snapshots(
             "ORDER BY snapshot_id DESC LIMIT 1)"
         )
 
-    code, doc = _sync(config)
+    code, doc = run_sync(config)
     assert code == 0, doc["problems"]
     steps = {s["step"]: s for s in doc["results"][0]["steps"]}
     assert steps["export"]["added_data_files"] == 1

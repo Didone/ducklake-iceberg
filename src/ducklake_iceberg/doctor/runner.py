@@ -26,6 +26,8 @@ from datetime import UTC, datetime
 
 import duckdb
 
+from ducklake_iceberg import timing
+from ducklake_iceberg.catalog.query import Params, prime_reads
 from ducklake_iceberg.doctor.model import (
     DoctorContext,
     Finding,
@@ -83,6 +85,39 @@ def run(
         results=tuple(results),
         revalidation=revalidation,
     )
+
+
+def prefetch(ctx: DoctorContext) -> None:
+    """Prime stable read results; failures still belong to individual rules."""
+    from ducklake_iceberg.doctor.rules import (
+        calendar_transform,
+        delete_files,
+        encryption_key,
+        mapping_divergence,
+        partial_files,
+        unsupported_type,
+    )
+
+    statements = [
+        partial_files._sql(ctx),
+        delete_files._sql_parquet(ctx),
+        delete_files._sql_puffin_option(ctx),
+        mapping_divergence._sql_distribution(ctx),
+        mapping_divergence._sql_types(ctx),
+        encryption_key._sql(ctx),
+        unsupported_type._sql(ctx),
+        calendar_transform._sql(ctx),
+    ]
+    requests: list[tuple[str, Params]] = [
+        (sql, {name: value for name, value in ctx.bind.items() if f"${name}" in sql})
+        for sql in statements
+    ]
+    try:
+        prime_reads(ctx.con, requests)
+    except duckdb.Error:
+        # Do not mask a rule error or attribute a shared query failure to all
+        # rules. The runner executes the original reads and produces its report.
+        timing.count("catalog.batch_failures")
 
 
 def _execute_plan(plan: ExecutionPlan, ctx: DoctorContext) -> list[RuleResult]:

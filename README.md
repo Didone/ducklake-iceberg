@@ -230,8 +230,8 @@ poetry run ruff format --check .
 poetry run mypy
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the architecture notes, test markers
-and the release process, and [deployment documentation](docs/deploy/README.md) for the IAM
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the contributor walkthrough, code ownership
+and release policy, and [deployment documentation](docs/deploy/README.md) for the IAM
 policy, Docker, ECS/EventBridge and Airflow examples.
 
 ## Releasing

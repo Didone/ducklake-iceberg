@@ -31,30 +31,32 @@ _LONG = "z" * 300 + "\u00e7"  # > 256: the catalog truncates the max
 
 
 def _seed(catalog: CatalogHarness) -> None:
-    catalog.write("CALL lake.set_option('data_inlining_row_limit', 0)")
     catalog.write(
-        "CREATE TABLE lake.main.t ("
-        " i8 TINYINT, i32 INTEGER, i64 BIGINT, b BOOLEAN, d DATE,"
-        " dec DECIMAL(38,10), dec2 DECIMAL(9,2), s VARCHAR, f FLOAT, g DOUBLE,"
-        " ts TIMESTAMP, tz TIMESTAMPTZ, tm TIME, u UUID, bl BLOB,"
-        " st STRUCT(x INTEGER, y VARCHAR), l INTEGER[])"
-    )
-    catalog.write(
-        "INSERT INTO lake.main.t VALUES"
-        " (-128, -5, 9223372036854775807, true, DATE '1970-01-01',"
-        "  12345678901234567890.0123456789, -1.25,"
-        f"  '{_LONG}', 'nan'::FLOAT, -0.0,"
-        "  TIMESTAMP '2024-01-01 00:00:00.123456',"
-        "  TIMESTAMPTZ '2024-03-01 10:00:00.5-03', TIME '12:34:56.789012',"
-        "  '00000000-0000-0000-0000-000000000001', '\\x00\\xff'::BLOB,"
-        "  {'x': 1, 'y': 'a'}, [1, 2]),"
-        " (127, 7, -1, false, DATE '2099-12-31', -0.0000000001, 99.99,"
-        "  'caf\u00e9', 1.5, 'inf'::DOUBLE, TIMESTAMP '1999-12-31 23:59:59',"
-        "  TIMESTAMPTZ '2024-03-01 13:00:00+00', TIME '00:00:00',"
-        "  'ffffffff-ffff-ffff-ffff-ffffffffffff', '\\x01'::BLOB,"
-        "  {'x': NULL, 'y': 'b'}, NULL),"
-        " (NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,"
-        "  NULL, NULL, NULL, NULL, NULL, [3])"
+        "CALL lake.set_option('data_inlining_row_limit', 0)",
+        (
+            "CREATE TABLE lake.main.t ("
+            " i8 TINYINT, i32 INTEGER, i64 BIGINT, b BOOLEAN, d DATE,"
+            " dec DECIMAL(38,10), dec2 DECIMAL(9,2), s VARCHAR, f FLOAT, g DOUBLE,"
+            " ts TIMESTAMP, tz TIMESTAMPTZ, tm TIME, u UUID, bl BLOB,"
+            " st STRUCT(x INTEGER, y VARCHAR), l INTEGER[])"
+        ),
+        (
+            "INSERT INTO lake.main.t VALUES"
+            " (-128, -5, 9223372036854775807, true, DATE '1970-01-01',"
+            "  12345678901234567890.0123456789, -1.25,"
+            f"  '{_LONG}', 'nan'::FLOAT, -0.0,"
+            "  TIMESTAMP '2024-01-01 00:00:00.123456',"
+            "  TIMESTAMPTZ '2024-03-01 10:00:00.5-03', TIME '12:34:56.789012',"
+            "  '00000000-0000-0000-0000-000000000001', '\\x00\\xff'::BLOB,"
+            "  {'x': 1, 'y': 'a'}, [1, 2]),"
+            " (127, 7, -1, false, DATE '2099-12-31', -0.0000000001, 99.99,"
+            "  'caf\u00e9', 1.5, 'inf'::DOUBLE, TIMESTAMP '1999-12-31 23:59:59',"
+            "  TIMESTAMPTZ '2024-03-01 13:00:00+00', TIME '00:00:00',"
+            "  'ffffffff-ffff-ffff-ffff-ffffffffffff', '\\x01'::BLOB,"
+            "  {'x': NULL, 'y': 'b'}, NULL),"
+            " (NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,"
+            "  NULL, NULL, NULL, NULL, NULL, [3])"
+        ),
     )
     # second file: only nulls in some columns, repeated values in others
     catalog.write(

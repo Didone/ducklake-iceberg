@@ -328,8 +328,8 @@ separately testable:
 | `DepthExceededError` in the same module | Nested traversal exceeded the safety limit, indicating pathological depth/cycle; do not ignore the affected subtree. |
 | [`CalendarTransformRule`](../src/ducklake_iceberg/doctor/rules/calendar_transform.py) | Calendar versus epoch partition semantics; reports degradation. |
 | [`ParquetCompressionRule`](../src/ducklake_iceberg/doctor/rules/parquet_compression.py) | Source Parquet compression options; recommends compatible/preferred source configuration, does not recompress. |
-| [`DeleteParquetRule`](../src/ducklake_iceberg/doctor/rules/delete_parquet.py) | Format/counts of live non-Puffin deletes; Parquet conversion is permitted with the position-delete capability. Requires inlined gate. |
-| [`DeletePuffinRule`](../src/ducklake_iceberg/doctor/rules/delete_puffin.py) | Puffin deletion vectors that cannot be republished as supported v2 metadata. Requires inlined gate. |
+| [`DeleteParquetRule`](../src/ducklake_iceberg/doctor/rules/delete_files.py) | Format/counts of live non-Puffin deletes; Parquet conversion is permitted with the position-delete capability. Requires inlined gate. |
+| [`DeletePuffinRule`](../src/ducklake_iceberg/doctor/rules/delete_files.py) | Puffin deletion vectors that cannot be republished as supported v2 metadata. Requires inlined gate. |
 | [`EncryptionKeyRule`](../src/ducklake_iceberg/doctor/rules/encryption_key.py) | Unsupported source file `encryption_key`. Requires inlined gate. |
 | [`MappingDivergenceRule`](../src/ducklake_iceberg/doctor/rules/mapping_divergence.py) | Distribution/types of per-file `mapping_id`; current export does not emit name mappings. Requires inlined gate. |
 | [`PartialFilesRule`](../src/ducklake_iceberg/doctor/rules/partial_files.py) | Whether `partial_max` exceeds target; routine already-visible partial files only produce INFO. Requires inlined gate. |

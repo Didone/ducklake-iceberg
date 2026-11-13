@@ -29,6 +29,25 @@ example: "envelope v1: optional key `timings`".
 
 ### Changed
 
+- Group delete-format compatibility rules, keep batched reads beside their runner,
+  and remove an unused partition forwarding helper without changing sync behavior.
+- Share local benchmark service/environment cleanup across profiles and use
+  explicit fixture injection for extension-install measurements.
+- Make the contributor guide the starting point for tracing and changing a sync.
+- Reuse a session-owned PostgreSQL test service with isolated databases per case,
+  batch setup statements without merging commits, and make the complete MinIO
+  lifecycle independently runnable.
+- Reuse one source attachment per snapshot comparison in second-reader tests and
+  copy only required extensions into isolated extension-directory fixtures.
+- Bound common integration scenarios to two DuckDB threads while retaining
+  explicit native-default and custom-limit coverage on both catalog backends.
+- Prepare compound catalog fixtures through one owned bootstrap connection,
+  centralize the file-backed Lake fixture, and keep sync YAML creation free of
+  source-data side effects. Every SQL statement retains its own commit.
+- Batch the reference workload's four file-producing inserts on one source
+  connection, with regression coverage for separate snapshots and physical files.
+- Prepare eligible scenarios directly from their initial SQL and restore the
+  prior doctor registry after synthetic-rule tests, allowing independent ordering.
 - Reuse one DuckDB root during sync, including flush through read-only/write/
   read-only attachments; freshly validate the source after each write.
 - Use single GETs for metadata reads and conditional single PUTs for small

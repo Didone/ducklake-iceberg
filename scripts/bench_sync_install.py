@@ -67,9 +67,8 @@ def main() -> None:
         42,
         ["I"],
     )
-    reference.Fixture = InstallFixture
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
-    raise SystemExit(reference.run(opts))
+    raise SystemExit(reference.run(opts, fixture_factory=InstallFixture))
 
 
 if __name__ == "__main__":

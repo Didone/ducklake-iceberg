@@ -25,9 +25,11 @@ pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("aws_credentials"
 
 @pytest.fixture
 def settings(catalog: CatalogHarness, tmp_path: Path) -> DuckLakeIcebergSettings:
-    catalog.write("CALL lake.set_option('data_inlining_row_limit', 0)")
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER, p INTEGER)")
-    catalog.write("INSERT INTO lake.main.t VALUES (1, 7), (2, 8)")
+    catalog.write(
+        "CALL lake.set_option('data_inlining_row_limit', 0)",
+        "CREATE TABLE lake.main.t (id INTEGER, p INTEGER)",
+        "INSERT INTO lake.main.t VALUES (1, 7), (2, 8)",
+    )
     return catalog.settings(iceberg_metadata_prefix=str(tmp_path / "iceberg"))
 
 
@@ -147,12 +149,16 @@ def test_drop_former_partition_column_keeps_rows_readable(
     settings: DuckLakeIcebergSettings,
     initial_export: bool,
 ) -> None:
-    catalog.write("ALTER TABLE lake.main.t SET PARTITIONED BY (p)")
-    catalog.write("INSERT INTO lake.main.t VALUES (3, 7), (4, 8)")
+    catalog.write(
+        "ALTER TABLE lake.main.t SET PARTITIONED BY (p)",
+        "INSERT INTO lake.main.t VALUES (3, 7), (4, 8)",
+    )
     if initial_export:
         run_export(settings, "main", "t")
-    catalog.write("ALTER TABLE lake.main.t RESET PARTITIONED BY")
-    catalog.write("ALTER TABLE lake.main.t DROP COLUMN p")
+    catalog.write(
+        "ALTER TABLE lake.main.t RESET PARTITIONED BY",
+        "ALTER TABLE lake.main.t DROP COLUMN p",
+    )
     result = run_export(settings, "main", "t")
     table = StaticTable.from_metadata(result.metadata_location)
     assert table.schema().column_names == ["id"]
@@ -225,10 +231,12 @@ def test_cli_preserves_quoted_identifiers_through_flush_and_export(
 ) -> None:
     import yaml
 
-    catalog.write("CALL lake.set_option('data_inlining_row_limit', 100)")
-    catalog.write('CREATE SCHEMA lake."s.dot"')
-    catalog.write('CREATE TABLE lake."s.dot"."a.b" (id INTEGER)')
-    catalog.write('INSERT INTO lake."s.dot"."a.b" VALUES (99)')
+    catalog.write(
+        "CALL lake.set_option('data_inlining_row_limit', 100)",
+        'CREATE SCHEMA lake."s.dot"',
+        'CREATE TABLE lake."s.dot"."a.b" (id INTEGER)',
+        'INSERT INTO lake."s.dot"."a.b" VALUES (99)',
+    )
     config = tmp_path / "config.yaml"
     config.write_text(yaml.safe_dump(settings.model_dump()))
     runner = CliRunner()

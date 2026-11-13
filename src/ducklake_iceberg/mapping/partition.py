@@ -66,7 +66,6 @@ from ducklake_iceberg.mapping.transforms import map_transform as map_transform
 
 if TYPE_CHECKING:
     import duckdb
-    from pyiceberg.io.pyarrow import DataFileStatistics
 
 PARTITION_FIELD_ID_START: Final[int] = 1000
 UNPARTITIONED_SPEC_ID: Final[int] = 0
@@ -644,10 +643,3 @@ def _decode_bool(text: str) -> bool:
 def _is_integer_literal(text: str) -> bool:
     candidate = text[1:] if text.startswith("-") else text
     return candidate.isdigit()
-
-
-def partition_from_stats(
-    stats: DataFileStatistics, spec: PartitionSpec, schema: Schema
-) -> Record:
-    """Fallback: derive the partition from the footer bounds."""
-    return stats.partition(spec, schema)

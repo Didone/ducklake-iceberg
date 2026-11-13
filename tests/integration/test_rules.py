@@ -27,7 +27,7 @@ from ducklake_iceberg.doctor.rules import (
     partial_files,
     unsupported_type,
 )
-from tests.integration.conftest import CatalogHarness
+from tests.integration.conftest import CatalogFactory, CatalogHarness
 
 pytestmark = pytest.mark.integration
 
@@ -65,13 +65,11 @@ def _meta_count(harness: CatalogHarness, sql: str) -> int:
 # --------------------------------------------------------------------------
 # inlined-data
 # --------------------------------------------------------------------------
-def test_inlined_data_triggers(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE SCHEMA IF NOT EXISTS lake.main")
-    catalog.write(
-        "CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR, valor DOUBLE)"
-    )
-    catalog.write(
-        "INSERT INTO lake.main.pedidos VALUES (1, 'SP', 10.5), (2, 'MG', 20.0)"
+def test_inlined_data_triggers(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
+        "CREATE SCHEMA IF NOT EXISTS lake.main",
+        "CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR, valor DOUBLE)",
+        "INSERT INTO lake.main.pedidos VALUES (1, 'SP', 10.5), (2, 'MG', 20.0)",
     )
 
     # expected state: an inlined data record exists and there is no data file
@@ -94,13 +92,15 @@ def test_inlined_data_triggers(catalog: CatalogHarness) -> None:
     assert any("inlined" in f.detail for f in blockers)
 
 
-def test_inlined_data_passes_after_flush(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE SCHEMA IF NOT EXISTS lake.main")
-    catalog.write("CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR)")
-    catalog.write("INSERT INTO lake.main.pedidos VALUES (1, 'SP'), (2, 'MG')")
-    catalog.write(
-        "CALL ducklake_flush_inlined_data('lake', schema_name => 'main', "
-        "table_name => 'pedidos')"
+def test_inlined_data_passes_after_flush(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
+        "CREATE SCHEMA IF NOT EXISTS lake.main",
+        "CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR)",
+        "INSERT INTO lake.main.pedidos VALUES (1, 'SP'), (2, 'MG')",
+        (
+            "CALL ducklake_flush_inlined_data('lake', schema_name => 'main', "
+            "table_name => 'pedidos')"
+        ),
     )
 
     data_files = _meta_count(
@@ -118,13 +118,15 @@ def test_inlined_data_passes_after_flush(catalog: CatalogHarness) -> None:
 # partial-files: same catalog, two snapshot targets (proves the `>` bound)
 # --------------------------------------------------------------------------
 def _seed_partial(catalog: CatalogHarness) -> int | None:
-    catalog.write("CREATE SCHEMA IF NOT EXISTS lake.main")
-    catalog.write("CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR)")
-    catalog.write("INSERT INTO lake.main.pedidos VALUES (1, 'SP')")  # snapshot a
-    catalog.write("INSERT INTO lake.main.pedidos VALUES (2, 'MG')")  # snapshot b
     catalog.write(
-        "CALL ducklake_flush_inlined_data('lake', schema_name => 'main', "
-        "table_name => 'pedidos')"
+        "CREATE SCHEMA IF NOT EXISTS lake.main",
+        "CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR)",
+        "INSERT INTO lake.main.pedidos VALUES (1, 'SP')",
+        "INSERT INTO lake.main.pedidos VALUES (2, 'MG')",
+        (
+            "CALL ducklake_flush_inlined_data('lake', schema_name => 'main', "
+            "table_name => 'pedidos')"
+        ),
     )
     rows = _meta_rows(
         catalog,
@@ -168,12 +170,14 @@ def test_partial_files_info_when_within_target(catalog: CatalogHarness) -> None:
 # --------------------------------------------------------------------------
 # unsupported-type
 # --------------------------------------------------------------------------
-def test_unsupported_type_triggers(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE SCHEMA IF NOT EXISTS lake.main")
-    catalog.write(
-        "CREATE TABLE lake.main.pedidos ("
-        "  id INTEGER, qtd UINTEGER, criado_em TIMESTAMP_MS,"
-        "  medicao STRUCT(duracao INTERVAL))"
+def test_unsupported_type_triggers(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
+        "CREATE SCHEMA IF NOT EXISTS lake.main",
+        (
+            "CREATE TABLE lake.main.pedidos ("
+            "  id INTEGER, qtd UINTEGER, criado_em TIMESTAMP_MS,"
+            "  medicao STRUCT(duracao INTERVAL))"
+        ),
     )
     findings = _run_rule(catalog, unsupported_type.RULE, "main.pedidos")
     blockers = [f for f in findings if f.severity.name == "BLOCKER"]
@@ -181,13 +185,15 @@ def test_unsupported_type_triggers(catalog: CatalogHarness) -> None:
     assert any("medicao.duracao" in f.subject for f in blockers)
 
 
-def test_unsupported_type_passes(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE SCHEMA IF NOT EXISTS lake.main")
-    catalog.write(
-        "CREATE TABLE lake.main.pedidos ("
-        "  id BIGINT, criado_em TIMESTAMP, preco DECIMAL(18,2),"
-        "  tags VARCHAR[], atributos MAP(VARCHAR, VARCHAR),"
-        "  medicao STRUCT(duracao BIGINT))"
+def test_unsupported_type_passes(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
+        "CREATE SCHEMA IF NOT EXISTS lake.main",
+        (
+            "CREATE TABLE lake.main.pedidos ("
+            "  id BIGINT, criado_em TIMESTAMP, preco DECIMAL(18,2),"
+            "  tags VARCHAR[], atributos MAP(VARCHAR, VARCHAR),"
+            "  medicao STRUCT(duracao BIGINT))"
+        ),
     )
     findings = _run_rule(catalog, unsupported_type.RULE, "main.pedidos")
     blockers = [f for f in findings if f.severity.name == "BLOCKER"]
@@ -199,9 +205,11 @@ def test_unsupported_type_passes(catalog: CatalogHarness) -> None:
 # --------------------------------------------------------------------------
 # calendar-transform
 # --------------------------------------------------------------------------
-def test_calendar_transform_triggers(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE SCHEMA IF NOT EXISTS lake.main")
-    catalog.write("CREATE TABLE lake.main.pedidos (id INTEGER, dt DATE)")
+def test_calendar_transform_triggers(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
+        "CREATE SCHEMA IF NOT EXISTS lake.main",
+        "CREATE TABLE lake.main.pedidos (id INTEGER, dt DATE)",
+    )
     try:
         catalog.write("ALTER TABLE lake.main.pedidos SET PARTITIONED BY (year(dt))")
     except Exception as exc:
@@ -218,9 +226,11 @@ def test_calendar_transform_triggers(catalog: CatalogHarness) -> None:
     assert degraded, "year() in the current spec should degrade"
 
 
-def test_calendar_transform_identity_passes(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE SCHEMA IF NOT EXISTS lake.main")
-    catalog.write("CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR, dt DATE)")
+def test_calendar_transform_identity_passes(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
+        "CREATE SCHEMA IF NOT EXISTS lake.main",
+        "CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR, dt DATE)",
+    )
     try:
         catalog.write("ALTER TABLE lake.main.pedidos SET PARTITIONED BY (uf)")
     except Exception as exc:
@@ -236,13 +246,15 @@ def test_calendar_transform_identity_passes(catalog: CatalogHarness) -> None:
 def test_mapping_divergence_clean_passes(catalog: CatalogHarness) -> None:
     from ducklake_iceberg.doctor.rules import mapping_divergence
 
-    catalog.write("CREATE SCHEMA IF NOT EXISTS lake.main")
-    catalog.write("CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR)")
-    catalog.write("INSERT INTO lake.main.pedidos VALUES (1, 'SP')")
-    catalog.write("INSERT INTO lake.main.pedidos VALUES (2, 'MG')")
     catalog.write(
-        "CALL ducklake_flush_inlined_data('lake', schema_name => 'main', "
-        "table_name => 'pedidos')"
+        "CREATE SCHEMA IF NOT EXISTS lake.main",
+        "CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR)",
+        "INSERT INTO lake.main.pedidos VALUES (1, 'SP')",
+        "INSERT INTO lake.main.pedidos VALUES (2, 'MG')",
+        (
+            "CALL ducklake_flush_inlined_data('lake', schema_name => 'main', "
+            "table_name => 'pedidos')"
+        ),
     )
     findings = _run_rule(catalog, mapping_divergence.RULE, "main.pedidos")
     assert findings == []
@@ -251,12 +263,14 @@ def test_mapping_divergence_clean_passes(catalog: CatalogHarness) -> None:
 def test_encryption_key_clean_passes(catalog: CatalogHarness) -> None:
     from ducklake_iceberg.doctor.rules import encryption_key
 
-    catalog.write("CREATE SCHEMA IF NOT EXISTS lake.main")
-    catalog.write("CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR)")
-    catalog.write("INSERT INTO lake.main.pedidos VALUES (1, 'SP')")
     catalog.write(
-        "CALL ducklake_flush_inlined_data('lake', schema_name => 'main', "
-        "table_name => 'pedidos')"
+        "CREATE SCHEMA IF NOT EXISTS lake.main",
+        "CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR)",
+        "INSERT INTO lake.main.pedidos VALUES (1, 'SP')",
+        (
+            "CALL ducklake_flush_inlined_data('lake', schema_name => 'main', "
+            "table_name => 'pedidos')"
+        ),
     )
     findings = _run_rule(catalog, encryption_key.RULE, "main.pedidos")
     assert findings == []

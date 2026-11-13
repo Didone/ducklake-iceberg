@@ -84,14 +84,16 @@ def _data_ok(expected_rows: int) -> None:
 def test_epoch_day_identity_and_bucket_use_standard_names(
     catalog: CatalogHarness, config: Path, glue_env: None
 ) -> None:
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER, created_at DATE, uf VARCHAR)")
     catalog.write(
-        "ALTER TABLE lake.main.t SET PARTITIONED BY "
-        "(epoch_day(created_at), uf, bucket(16, id))"
-    )
-    catalog.write(
-        "INSERT INTO lake.main.t SELECT i, DATE '2024-01-01' + (i % 3)::INTEGER, "
-        "CASE WHEN i % 2 = 0 THEN 'SP' ELSE 'RJ' END FROM range(40) r(i)"
+        "CREATE TABLE lake.main.t (id INTEGER, created_at DATE, uf VARCHAR)",
+        (
+            "ALTER TABLE lake.main.t SET PARTITIONED BY "
+            "(epoch_day(created_at), uf, bucket(16, id))"
+        ),
+        (
+            "INSERT INTO lake.main.t SELECT i, DATE '2024-01-01' + (i % 3)::INTEGER, "
+            "CASE WHEN i % 2 = 0 THEN 'SP' ELSE 'RJ' END FROM range(40) r(i)"
+        ),
     )
     _sync(config)
 
@@ -103,9 +105,11 @@ def test_published_spec_keeps_its_name_in_incremental_export(
     catalog: CatalogHarness, config: Path, glue_env: None
 ) -> None:
     """A spec published by an older version (``c<id>_day``) is not renamed."""
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER, created_at DATE)")
-    catalog.write("ALTER TABLE lake.main.t SET PARTITIONED BY (epoch_day(created_at))")
-    catalog.write("INSERT INTO lake.main.t VALUES (1, DATE '2024-01-01')")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id INTEGER, created_at DATE)",
+        "ALTER TABLE lake.main.t SET PARTITIONED BY (epoch_day(created_at))",
+        "INSERT INTO lake.main.t VALUES (1, DATE '2024-01-01')",
+    )
     _sync(config)
     legacy = f"c{_table().spec().fields[0].source_id}_day"
     location = Path(_table().metadata_location.removeprefix("file://"))
@@ -127,19 +131,25 @@ def test_new_spec_gets_standard_name_and_old_spec_is_kept(
 ) -> None:
     """A rename after creation does not change the name; a new spec uses the
     standard name."""
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER, created_at DATE)")
-    catalog.write("ALTER TABLE lake.main.t SET PARTITIONED BY (epoch_day(created_at))")
-    catalog.write("INSERT INTO lake.main.t VALUES (1, DATE '2024-01-01')")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id INTEGER, created_at DATE)",
+        "ALTER TABLE lake.main.t SET PARTITIONED BY (epoch_day(created_at))",
+        "INSERT INTO lake.main.t VALUES (1, DATE '2024-01-01')",
+    )
     _sync(config)
     old_spec_id = _table().spec().spec_id
 
-    catalog.write("ALTER TABLE lake.main.t RENAME COLUMN created_at TO created_on")
-    catalog.write("INSERT INTO lake.main.t VALUES (2, DATE '2024-01-02')")
+    catalog.write(
+        "ALTER TABLE lake.main.t RENAME COLUMN created_at TO created_on",
+        "INSERT INTO lake.main.t VALUES (2, DATE '2024-01-02')",
+    )
     _sync(config)
     assert _names() == ["created_at_day"]
 
-    catalog.write("ALTER TABLE lake.main.t SET PARTITIONED BY (bucket(4, id))")
-    catalog.write("INSERT INTO lake.main.t VALUES (3, DATE '2024-01-03')")
+    catalog.write(
+        "ALTER TABLE lake.main.t SET PARTITIONED BY (bucket(4, id))",
+        "INSERT INTO lake.main.t VALUES (3, DATE '2024-01-03')",
+    )
     _sync(config)
 
     assert _names() == ["id_bucket_4"]
@@ -150,10 +160,12 @@ def test_new_spec_gets_standard_name_and_old_spec_is_kept(
 def test_first_export_after_rename_uses_name_at_spec_creation(
     catalog: CatalogHarness, config: Path, glue_env: None
 ) -> None:
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER, created_at DATE)")
-    catalog.write("ALTER TABLE lake.main.t SET PARTITIONED BY (epoch_day(created_at))")
-    catalog.write("INSERT INTO lake.main.t VALUES (1, DATE '2024-01-01')")
-    catalog.write("ALTER TABLE lake.main.t RENAME COLUMN created_at TO created_on")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id INTEGER, created_at DATE)",
+        "ALTER TABLE lake.main.t SET PARTITIONED BY (epoch_day(created_at))",
+        "INSERT INTO lake.main.t VALUES (1, DATE '2024-01-01')",
+        "ALTER TABLE lake.main.t RENAME COLUMN created_at TO created_on",
+    )
     _sync(config)
 
     assert _names() == ["created_at_day"]

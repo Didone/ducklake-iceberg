@@ -17,7 +17,7 @@ from ducklake_iceberg.checkpoint import flush
 from ducklake_iceberg.checkpoint.flush import flush_inlined, read_fingerprint
 from ducklake_iceberg.checkpoint.model import CheckpointError
 from ducklake_iceberg.errors import ConfigError, DivergenceError, ExitCode
-from tests.integration.conftest import CatalogHarness
+from tests.integration.conftest import CatalogFactory, CatalogHarness
 
 pytestmark = [pytest.mark.integration]
 
@@ -76,10 +76,12 @@ def test_flush_idempotent(seeded_catalog: CatalogHarness) -> None:
 
 
 # --- the flush never compacts ------------------------------------------------
-def test_flush_does_not_merge_small_files(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE TABLE lake.main.files (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.files SELECT range FROM range(0, 50)")
-    catalog.write("INSERT INTO lake.main.files SELECT range FROM range(50, 100)")
+def test_flush_does_not_merge_small_files(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
+        "CREATE TABLE lake.main.files (id INTEGER)",
+        "INSERT INTO lake.main.files SELECT range FROM range(0, 50)",
+        "INSERT INTO lake.main.files SELECT range FROM range(50, 100)",
+    )
     live_before = _live_files(catalog, "files")
     snapshot_before = _max_snapshot(catalog)
     result = flush_inlined(catalog.settings(), "main.files")

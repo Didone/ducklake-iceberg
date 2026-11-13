@@ -15,7 +15,6 @@ import os
 import platform
 import random
 import shutil
-import tempfile
 import uuid
 from collections import defaultdict
 from contextlib import suppress
@@ -27,9 +26,9 @@ from typing import Any
 import duckdb
 import yaml
 from bench_sync_support import (
-    LocalHttpObserver,
     append_sample,
     compare,
+    local_services,
     measure,
     operation_budgets,
     summarize,
@@ -400,10 +399,7 @@ class Fixture:
         self.glue.close()
 
 
-def run(opts: argparse.Namespace) -> int:
-    import boto3
-    from moto.server import ThreadedMotoServer
-
+def run(opts: argparse.Namespace, fixture_factory: type[Fixture] = Fixture) -> int:
     output = opts.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     samples: list[dict[str, Any]] = []
@@ -502,52 +498,8 @@ def run(opts: argparse.Namespace) -> int:
         )
         return 1
     rng = random.Random(opts.seed)  # noqa: S311 - deterministic benchmark order
-    server = ThreadedMotoServer(ip_address="127.0.0.1", port=0, verbose=False)
-    isolated_keys = {
-        "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_SESSION_TOKEN",
-        "AWS_PROFILE",
-        "AWS_DEFAULT_PROFILE",
-        "AWS_DEFAULT_REGION",
-        "AWS_ENDPOINT_URL",
-        "AWS_ENDPOINT_URL_GLUE",
-        "AWS_ENDPOINT_URL_S3",
-        "AWS_IGNORE_CONFIGURED_ENDPOINT_URLS",
-        "AWS_EC2_METADATA_DISABLED",
-        "PYICEBERG_MAX_WORKERS",
-        "DUCKLAKE_ICEBERG_STATE_DIR",
-    } | {key for key in os.environ if key.startswith("DUCKLAKE_ICEBERG_")}
-    old_env = {key: os.environ.get(key) for key in isolated_keys}
     try:
-        server.start()
-        assert server._server is not None
-        observer = LocalHttpObserver(server._server.app)
-        server._server.app = observer
-        host, port = server.get_host_and_port()
-        endpoint = f"http://{host}:{port}"
-        for key in isolated_keys:
-            os.environ.pop(key, None)
-        os.environ.update(
-            AWS_ENDPOINT_URL=endpoint,
-            AWS_ENDPOINT_URL_S3=endpoint,
-            AWS_IGNORE_CONFIGURED_ENDPOINT_URLS="false",
-            PYICEBERG_MAX_WORKERS="8",
-            AWS_ACCESS_KEY_ID="testing",
-            AWS_SECRET_ACCESS_KEY="testing",  # noqa: S106 - loopback moto only
-            AWS_DEFAULT_REGION="us-east-1",
-            AWS_ENDPOINT_URL_GLUE=endpoint,
-            AWS_EC2_METADATA_DISABLED="true",
-        )
-        os.environ.pop("AWS_SESSION_TOKEN", None)
-        os.environ.pop("AWS_PROFILE", None)
-        boto3.client(
-            "s3", endpoint_url=endpoint, region_name="us-east-1"
-        ).create_bucket(Bucket="benchmark-metadata")
-        boto3.client(
-            "glue", endpoint_url=endpoint, region_name="us-east-1"
-        ).create_database(DatabaseInput={"Name": "benchmark"})
-        with tempfile.TemporaryDirectory(prefix="sync-bench-") as workspace:
+        with local_services() as (endpoint, observer, workspace):
             for scenario in opts.scenarios:
                 for index in range(-opts.warmups, opts.samples):
                     revisions = ["baseline", "candidate"]
@@ -571,7 +523,7 @@ def run(opts: argparse.Namespace) -> int:
                         os.environ["DUCKLAKE_ICEBERG_STATE_DIR"] = str(root / "state")
                         fixture = None
                         try:
-                            fixture = Fixture(
+                            fixture = fixture_factory(
                                 root,
                                 endpoint,
                                 scenario,
@@ -661,12 +613,6 @@ def run(opts: argparse.Namespace) -> int:
                         status = "ok" if sample["correct"] else sample["error"]
                         print(f"{scenario} {revision} {index}: {status}", flush=True)
     finally:
-        server.stop()
-        for key, value in old_env.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
         groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for sample in samples:
             groups[sample["scenario"] + "." + sample["revision"]].append(sample)

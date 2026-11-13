@@ -3,19 +3,65 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from scripts.bench_sync_support import (
     append_sample,
     distribution,
+    local_services,
     measure,
     percentile,
     summarize,
 )
+
+
+def test_local_services_restores_environment_and_resources_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import boto3
+
+    monkeypatch.setenv("AWS_PROFILE", "inherited-test-profile")
+    monkeypatch.setenv("AWS_ENDPOINT_URL_S3", "http://inherited.invalid")
+    monkeypatch.setenv("DUCKLAKE_ICEBERG_STATE_DIR", "prior-test-state")
+    monkeypatch.delenv("AWS_NEW_TEST_SETTING", raising=False)
+    old_session = object()
+    monkeypatch.setattr(boto3, "DEFAULT_SESSION", old_session)
+    server = Mock()
+    server.get_host_and_port.return_value = ("127.0.0.1", 12345)
+    s3, glue = Mock(), Mock()
+    workspaces: list[Path] = []
+
+    def fail_audit() -> None:
+        with local_services() as (endpoint, _observer, workspace):
+            workspaces.append(workspace)
+            assert endpoint == "http://127.0.0.1:12345"
+            assert "AWS_PROFILE" not in os.environ
+            assert os.environ["AWS_ENDPOINT_URL_S3"] == endpoint
+            assert os.environ["AWS_ACCESS_KEY_ID"] == "testing"
+            assert workspace.is_dir()
+            os.environ["AWS_NEW_TEST_SETTING"] = "fake-only"
+            raise RuntimeError("injected audit failure")
+
+    with (
+        patch("moto.server.ThreadedMotoServer", return_value=server),
+        patch("boto3.client", side_effect=[s3, glue]),
+        pytest.raises(RuntimeError, match="injected audit failure"),
+    ):
+        fail_audit()
+    assert not workspaces[0].exists()
+    assert os.environ["AWS_PROFILE"] == "inherited-test-profile"
+    assert os.environ["AWS_ENDPOINT_URL_S3"] == "http://inherited.invalid"
+    assert os.environ["DUCKLAKE_ICEBERG_STATE_DIR"] == "prior-test-state"
+    assert "AWS_NEW_TEST_SETTING" not in os.environ
+    assert boto3.DEFAULT_SESSION is old_session
+    server.stop.assert_called_once()
+    s3.close.assert_called_once()
+    glue.close.assert_called_once()
 
 
 def _process(exit_code: int = 4, **updates: Any) -> subprocess.CompletedProcess[bytes]:

@@ -13,18 +13,33 @@ which the DuckDB `postgres` extension consumes.
 
 from __future__ import annotations
 
+import uuid
 import warnings
 from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, ExitStack, contextmanager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import duckdb
 import pytest
 
 from ducklake_iceberg.config import DuckLakeIcebergSettings
 
-SettingsFactory = Callable[..., DuckLakeIcebergSettings]
-Writer = Callable[[str], None]
+if TYPE_CHECKING:
+    from pyiceberg.table import StaticTable
+
+    from ducklake_iceberg.export import ExportResult
+
+
+def _load_extensions(con: duckdb.DuckDBPyConnection, *extensions: str) -> None:
+    """Load installed prerequisites; install only on a missing/unreadable load."""
+    for extension in extensions:
+        try:
+            con.execute(f"LOAD {extension}")
+        except duckdb.IOException:
+            con.execute(f"INSTALL {extension}")
+            con.execute(f"LOAD {extension}")
 
 
 @dataclass(slots=True)
@@ -37,18 +52,17 @@ class CatalogHarness:
     #: path of the SQLite file, to forge states via direct SQL (sqlite only)
     sqlite_file: Path | None = field(default=None)
 
-    def write(self, sql: str) -> None:
-        """Open a fresh write connection and run `sql` (creates a snapshot)."""
-        con = duckdb.connect(":memory:")
+    def write(self, *statements: str) -> None:
+        """Own one setup connection; each statement retains its own commit."""
+        con = duckdb.connect(":memory:", config={"threads": 2})
         try:
-            for ext in ("ducklake", self.backend):
-                con.execute(f"INSTALL {ext}")
-                con.execute(f"LOAD {ext}")
+            _load_extensions(con, "ducklake", self.backend)
             con.execute(
                 f"ATTACH '{self.dsn}' AS lake "
                 f"(METADATA_CATALOG 'lake_meta', DATA_PATH '{self.data_path}')"
             )
-            con.execute(sql)
+            for sql in statements:
+                con.execute(sql)
         finally:
             con.close()
 
@@ -59,6 +73,7 @@ class CatalogHarness:
             "iceberg_metadata_prefix": "/local/iceberg",
             "glue_database": "analytics",
             "aws_region": "sa-east-1",
+            "duckdb_threads": 2,
         }
         base.update(overrides)
         return DuckLakeIcebergSettings(**base)  # type: ignore[arg-type]
@@ -84,10 +99,83 @@ class CatalogHarness:
         _postgres_meta_exec(sql)
 
 
+class Lake:
+    """Read/export helpers for the file-backed catalog prepared by lake."""
+
+    def __init__(self, catalog: CatalogHarness, prefix: Path) -> None:
+        self.catalog = catalog
+        self.prefix = prefix
+        self.settings: DuckLakeIcebergSettings = catalog.settings(
+            iceberg_metadata_prefix=str(prefix)
+        )
+
+    def write(self, *statements: str) -> None:
+        self.catalog.write(*statements)
+
+    def rows(self, table: str = "main.t") -> list[tuple[Any, ...]]:
+        con = duckdb.connect(":memory:", config={"threads": 2})
+        try:
+            for ext in ("ducklake", self.catalog.backend):
+                con.execute(f"LOAD {ext}")
+            con.execute(
+                f"ATTACH '{self.catalog.dsn}' AS lake "
+                f"(METADATA_CATALOG 'lake_meta', READ_ONLY)"
+            )
+            return sorted(con.execute(f"SELECT * FROM lake.{table}").fetchall())
+        finally:
+            con.close()
+
+    def export(self, table: str = "t") -> ExportResult:
+        from ducklake_iceberg.export import run_export
+
+        return run_export(self.settings, "main", table)
+
+    def iceberg(self, result: ExportResult) -> StaticTable:
+        from pyiceberg.table import StaticTable
+
+        return StaticTable.from_metadata("file://" + result.plan.metadata_location)
+
+    def iceberg_rows(self, result: ExportResult) -> list[tuple[Any, ...]]:
+        arrow = self.iceberg(result).scan().to_arrow()
+        return sorted(tuple(r.values()) for r in arrow.to_pylist())
+
+    def assert_mirrors(self, result: ExportResult, table: str = "main.t") -> None:
+        assert self.iceberg_rows(result) == self.rows(table)
+
+
+def sync_config(catalog: CatalogHarness, tmp_path: Path) -> Path:
+    """Write CLI settings; source preparation belongs to the caller."""
+    path = tmp_path / "ducklake-iceberg.yaml"
+    path.write_text(
+        f"catalog_dsn: '{catalog.dsn}'\n"
+        f"data_path: '{catalog.data_path}'\n"
+        f"iceberg_metadata_prefix: '{tmp_path / 'iceberg'}'\n"
+        f"glue_database: analytics\n"
+        f"aws_region: us-east-1\n"
+        f"duckdb_threads: 2\n"
+    )
+    return path
+
+
+def run_sync(config: Path, *extra: str) -> tuple[int, dict[str, Any]]:
+    import json
+
+    from typer.testing import CliRunner
+
+    from ducklake_iceberg import timing
+    from ducklake_iceberg.cli import app
+
+    timing.reset()
+    result = CliRunner().invoke(
+        app, ["sync", "--table", "main.t", "--config", str(config), "--json", *extra]
+    )
+    return result.exit_code, json.loads(result.stdout)
+
+
 def _postgres_meta_exec(sql: str) -> None:
     import os
 
-    con = duckdb.connect(":memory:")
+    con = duckdb.connect(":memory:", config={"threads": 2})
     try:
         con.execute("INSTALL postgres")
         con.execute("LOAD postgres")
@@ -120,31 +208,55 @@ def _make_sqlite(tmp_path: Path) -> CatalogHarness:
     )
 
 
-@pytest.fixture(
-    params=[
-        "sqlite",
-        pytest.param("postgres", marks=pytest.mark.postgres),
-    ]
-)
+_CATALOG_BACKENDS = [
+    "sqlite",
+    pytest.param("postgres", marks=pytest.mark.postgres),
+]
+
+CatalogFactory = Callable[..., CatalogHarness]
+
+
+@contextmanager
+def _catalog_case(
+    request: pytest.FixtureRequest, tmp_path: Path, *statements: str
+) -> Iterator[CatalogHarness]:
+    """Own a fresh catalog; close explicit bootstrap SQL before the test."""
+    manager: AbstractContextManager[CatalogHarness]
+    if request.param == "sqlite":
+        manager = nullcontext(_make_sqlite(tmp_path))
+    else:
+        # Share the service, never a database, attachment or data namespace.
+        manager = postgres_catalog(
+            request.getfixturevalue("postgres_service"), tmp_path
+        )
+    with manager as harness:
+        harness.write("CREATE SCHEMA IF NOT EXISTS lake.vendas", *statements)
+        yield harness
+
+
+@pytest.fixture(params=_CATALOG_BACKENDS)
 def catalog(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[CatalogHarness]:
-    """Empty catalog harness, parametrized by backend (sqlite/postgres).
-
-    Seeds a `vendas` schema (first snapshot) and yields the harness.
-    """
-    backend = request.param
-    if backend == "sqlite":
-        harness = _make_sqlite(tmp_path)
-        harness.write("CREATE SCHEMA IF NOT EXISTS lake.vendas")
+    """Empty catalog with a vendas schema (first snapshot), on either backend."""
+    with _catalog_case(request, tmp_path) as harness:
         yield harness
-        return
 
-    # backend == "postgres": ephemeral container via testcontainers
-    harness, stop = _start_postgres(tmp_path)
-    try:
-        harness.write("CREATE SCHEMA IF NOT EXISTS lake.vendas")
-        yield harness
-    finally:
-        stop()
+
+@pytest.fixture(params=_CATALOG_BACKENDS)
+def make_catalog(
+    request: pytest.FixtureRequest, tmp_path: Path
+) -> Iterator[CatalogFactory]:
+    """Create one fresh source with explicit initial SQL; own it until teardown."""
+    created = False
+    with ExitStack() as owner:
+
+        def prepare(*statements: str) -> CatalogHarness:
+            nonlocal created
+            if created:
+                raise RuntimeError("make_catalog owns one source per test")
+            created = True
+            return owner.enter_context(_catalog_case(request, tmp_path, *statements))
+
+        yield prepare
 
 
 def _wait_until_postgres_accepts(dbname: str, host: str, port: str) -> None:
@@ -157,7 +269,7 @@ def _wait_until_postgres_accepts(dbname: str, host: str, port: str) -> None:
     """
     import time
 
-    con = duckdb.connect(":memory:")
+    con = duckdb.connect(":memory:", config={"threads": 2})
     try:
         con.execute("INSTALL postgres")
         con.execute("LOAD postgres")
@@ -182,76 +294,158 @@ def _wait_until_postgres_accepts(dbname: str, host: str, port: str) -> None:
         con.close()
 
 
-def _start_postgres(tmp_path: Path) -> tuple[CatalogHarness, Callable[[], None]]:
-    import os
-
+@pytest.fixture(scope="session")
+def postgres_service() -> Iterator[Any]:
+    """One owned server per pytest process; catalogs remain function-scoped."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         from testcontainers.postgres import PostgresContainer
 
-    # Docker Desktop/WSL port forwarding occasionally never comes up for a
-    # fresh container: retry with a new one instead of failing the test.
     for attempt in range(3):
-        container = PostgresContainer("postgres:16-alpine")
-        container.start()
-        host = container.get_container_host_ip()
-        port = container.get_exposed_port(5432)
-        user = container.username
-        password = container.password
-        dbname = container.dbname
-        # Credentials via libpq (never in the DSN): the DuckDB postgres
-        # extension reads them.
-        os.environ.update(
-            PGHOST=host,
-            PGPORT=str(port),
-            PGUSER=user,
-            PGPASSWORD=password,
-            PGDATABASE=dbname,
+        container = PostgresContainer(
+            "postgres:16-alpine",
+            username="test",
+            password=uuid.uuid4().hex,
+            dbname="test",
         )
         try:
-            _wait_until_postgres_accepts(dbname, host, str(port))
-            break
-        except duckdb.Error:
+            container.start()
+            with pytest.MonkeyPatch.context() as patch:
+                for key, value in _postgres_environment(
+                    container, container.dbname
+                ).items():
+                    patch.setenv(key, value)
+                _wait_until_postgres_accepts(
+                    container.dbname,
+                    container.get_container_host_ip(),
+                    str(container.get_exposed_port(5432)),
+                )
+        except BaseException as exc:
             container.stop()
-            if attempt == 2:
+            if not isinstance(exc, duckdb.Error) or attempt == 2:
                 raise
-    data_dir = tmp_path / "data"
-    data_dir.mkdir(exist_ok=True)
-    harness = CatalogHarness(
-        backend="postgres",
-        dsn=f"ducklake:postgres:dbname={dbname} host={host} port={port}",
-        data_path=f"{data_dir}/",
-    )
-
-    def stop() -> None:
-        for key in ("PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE"):
-            os.environ.pop(key, None)
+        else:
+            break
+    try:
+        yield container
+    finally:
         container.stop()
 
-    return harness, stop
+
+def _postgres_environment(container: Any, database: str) -> dict[str, str]:
+    return {
+        "PGHOST": str(container.get_container_host_ip()),
+        "PGPORT": str(container.get_exposed_port(5432)),
+        "PGUSER": str(container.username),
+        "PGPASSWORD": str(container.password),
+        "PGDATABASE": database,
+    }
 
 
-@pytest.fixture
-def seeded_catalog(catalog: CatalogHarness) -> CatalogHarness:
+def _postgres_admin(container: Any, sql: str) -> bytes:
+    # Service lifecycle only. DuckLake metadata/data access still uses DuckDB.
+    code, output = container.exec(
+        [
+            "psql",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-tA",
+            "-U",
+            container.username,
+            "-d",
+            container.dbname,
+            "-c",
+            sql,
+        ]
+    )
+    if code:
+        raise RuntimeError("owned PostgreSQL test database administration failed")
+    return bytes(output)
+
+
+@contextmanager
+def postgres_catalog(container: Any, tmp_path: Path) -> Iterator[CatalogHarness]:
+    """Own a fresh database, environment and file namespace for one test."""
+    database = "dli_" + uuid.uuid4().hex
+    _postgres_admin(container, f'CREATE DATABASE "{database}"')
+    try:
+        with pytest.MonkeyPatch.context() as patch:
+            env = _postgres_environment(container, database)
+            for key, value in env.items():
+                patch.setenv(key, value)
+            data_dir = tmp_path / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            yield CatalogHarness(
+                backend="postgres",
+                dsn=(
+                    f"ducklake:postgres:dbname={database} "
+                    f"host={env['PGHOST']} port={env['PGPORT']}"
+                ),
+                data_path=f"{data_dir}/",
+            )
+    finally:
+        states = (
+            _postgres_admin(
+                container,
+                "SELECT state, count(*) FROM pg_stat_activity "
+                f"WHERE datname = '{database}' "
+                "AND backend_type = 'client backend' GROUP BY state",
+            )
+            .decode()
+            .splitlines()
+        )
+        # Native error paths may retain an idle backend after DuckDB closes.
+        # Terminate only this test's idle clients; active work still fails.
+        suffix = " WITH (FORCE)" if states else ""
+        _postgres_admin(container, f'DROP DATABASE "{database}"{suffix}')
+        if any(line.split("|", 1)[0] != "idle" for line in states):
+            raise RuntimeError("test ended with active PostgreSQL work")
+
+
+_SEED_PEDIDOS = (
+    "CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR)",
+    "INSERT INTO lake.main.pedidos VALUES (1, 'MG'), (2, 'SP')",
+)
+
+
+@pytest.fixture(params=_CATALOG_BACKENDS)
+def seeded_catalog(
+    request: pytest.FixtureRequest, tmp_path: Path
+) -> Iterator[CatalogHarness]:
     """Harness with a `main.pedidos` table holding 2 inlined rows."""
-    catalog.write("CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR)")
-    catalog.write("INSERT INTO lake.main.pedidos VALUES (1, 'MG'), (2, 'SP')")
-    return catalog
+    with _catalog_case(request, tmp_path, *_SEED_PEDIDOS) as harness:
+        yield harness
 
 
-@pytest.fixture
-def flushed_catalog(seeded_catalog: CatalogHarness) -> CatalogHarness:
+@pytest.fixture(params=_CATALOG_BACKENDS)
+def flushed_catalog(
+    request: pytest.FixtureRequest, tmp_path: Path
+) -> Iterator[CatalogHarness]:
     """`seeded_catalog` with the flush applied: the preflight is clean (exit 0).
 
     The inlined data becomes a data file, so the `inlined-data` rule does not
     block and `doctor` exits 0 - a state suited to exercising the CLI plumbing
     (envelope, --json, flags) without the compatibility blocker.
     """
-    seeded_catalog.write(
+    with _catalog_case(
+        request,
+        tmp_path,
+        *_SEED_PEDIDOS,
         "CALL ducklake_flush_inlined_data('lake', schema_name => 'main', "
-        "table_name => 'pedidos')"
-    )
-    return seeded_catalog
+        "table_name => 'pedidos')",
+    ) as harness:
+        yield harness
+
+
+@pytest.fixture(params=_CATALOG_BACKENDS)
+def lake(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[Lake]:
+    """File-backed source and Iceberg target, isolated for one case."""
+    with _catalog_case(
+        request, tmp_path, "CALL lake.set_option('data_inlining_row_limit', 0)"
+    ) as harness:
+        prefix = tmp_path / "iceberg"
+        prefix.mkdir()
+        yield Lake(harness, prefix)
 
 
 @pytest.fixture
@@ -272,5 +466,6 @@ def cli_env_for(harness: CatalogHarness) -> dict[str, str]:
         "DUCKLAKE_ICEBERG_DATA_PATH": harness.data_path,
         "DUCKLAKE_ICEBERG_ICEBERG_METADATA_PREFIX": "/local/iceberg",
         "DUCKLAKE_ICEBERG_GLUE_DATABASE": "analytics",
+        "DUCKLAKE_ICEBERG_DUCKDB_THREADS": "2",
         "DUCKLAKE_ICEBERG_AWS_REGION": "sa-east-1",
     }

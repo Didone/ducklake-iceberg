@@ -27,7 +27,7 @@ from ducklake_iceberg.checkpoint.variant import (
 )
 from ducklake_iceberg.cli import app
 from ducklake_iceberg.errors import ExitCode
-from tests.integration.conftest import CatalogHarness, cli_env_for
+from tests.integration.conftest import CatalogFactory, CatalogHarness, cli_env_for
 
 pytestmark = [pytest.mark.integration]
 
@@ -50,12 +50,12 @@ def _error(h: CatalogHarness, table: str) -> NestedVariantError:
 
 # --- STRUCT(VARIANT) with inlined rows -> exit 2, no write ------------------
 def test_nested_variant_in_struct_blocks(
-    catalog: CatalogHarness, monkeypatch: pytest.MonkeyPatch
+    make_catalog: CatalogFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    catalog.write(
-        "CREATE TABLE lake.main.t (id INTEGER, payload STRUCT(attrs VARIANT))"
+    catalog = make_catalog(
+        "CREATE TABLE lake.main.t (id INTEGER, payload STRUCT(attrs VARIANT))",
+        "INSERT INTO lake.main.t VALUES (1, {'attrs': NULL})",
     )
-    catalog.write("INSERT INTO lake.main.t VALUES (1, {'attrs': NULL})")
 
     opened_write: list[bool] = []
     from ducklake_iceberg.catalog.connection import open_catalog as real
@@ -74,11 +74,11 @@ def test_nested_variant_in_struct_blocks(
 
 
 # --- sync --dry-run also blocks ---------------------------------------------
-def test_nested_variant_blocks_dry_run(catalog: CatalogHarness) -> None:
-    catalog.write(
-        "CREATE TABLE lake.main.t (id INTEGER, payload STRUCT(attrs VARIANT))"
+def test_nested_variant_blocks_dry_run(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
+        "CREATE TABLE lake.main.t (id INTEGER, payload STRUCT(attrs VARIANT))",
+        "INSERT INTO lake.main.t VALUES (1, {'attrs': NULL})",
     )
-    catalog.write("INSERT INTO lake.main.t VALUES (1, {'attrs': NULL})")
     result = runner.invoke(
         app,
         ["sync", "--table", "main.t", "--dry-run", "--json"],
@@ -91,8 +91,10 @@ def test_nested_variant_blocks_dry_run(catalog: CatalogHarness) -> None:
 
 
 # --- LIST(STRUCT(VARIANT)) -> path tags[].v, depth 2 ------------------------
-def test_nested_variant_in_list_of_struct(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER, tags STRUCT(v VARIANT)[])")
+def test_nested_variant_in_list_of_struct(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
+        "CREATE TABLE lake.main.t (id INTEGER, tags STRUCT(v VARIANT)[])"
+    )
     cols = find_nested_variants(_variants(catalog, "main.t"))
     assert len(cols) == 1
     assert cols[0].path == "tags[].v"
@@ -101,17 +103,21 @@ def test_nested_variant_in_list_of_struct(catalog: CatalogHarness) -> None:
 
 
 # --- MAP(VARCHAR, VARIANT) -> blocks, child column_id -----------------------
-def test_nested_variant_in_map(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER, m MAP(VARCHAR, VARIANT))")
+def test_nested_variant_in_map(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
+        "CREATE TABLE lake.main.t (id INTEGER, m MAP(VARCHAR, VARIANT))"
+    )
     error = _error(catalog, "main.t")
     assert error.columns[0].path == "m.value"
     assert error.columns[0].column_id > 0
 
 
 # --- top-level VARIANT only -> flush proceeds ---------------------------
-def test_top_level_variant_does_not_block(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER, top VARIANT)")
-    catalog.write("INSERT INTO lake.main.t VALUES (1, NULL)")
+def test_top_level_variant_does_not_block(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
+        "CREATE TABLE lake.main.t (id INTEGER, top VARIANT)",
+        "INSERT INTO lake.main.t VALUES (1, NULL)",
+    )
     result = flush_inlined(catalog.settings(), "main.t")
     assert result.rows_flushed == 1
     assert result.exit_code == ExitCode.SUCCESS
@@ -120,12 +126,14 @@ def test_top_level_variant_does_not_block(catalog: CatalogHarness) -> None:
 
 
 # --- nested variant only in an old schema version ---------------------------
-def test_nested_variant_only_in_old_schema_version(catalog: CatalogHarness) -> None:
-    catalog.write(
-        "CREATE TABLE lake.main.t (id INTEGER, payload STRUCT(attrs VARIANT))"
+def test_nested_variant_only_in_old_schema_version(
+    make_catalog: CatalogFactory,
+) -> None:
+    catalog = make_catalog(
+        "CREATE TABLE lake.main.t (id INTEGER, payload STRUCT(attrs VARIANT))",
+        "ALTER TABLE lake.main.t DROP COLUMN payload",
+        "INSERT INTO lake.main.t VALUES (1)",
     )
-    catalog.write("ALTER TABLE lake.main.t DROP COLUMN payload")
-    catalog.write("INSERT INTO lake.main.t VALUES (1)")
     # the current snapshot no longer has a nested variant
     assert find_nested_variants(_variants(catalog, "main.t")) == ()
     result = flush_inlined(catalog.settings(), "main.t")
@@ -133,8 +141,8 @@ def test_nested_variant_only_in_old_schema_version(catalog: CatalogHarness) -> N
 
 
 # --- three nested variant columns in one message, sorted by path ------------
-def test_three_nested_variants_sorted_by_path(catalog: CatalogHarness) -> None:
-    catalog.write(
+def test_three_nested_variants_sorted_by_path(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
         "CREATE TABLE lake.main.t ("
         "  id INTEGER,"
         "  a STRUCT(x VARIANT),"
@@ -153,11 +161,11 @@ def test_plain_table_has_no_variants(seeded_catalog: CatalogHarness) -> None:
 
 
 # --- sync reports the path and column_id -----------------------------------
-def test_sync_message_names_column(catalog: CatalogHarness) -> None:
-    catalog.write(
-        "CREATE TABLE lake.main.t (id INTEGER, payload STRUCT(attrs VARIANT))"
+def test_sync_message_names_column(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
+        "CREATE TABLE lake.main.t (id INTEGER, payload STRUCT(attrs VARIANT))",
+        "INSERT INTO lake.main.t VALUES (1, {'attrs': NULL})",
     )
-    catalog.write("INSERT INTO lake.main.t VALUES (1, {'attrs': NULL})")
     result = runner.invoke(
         app, ["sync", "--table", "main.t", "--json"], env=cli_env_for(catalog)
     )

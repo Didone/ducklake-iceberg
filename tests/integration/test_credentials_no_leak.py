@@ -131,12 +131,16 @@ def test_profile_credentials_never_leak(
             outputs.append((f"exception of {args[0]}", repr(result.exception)))
         return result.exit_code
 
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER, v VARCHAR)")
-    catalog.write("INSERT INTO lake.main.t SELECT i, 'v' || i FROM range(20) r(i)")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id INTEGER, v VARCHAR)",
+        "INSERT INTO lake.main.t SELECT i, 'v' || i FROM range(20) r(i)",
+    )
     with mock.patch.object(ducklake_iceberg.storage, "load_file_io", spy):
         assert cli("sync", "--table", "main.t") == 0
-        catalog.write("DELETE FROM lake.main.t WHERE id < 5")
-        catalog.write("INSERT INTO lake.main.t VALUES (100, 'x')")
+        catalog.write(
+            "DELETE FROM lake.main.t WHERE id < 5",
+            "INSERT INTO lake.main.t VALUES (100, 'x')",
+        )
         assert cli("sync", "--table", "main.t") == 0
         assert cli("sync", "--table", "main.t") == 4  # already published
         assert cli("sync", "--table", "main.t", "--dry-run") == 4

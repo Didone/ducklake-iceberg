@@ -34,18 +34,22 @@ def _metadata_files(tmp_path: Path) -> list[Path]:
 
 @pytest.fixture
 def harness(catalog: CatalogHarness) -> CatalogHarness:
-    catalog.write("CALL lake.set_option('data_inlining_row_limit', 0)")
-    catalog.write("CREATE TABLE lake.main.dup_name (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.dup_name VALUES (1)")
+    catalog.write(
+        "CALL lake.set_option('data_inlining_row_limit', 0)",
+        "CREATE TABLE lake.main.dup_name (id INTEGER)",
+        "INSERT INTO lake.main.dup_name VALUES (1)",
+    )
     return catalog
 
 
 def test_same_name_in_other_schema_is_a_name_collision(
     harness: CatalogHarness, tmp_path: Path
 ) -> None:
-    harness.write("CREATE SCHEMA lake.s2")
-    harness.write("CREATE TABLE lake.s2.dup_name (id INTEGER)")
-    harness.write("INSERT INTO lake.s2.dup_name VALUES (2)")
+    harness.write(
+        "CREATE SCHEMA lake.s2",
+        "CREATE TABLE lake.s2.dup_name (id INTEGER)",
+        "INSERT INTO lake.s2.dup_name VALUES (2)",
+    )
     settings = _settings(harness, tmp_path)
     assert run_export(settings, "main", "dup_name").exit_code is ExitCode.SUCCESS
     before = _metadata_files(tmp_path)
@@ -72,9 +76,11 @@ def test_recreated_table_keeps_recreated_message(
 ) -> None:
     settings = _settings(harness, tmp_path)
     assert run_export(settings, "main", "dup_name").exit_code is ExitCode.SUCCESS
-    harness.write("DROP TABLE lake.main.dup_name")
-    harness.write("CREATE TABLE lake.main.dup_name (id INTEGER)")
-    harness.write("INSERT INTO lake.main.dup_name VALUES (3)")
+    harness.write(
+        "DROP TABLE lake.main.dup_name",
+        "CREATE TABLE lake.main.dup_name (id INTEGER)",
+        "INSERT INTO lake.main.dup_name VALUES (3)",
+    )
     before = _metadata_files(tmp_path)
 
     with pytest.raises(DivergenceError) as exc:

@@ -27,7 +27,7 @@ from ducklake_iceberg.cli import app
 from ducklake_iceberg.errors import ExitCode
 from ducklake_iceberg.output import Envelope
 
-from .conftest import CatalogHarness
+from .conftest import CatalogFactory, CatalogHarness
 
 pytestmark = [pytest.mark.integration]
 
@@ -81,10 +81,10 @@ def _fake_sync_table(
 
 
 def test_sync_workers_capped_is_warning_and_limits_reach_pools(
-    catalog: CatalogHarness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    make_catalog: CatalogFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Env > YAML, global ceiling, PyIceberg."""
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
+    catalog = make_catalog("CREATE TABLE lake.main.t (id INTEGER)")
     probes: list[tuple[int, int, str | None]] = []
 
     def probe(settings: Any) -> None:
@@ -115,9 +115,9 @@ def test_sync_workers_capped_is_warning_and_limits_reach_pools(
 
 
 def test_sync_within_the_cap_emits_no_warning(
-    catalog: CatalogHarness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    make_catalog: CatalogFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
+    catalog = make_catalog("CREATE TABLE lake.main.t (id INTEGER)")
     monkeypatch.setattr(
         "ducklake_iceberg.cli.sync_table", _fake_sync_table(lambda _s: None)
     )
@@ -136,9 +136,11 @@ def test_footers_phase_reports_items_bytes_and_calls(
     catalog: CatalogHarness, tmp_path: Path, glue_env: None
 ) -> None:
     config = _config(catalog, tmp_path, stats_source="footer")
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t VALUES (1), (2)")
-    catalog.write("INSERT INTO lake.main.t VALUES (3)")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t VALUES (1), (2)",
+        "INSERT INTO lake.main.t VALUES (3)",
+    )
 
     code, doc = _sync(config, "--table", "main.t")
 
