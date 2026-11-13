@@ -29,6 +29,9 @@ For local-only runs on a machine with AWS profiles, point `AWS_CONFIG_FILE` and
 and set `AWS_EC2_METADATA_DISABLED=true`. This prevents ambient SSO refresh and
 metadata credential discovery; tests that install their own fake profiles still
 exercise profile selection and credential errors.
+The shared integration harness uses two DuckDB threads for its small fixtures
+and generated sync configurations. Explicit overrides and the native default
+remain tested; the application's configuration default is unchanged.
 
 ## Standard commands
 

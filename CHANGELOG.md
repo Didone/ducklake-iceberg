@@ -39,6 +39,8 @@ example: "envelope v1: optional key `timings`".
   lifecycle independently runnable.
 - Reuse one source attachment per snapshot comparison in second-reader tests and
   copy only required extensions into isolated extension-directory fixtures.
+- Bound common integration scenarios to two DuckDB threads while retaining
+  explicit native-default and custom-limit coverage on both catalog backends.
 - Reuse one DuckDB root during sync, including flush through read-only/write/
   read-only attachments; freshly validate the source after each write.
 - Use single GETs for metadata reads and conditional single PUTs for small

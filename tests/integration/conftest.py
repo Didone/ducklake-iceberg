@@ -73,6 +73,7 @@ class CatalogHarness:
             "iceberg_metadata_prefix": "/local/iceberg",
             "glue_database": "analytics",
             "aws_region": "sa-east-1",
+            "duckdb_threads": 2,
         }
         base.update(overrides)
         return DuckLakeIcebergSettings(**base)  # type: ignore[arg-type]
@@ -152,6 +153,7 @@ def sync_config(catalog: CatalogHarness, tmp_path: Path, *, inlining: int) -> Pa
         f"iceberg_metadata_prefix: '{tmp_path / 'iceberg'}'\n"
         f"glue_database: analytics\n"
         f"aws_region: us-east-1\n"
+        f"duckdb_threads: 2\n"
     )
     return path
 
@@ -419,5 +421,6 @@ def cli_env_for(harness: CatalogHarness) -> dict[str, str]:
         "DUCKLAKE_ICEBERG_DATA_PATH": harness.data_path,
         "DUCKLAKE_ICEBERG_ICEBERG_METADATA_PREFIX": "/local/iceberg",
         "DUCKLAKE_ICEBERG_GLUE_DATABASE": "analytics",
+        "DUCKLAKE_ICEBERG_DUCKDB_THREADS": "2",
         "DUCKLAKE_ICEBERG_AWS_REGION": "sa-east-1",
     }

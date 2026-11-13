@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import pyarrow as pa
 import pytest
 
@@ -288,6 +289,22 @@ def test_required_extensions_per_backend(tmp_path: Path) -> None:
     )
     pg_con = DuckLakeConnection(pg_settings)
     assert "postgres" in pg_con._required_extensions()
+
+
+@pytest.mark.parametrize("threads", [None, 1, 2])
+def test_duckdb_thread_setting_preserves_native_default_and_explicit_limits(
+    catalog: CatalogHarness, threads: int | None
+) -> None:
+    if threads is None:
+        with duckdb.connect(":memory:") as native:
+            expected = native.execute("SELECT current_setting('threads')").fetchone()
+    else:
+        expected = (threads,)
+    settings = catalog.settings(duckdb_threads=threads)
+    with open_catalog(settings, s3=False) as con:
+        actual = con.raw.execute("SELECT current_setting('threads')").fetchone()
+        assert actual is not None
+        assert actual == expected
 
 
 def test_batched_setup_keeps_statement_snapshots(catalog: CatalogHarness) -> None:
