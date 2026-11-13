@@ -83,16 +83,20 @@ def _glue_rows() -> int:
 def test_sync_registers_updates_and_is_idempotent(
     catalog: CatalogHarness, config: Path, glue_env: None
 ) -> None:
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER, v INTEGER)")
-    catalog.write("INSERT INTO lake.main.t SELECT i, i FROM range(20) r(i)")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id INTEGER, v INTEGER)",
+        "INSERT INTO lake.main.t SELECT i, i FROM range(20) r(i)",
+    )
 
     code, doc = _sync(config)
     assert code == 0, doc["problems"]
     assert _steps(doc)["register"]["outcome"] == "registered"
     assert _glue_rows() == 20
 
-    catalog.write("DELETE FROM lake.main.t WHERE id < 5")
-    catalog.write("INSERT INTO lake.main.t VALUES (100, 100)")
+    catalog.write(
+        "DELETE FROM lake.main.t WHERE id < 5",
+        "INSERT INTO lake.main.t VALUES (100, 100)",
+    )
     code, doc = _sync(config)
     assert code == 0, doc["problems"]
     steps = _steps(doc)
@@ -122,9 +126,11 @@ def test_doctor_error_stops_before_export(
     monkeypatch: pytest.MonkeyPatch,
     failure_round: int,
 ) -> None:
-    catalog.write("CALL lake.set_option('data_inlining_row_limit', 10)")
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t VALUES (1)")
+    catalog.write(
+        "CALL lake.set_option('data_inlining_row_limit', 10)",
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t VALUES (1)",
+    )
     run_rules = pipeline._run_rules
     rounds = 0
 
@@ -165,8 +171,10 @@ def test_doctor_error_stops_before_export(
 def test_sync_emits_versioned_metrics_and_json_logs(
     catalog: CatalogHarness, config: Path, glue_env: None
 ) -> None:
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t VALUES (1), (2)")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t VALUES (1), (2)",
+    )
     result = runner.invoke(
         app,
         [
@@ -208,9 +216,11 @@ def test_sync_publishes_delete_files(
     catalog: CatalogHarness, config: Path, glue_env: None
 ) -> None:
     """Deletes are published as Iceberg delete files, never materialized."""
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t SELECT * FROM range(50)")
-    catalog.write("DELETE FROM lake.main.t WHERE id < 3")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t SELECT * FROM range(50)",
+        "DELETE FROM lake.main.t WHERE id < 3",
+    )
     code, doc = _sync(config)
     assert code == 0, doc["problems"]
     assert "materialize" not in _steps(doc)
@@ -227,8 +237,10 @@ def test_sync_retries_pending_register(
     catalog: CatalogHarness, config: Path, glue_env: None
 ) -> None:
     """Export written and register failed: the next sync only publishes."""
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t VALUES (1)")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t VALUES (1)",
+    )
     exported = run_export(load_settings(config_file=config), "main", "t")
     assert exported.exit_code == 0
     code, doc = _sync(config)
@@ -242,8 +254,10 @@ def test_external_write_is_divergence(
     catalog: CatalogHarness, config: Path, glue_env: None
 ) -> None:
     """Glue pointing to a metadata.json outside the ducklake-iceberg chain."""
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t VALUES (1)")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t VALUES (1)",
+    )
     assert _sync(config)[0] == 0
     glue = boto3.client("glue", region_name=REGION)
     table = glue.get_table(DatabaseName="analytics", Name="t")["Table"]
@@ -269,8 +283,10 @@ def test_external_write_is_divergence(
 def test_sync_blocked_table_reports_exit_2(
     catalog: CatalogHarness, config: Path, glue_env: None
 ) -> None:
-    catalog.write("CREATE TABLE lake.main.t (id UBIGINT)")
-    catalog.write("INSERT INTO lake.main.t VALUES (1)")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id UBIGINT)",
+        "INSERT INTO lake.main.t VALUES (1)",
+    )
     code, doc = _sync(config)
     assert code == 2
     assert _steps(doc)["doctor"]["exit_code"] == 2

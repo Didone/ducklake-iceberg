@@ -59,11 +59,13 @@ def _flush(harness: CatalogHarness, table: str) -> None:
 
 
 def _seed_inlined_with_delete(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE SCHEMA IF NOT EXISTS lake.main")
-    catalog.write("CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR)")
-    catalog.write("INSERT INTO lake.main.pedidos VALUES (1, 'SP')")  # snapshot
-    catalog.write("INSERT INTO lake.main.pedidos VALUES (2, 'MG')")  # snapshot
-    catalog.write("DELETE FROM lake.main.pedidos WHERE id = 1")  # delete inlined
+    catalog.write(
+        "CREATE SCHEMA IF NOT EXISTS lake.main",
+        "CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR)",
+        "INSERT INTO lake.main.pedidos VALUES (1, 'SP')",
+        "INSERT INTO lake.main.pedidos VALUES (2, 'MG')",
+        "DELETE FROM lake.main.pedidos WHERE id = 1",
+    )
 
 
 def _ids(report: DoctorReport, *, status: str) -> set[str]:

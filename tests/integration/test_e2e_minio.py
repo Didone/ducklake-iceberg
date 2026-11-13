@@ -11,7 +11,8 @@ The Iceberg metadata goes to a real S3-compatible store (MinIO, through the
   no data file was copied into it;
 * PyIceberg reads exactly the rows DuckLake holds, with the same field ids.
 
-The tests share one lake and depend on the order of this file.
+One self-contained test runs the complete lifecycle in explicit order. Each
+phase retains its original assertions; no phase depends on another pytest case.
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ from pyiceberg.table import Table
 from typer.testing import CliRunner
 
 from ducklake_iceberg.cli import app
+from tests.conftest import reset_process_state
 
 
 def EqualTo(column: str, value: Any) -> BooleanExpression:  # noqa: N802
@@ -225,12 +227,10 @@ def minio_endpoint(minio_container: Any) -> str:
     return str(minio_container.endpoint)
 
 
-@pytest.fixture(scope="module")
-def lake(
-    minio_endpoint: str, tmp_path_factory: pytest.TempPathFactory
-) -> Iterator[Lake]:
-    root = tmp_path_factory.mktemp("lake")
-    (root / "data").mkdir()
+@pytest.fixture
+def lake(minio_endpoint: str, tmp_path: Path) -> Iterator[Lake]:
+    root = tmp_path / "lake"
+    (root / "data").mkdir(parents=True)
     config = root / "ducklake-iceberg.yaml"
     config.write_text(
         yaml.safe_dump(
@@ -385,7 +385,7 @@ def step(
 
 
 # -- the lifecycle -----------------------------------------------------------
-def test_create_tables_and_insert(lake: Lake) -> None:
+def _check_create_tables_and_insert(lake: Lake) -> None:
     lake.write(
         "CREATE SCHEMA lake.sales",
         """CREATE TABLE lake.sales.orders(id BIGINT, customer VARCHAR,
@@ -419,7 +419,7 @@ def test_create_tables_and_insert(lake: Lake) -> None:
     step(lake, "sales", "tiny", flush=True)
 
 
-def test_insert_delete_update_merge(lake: Lake) -> None:
+def _check_insert_delete_update_merge(lake: Lake) -> None:
     lake.write(
         """INSERT INTO lake.sales.orders SELECT i, 'new_' || i, 1.00, 1,
            TIMESTAMP '2025-01-01', true, DATE '2025-01-01', ['x'],
@@ -468,7 +468,7 @@ def test_insert_delete_update_merge(lake: Lake) -> None:
     step(lake, "sales", "events", flush=True)
 
 
-def test_schema_evolution(lake: Lake) -> None:
+def _check_schema_evolution(lake: Lake) -> None:
     lake.write("ALTER TABLE lake.sales.orders ADD COLUMN note VARCHAR")
     step(lake, "sales", "orders")
 
@@ -516,7 +516,7 @@ def test_schema_evolution(lake: Lake) -> None:
     step(lake, "sales", "defaults")
 
 
-def test_partition_evolution(lake: Lake) -> None:
+def _check_partition_evolution(lake: Lake) -> None:
     def regions() -> None:
         events = lake.iceberg("events")
         for region in ("north", "south", "east", "west"):
@@ -610,7 +610,7 @@ def test_partition_evolution(lake: Lake) -> None:
     )
 
 
-def test_second_run_changes_nothing(lake: Lake) -> None:
+def _check_second_run_changes_nothing(lake: Lake) -> None:
     objects = lake.bucket_objects()
     for name in ("orders", "events", "tiny", "defaults"):
         lake.sync(f"sales.{name}", expect=4)
@@ -631,7 +631,7 @@ def _dry_run(lake: Lake, table: str, expect: int) -> list[dict[str, Any]]:
     return steps
 
 
-def test_dry_run_is_a_read_only_monitor(lake: Lake) -> None:
+def _check_dry_run_is_a_read_only_monitor(lake: Lake) -> None:
     # up to date: exit 4, Glue already points at the last export
     steps = _dry_run(lake, "sales.orders", expect=4)
     assert steps[-1]["glue"] == "in_sync"
@@ -718,7 +718,7 @@ def _create_sync_user(container: Any, policy: dict[str, Any]) -> None:
     _mc(container, "admin", "policy", "attach", "local", "sync", "--user", SYNC_KEY)
 
 
-def test_s3_lake_synced_with_the_shipped_least_privilege_policy(
+def _check_s3_lake_synced_with_the_shipped_least_privilege_policy(
     lake: Lake, minio_container: Any, tmp_path: Path
 ) -> None:
     """Data and metadata on S3, using ``docs/deploy/iam/sync-policy.json``.
@@ -881,3 +881,25 @@ def test_s3_lake_synced_with_the_shipped_least_privilege_policy(
 
     assert glue_called, "no Glue call recorded"
     assert glue_called <= glue_allowed, glue_called - glue_allowed
+
+
+def test_complete_zero_copy_lifecycle(
+    lake: Lake, minio_container: Any, tmp_path: Path
+) -> None:
+    """All lifecycle and IAM phases are explicit, independently runnable as a case."""
+    reset_process_state()
+    _check_create_tables_and_insert(lake)
+    reset_process_state()
+    _check_insert_delete_update_merge(lake)
+    reset_process_state()
+    _check_schema_evolution(lake)
+    reset_process_state()
+    _check_partition_evolution(lake)
+    reset_process_state()
+    _check_second_run_changes_nothing(lake)
+    reset_process_state()
+    _check_dry_run_is_a_read_only_monitor(lake)
+    reset_process_state()
+    _check_s3_lake_synced_with_the_shipped_least_privilege_policy(
+        lake, minio_container, tmp_path
+    )

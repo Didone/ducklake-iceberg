@@ -42,9 +42,11 @@ def test_read_cache_bound_to_transaction_and_parameters(
 
 
 def test_catalog_stats_materialized_before_view_closes(catalog: CatalogHarness) -> None:
-    catalog.write("CALL lake.set_option('data_inlining_row_limit', 0)")
-    catalog.write("CREATE TABLE lake.main.frozen (id BIGINT)")
-    catalog.write("INSERT INTO lake.main.frozen SELECT * FROM range(100)")
+    catalog.write(
+        "CALL lake.set_option('data_inlining_row_limit', 0)",
+        "CREATE TABLE lake.main.frozen (id BIGINT)",
+        "INSERT INTO lake.main.frozen SELECT * FROM range(100)",
+    )
     with open_catalog(catalog.settings(), s3=False) as con, con.read_transaction():
         view = read_catalog(con, "main.frozen", None, include_stats=True)
     ids = {f.data_file_id for f in view.files.files}
@@ -90,9 +92,11 @@ def test_read_only_attachment_cannot_flush_pending_rows(
     """A single attachment cannot preserve RO preflight and perform the flush."""
     import duckdb
 
-    catalog.write("CALL lake.set_option('data_inlining_row_limit', 1000)")
-    catalog.write("CREATE TABLE lake.main.readonly_flush(id BIGINT)")
-    catalog.write("INSERT INTO lake.main.readonly_flush VALUES (1)")
+    catalog.write(
+        "CALL lake.set_option('data_inlining_row_limit', 1000)",
+        "CREATE TABLE lake.main.readonly_flush(id BIGINT)",
+        "INSERT INTO lake.main.readonly_flush VALUES (1)",
+    )
     with open_catalog(catalog.settings(), s3=False) as con:
         before = con.query_arrow(
             "SELECT max(snapshot_id) n FROM lake_meta.ducklake_snapshot"

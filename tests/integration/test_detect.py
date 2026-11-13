@@ -62,10 +62,12 @@ def test_detect_after_flush(seeded_catalog: CatalogHarness) -> None:
 
 # --- table without inlining -> no spurious warnings --------------------------
 def test_detect_never_inlined(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE TABLE lake.vendas.empty_tbl (id INTEGER)")
     catalog.write(
-        "CALL ducklake_flush_inlined_data('lake', schema_name => 'vendas', "
-        "table_name => 'empty_tbl')"
+        "CREATE TABLE lake.vendas.empty_tbl (id INTEGER)",
+        (
+            "CALL ducklake_flush_inlined_data('lake', schema_name => 'vendas', "
+            "table_name => 'empty_tbl')"
+        ),
     )
     st = _status(catalog, "vendas.empty_tbl")
     assert st.pending_rows == 0  # type: ignore[attr-defined]
@@ -75,9 +77,11 @@ def test_detect_never_inlined(catalog: CatalogHarness) -> None:
 
 # --- inserted and deleted before the flush -> rows_visible 0 -----------------
 def test_detect_inserted_then_deleted(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE TABLE lake.vendas.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.vendas.t VALUES (1)")
-    catalog.write("DELETE FROM lake.vendas.t WHERE id = 1")
+    catalog.write(
+        "CREATE TABLE lake.vendas.t (id INTEGER)",
+        "INSERT INTO lake.vendas.t VALUES (1)",
+        "DELETE FROM lake.vendas.t WHERE id = 1",
+    )
     st = _status(catalog, "vendas.t")
     # the inserted row was deleted in the same inlined state: not visible
     assert st.pending_rows == 0  # type: ignore[attr-defined]
@@ -94,9 +98,11 @@ def test_introspection_excludes_spec_tables(seeded_catalog: CatalogHarness) -> N
 
 # --- detect_inlined_many is keyed by table_id --------------------------------
 def test_detect_many(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE TABLE lake.main.a (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.a VALUES (1), (2)")
-    catalog.write("CREATE TABLE lake.main.b (id INTEGER)")
+    catalog.write(
+        "CREATE TABLE lake.main.a (id INTEGER)",
+        "INSERT INTO lake.main.a VALUES (1), (2)",
+        "CREATE TABLE lake.main.b (id INTEGER)",
+    )
 
     settings = catalog.settings()
     with open_catalog(settings, read_only=True) as con, con.read_transaction():

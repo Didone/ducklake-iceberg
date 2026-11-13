@@ -69,8 +69,10 @@ def config(catalog: CatalogHarness, tmp_path: Path) -> Path:
 
 
 def _seed(catalog: CatalogHarness, name: str = "t") -> None:
-    catalog.write(f"CREATE TABLE lake.main.{name} (id INTEGER, v VARCHAR)")
-    catalog.write(f"INSERT INTO lake.main.{name} VALUES (1, 'a'), (2, 'b')")
+    catalog.write(
+        f"CREATE TABLE lake.main.{name} (id INTEGER, v VARCHAR)",
+        f"INSERT INTO lake.main.{name} VALUES (1, 'a'), (2, 'b')",
+    )
 
 
 def _run(config: Path, *args: str) -> tuple[int, dict[str, Any], str]:
@@ -287,9 +289,9 @@ def test_sync_is_zero_copy(
     catalog: CatalogHarness, config: Path, glue_env: None
 ) -> None:
     """KB written, MB referenced: the zero-copy indicator."""
-    catalog.write("CREATE TABLE lake.main.big (id BIGINT, h VARCHAR)")
     catalog.write(
-        "INSERT INTO lake.main.big SELECT i, md5(i::VARCHAR) FROM range(200000) r(i)"
+        "CREATE TABLE lake.main.big (id BIGINT, h VARCHAR)",
+        "INSERT INTO lake.main.big SELECT i, md5(i::VARCHAR) FROM range(200000) r(i)",
     )
 
     code, doc, _ = _run(config, "sync", "--table", "main.big")

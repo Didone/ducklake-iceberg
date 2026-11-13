@@ -81,8 +81,10 @@ def test_sync_without_inlined_uses_one_read_only_connection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = sync_config(catalog, tmp_path, inlining=0)
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t SELECT * FROM range(10)")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t SELECT * FROM range(10)",
+    )
     _forbid(monkeypatch, "ducklake_iceberg.checkpoint.flush.read_fingerprint")
 
     code, doc = run_sync(config)
@@ -104,8 +106,10 @@ def test_sync_resolves_aws_session_once(
     catalog: CatalogHarness, tmp_path: Path, glue_env: None
 ) -> None:
     config = sync_config(catalog, tmp_path, inlining=0)
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t SELECT * FROM range(10)")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t SELECT * FROM range(10)",
+    )
 
     code, doc = run_sync(config)
     assert code == 0, doc["problems"]
@@ -123,8 +127,10 @@ def test_sync_with_inlined_only_flushes(
     maintenance_calls: list[str],
 ) -> None:
     config = sync_config(catalog, tmp_path, inlining=1000)
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t SELECT * FROM range(10)")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t SELECT * FROM range(10)",
+    )
 
     code, doc = run_sync(config)
     assert code == 0, doc["problems"]
@@ -157,8 +163,10 @@ def test_unchanged_sync_reads_only_pointer_and_glue(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = sync_config(catalog, tmp_path, inlining=0)
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t SELECT * FROM range(10)")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t SELECT * FROM range(10)",
+    )
     code, doc = run_sync(config)
     assert code == 0, doc["problems"]
 
@@ -190,8 +198,10 @@ def test_changed_sync_register_does_not_reread(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = sync_config(catalog, tmp_path, inlining=0)
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t SELECT * FROM range(10)")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t SELECT * FROM range(10)",
+    )
     code, doc = run_sync(config)
     assert code == 0, doc["problems"]
 
@@ -218,8 +228,10 @@ def test_unchanged_after_upgrade_takes_full_path(
 ) -> None:
     """Different tool version in the pointer: the shortcut does not apply."""
     config = sync_config(catalog, tmp_path, inlining=0)
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t SELECT * FROM range(10)")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t SELECT * FROM range(10)",
+    )
     code, doc = run_sync(config)
     assert code == 0, doc["problems"]
 
@@ -253,13 +265,17 @@ def test_unchanged_shortcut_refuses_window_with_expired_snapshots(
     if catalog.backend != "sqlite":
         pytest.skip("state is forged directly in SQLite")
     config = sync_config(catalog, tmp_path, inlining=0)
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t SELECT * FROM range(10)")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t SELECT * FROM range(10)",
+    )
     code, doc = run_sync(config)
     assert code == 0, doc["problems"]
 
-    catalog.write("INSERT INTO lake.main.t SELECT * FROM range(10, 15)")
-    catalog.write("CREATE TABLE lake.main.outra (x INTEGER)")
+    catalog.write(
+        "INSERT INTO lake.main.t SELECT * FROM range(10, 15)",
+        "CREATE TABLE lake.main.outra (x INTEGER)",
+    )
     for table in ("ducklake_snapshot_changes", "ducklake_snapshot"):
         catalog.meta_exec(
             f"DELETE FROM {table} WHERE snapshot_id = (SELECT snapshot_id FROM "

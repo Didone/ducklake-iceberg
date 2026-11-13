@@ -29,8 +29,10 @@ def test_reference_logical_budgets(
     catalog: CatalogHarness, tmp_path: Path, glue_env: None, scenario: str, cap: int
 ) -> None:
     config = sync_config(catalog, tmp_path, inlining=0)
-    catalog.write("CREATE TABLE lake.main.t (id BIGINT, p INTEGER, payload VARCHAR)")
-    catalog.write("ALTER TABLE lake.main.t SET PARTITIONED BY (p)")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id BIGINT, p INTEGER, payload VARCHAR)",
+        "ALTER TABLE lake.main.t SET PARTITIONED BY (p)",
+    )
     for i in range(4):
         catalog.write(
             f"INSERT INTO lake.main.t SELECT id, {i}, 'value' "
@@ -42,8 +44,10 @@ def test_reference_logical_budgets(
     if scenario == "A":
         catalog.write("INSERT INTO lake.main.t VALUES (500, 0, 'new')")
     elif scenario == "F":
-        catalog.write("CALL lake.set_option('data_inlining_row_limit', 1000)")
-        catalog.write("INSERT INTO lake.main.t VALUES (500, 0, 'inline')")
+        catalog.write(
+            "CALL lake.set_option('data_inlining_row_limit', 1000)",
+            "INSERT INTO lake.main.t VALUES (500, 0, 'inline')",
+        )
     elif scenario == "D":
         catalog.write("DELETE FROM lake.main.t WHERE id = 1")
     elif scenario == "U":

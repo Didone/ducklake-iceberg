@@ -43,8 +43,10 @@ def test_publication_failure_and_dry_run_recovery(
     boundary: str,
 ) -> None:
     config = sync_config(catalog, tmp_path, inlining=0)
-    catalog.write("CREATE TABLE lake.main.t(id BIGINT)")
-    catalog.write("INSERT INTO lake.main.t SELECT * FROM range(100)")
+    catalog.write(
+        "CREATE TABLE lake.main.t(id BIGINT)",
+        "INSERT INTO lake.main.t SELECT * FROM range(100)",
+    )
     if successor:
         code, doc = run_sync(config)
         assert code == 0, doc["problems"]

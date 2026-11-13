@@ -290,6 +290,29 @@ def test_required_extensions_per_backend(tmp_path: Path) -> None:
     assert "postgres" in pg_con._required_extensions()
 
 
+def test_batched_setup_keeps_statement_snapshots(catalog: CatalogHarness) -> None:
+    with open_catalog(catalog.settings(), s3=False) as con:
+        before = con.query_arrow(
+            "SELECT max(snapshot_id) n FROM lake_meta.ducklake_snapshot"
+        ).to_pylist()[0]["n"]
+    catalog.write(
+        "CREATE TABLE lake.main.batched(id BIGINT)",
+        "INSERT INTO lake.main.batched VALUES (1)",
+        "INSERT INTO lake.main.batched VALUES (2)",
+    )
+    with open_catalog(catalog.settings(), s3=False) as con:
+        after = con.query_arrow(
+            "SELECT max(snapshot_id) n FROM lake_meta.ducklake_snapshot"
+        ).to_pylist()[0]["n"]
+        assert after == before + 3
+        assert con.query_arrow(
+            "SELECT * FROM lake.main.batched ORDER BY id"
+        ).to_pylist() == [
+            {"id": 1},
+            {"id": 2},
+        ]
+
+
 @pytest.mark.postgres
 def test_shared_service_keeps_catalogs_isolated(
     postgres_service: Any, tmp_path: Path
@@ -404,4 +427,5 @@ def test_catalog_cleanup_reports_active_work(
         for worker in workers:
             worker.join(timeout=10)
     assert all(not worker.is_alive() for worker in workers)
-    assert results and results[0] != 0  # Cleanup terminated the owned active query.
+    assert results
+    assert results[0] != 0  # Cleanup terminated the owned active query.

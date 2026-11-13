@@ -55,8 +55,10 @@ def test_resolve_table(seeded_catalog: CatalogHarness) -> None:
 
 # --- table created after the queried snapshot -----------------------------
 def test_table_not_visible_in_earlier_snapshot(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE TABLE lake.vendas.a (id INTEGER)")
-    catalog.write("CREATE TABLE lake.vendas.b (id INTEGER)")
+    catalog.write(
+        "CREATE TABLE lake.vendas.a (id INTEGER)",
+        "CREATE TABLE lake.vendas.b (id INTEGER)",
+    )
     with open_catalog(catalog.settings()) as con, con.read_transaction():
         current = rdr.current_snapshot(con)
         begin_a = int(
@@ -73,8 +75,10 @@ def test_table_not_visible_in_earlier_snapshot(catalog: CatalogHarness) -> None:
 
 # --- half-open right bound of the interval --------------------------------
 def test_dropped_table_right_bound(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE TABLE lake.vendas.b (id INTEGER)")
-    catalog.write("DROP TABLE lake.vendas.b")
+    catalog.write(
+        "CREATE TABLE lake.vendas.b (id INTEGER)",
+        "DROP TABLE lake.vendas.b",
+    )
     with open_catalog(catalog.settings()) as con, con.read_transaction():
         rows = con.query_arrow(
             "SELECT begin_snapshot, end_snapshot "
@@ -111,8 +115,10 @@ def test_ambiguous_identity(catalog: CatalogHarness) -> None:
 
 # --- same-named tables in different schemas -------------------------------
 def test_homonymous_tables(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE TABLE lake.vendas.pedidos (id INTEGER)")
-    catalog.write("CREATE TABLE lake.main.pedidos (id INTEGER)")
+    catalog.write(
+        "CREATE TABLE lake.vendas.pedidos (id INTEGER)",
+        "CREATE TABLE lake.main.pedidos (id INTEGER)",
+    )
     with open_catalog(catalog.settings()) as con, con.read_transaction():
         snap = rdr.current_snapshot(con)
         v = rdr.resolve_table(con, rdr.TableRef("vendas", "pedidos"), snap)
@@ -133,8 +139,10 @@ def test_list_tables(seeded_catalog: CatalogHarness) -> None:
 
 
 def test_list_tables_filtered(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE TABLE lake.vendas.a (id INTEGER)")
-    catalog.write("CREATE TABLE lake.main.b (id INTEGER)")
+    catalog.write(
+        "CREATE TABLE lake.vendas.a (id INTEGER)",
+        "CREATE TABLE lake.main.b (id INTEGER)",
+    )
     with open_catalog(catalog.settings()) as con, con.read_transaction():
         snap = rdr.current_snapshot(con)
         vendas = rdr.list_tables(con, snap, schema_name="vendas")
@@ -155,11 +163,13 @@ def test_inlined_rows_before_flush(seeded_catalog: CatalogHarness) -> None:
 
 
 def test_inlined_rows_after_flush(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE TABLE lake.vendas.pedidos (id INTEGER)")
-    catalog.write("INSERT INTO lake.vendas.pedidos VALUES (1), (2), (3)")
     catalog.write(
-        "CALL ducklake_flush_inlined_data('lake', schema_name => 'vendas', "
-        "table_name => 'pedidos')"
+        "CREATE TABLE lake.vendas.pedidos (id INTEGER)",
+        "INSERT INTO lake.vendas.pedidos VALUES (1), (2), (3)",
+        (
+            "CALL ducklake_flush_inlined_data('lake', schema_name => 'vendas', "
+            "table_name => 'pedidos')"
+        ),
     )
     with open_catalog(catalog.settings()) as con, con.read_transaction():
         snap = rdr.current_snapshot(con)
@@ -170,10 +180,12 @@ def test_inlined_rows_after_flush(catalog: CatalogHarness) -> None:
 
 
 def test_inlined_none_when_never(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE TABLE lake.vendas.vazia (id INTEGER)")
     catalog.write(
-        "CALL ducklake_flush_inlined_data('lake', schema_name => 'vendas', "
-        "table_name => 'vazia')"
+        "CREATE TABLE lake.vendas.vazia (id INTEGER)",
+        (
+            "CALL ducklake_flush_inlined_data('lake', schema_name => 'vendas', "
+            "table_name => 'vazia')"
+        ),
     )
     with open_catalog(catalog.settings()) as con, con.read_transaction():
         snap = rdr.current_snapshot(con)
@@ -217,8 +229,10 @@ def test_schema_version_fallback(catalog: CatalogHarness) -> None:
 
 # --- inlined: unexpected naming convention --------------------------------
 def test_inlined_convention_mismatch(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE TABLE lake.vendas.pedidos (id INTEGER)")
-    catalog.write("INSERT INTO lake.vendas.pedidos VALUES (1)")
+    catalog.write(
+        "CREATE TABLE lake.vendas.pedidos (id INTEGER)",
+        "INSERT INTO lake.vendas.pedidos VALUES (1)",
+    )
     catalog.meta_exec(
         "UPDATE ducklake_inlined_data_tables SET table_name = 'nome_fora_da_convencao'",
     )

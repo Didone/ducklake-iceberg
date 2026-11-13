@@ -53,9 +53,9 @@ def test_nested_variant_in_struct_blocks(
     catalog: CatalogHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     catalog.write(
-        "CREATE TABLE lake.main.t (id INTEGER, payload STRUCT(attrs VARIANT))"
+        "CREATE TABLE lake.main.t (id INTEGER, payload STRUCT(attrs VARIANT))",
+        "INSERT INTO lake.main.t VALUES (1, {'attrs': NULL})",
     )
-    catalog.write("INSERT INTO lake.main.t VALUES (1, {'attrs': NULL})")
 
     opened_write: list[bool] = []
     from ducklake_iceberg.catalog.connection import open_catalog as real
@@ -76,9 +76,9 @@ def test_nested_variant_in_struct_blocks(
 # --- sync --dry-run also blocks ---------------------------------------------
 def test_nested_variant_blocks_dry_run(catalog: CatalogHarness) -> None:
     catalog.write(
-        "CREATE TABLE lake.main.t (id INTEGER, payload STRUCT(attrs VARIANT))"
+        "CREATE TABLE lake.main.t (id INTEGER, payload STRUCT(attrs VARIANT))",
+        "INSERT INTO lake.main.t VALUES (1, {'attrs': NULL})",
     )
-    catalog.write("INSERT INTO lake.main.t VALUES (1, {'attrs': NULL})")
     result = runner.invoke(
         app,
         ["sync", "--table", "main.t", "--dry-run", "--json"],
@@ -110,8 +110,10 @@ def test_nested_variant_in_map(catalog: CatalogHarness) -> None:
 
 # --- top-level VARIANT only -> flush proceeds ---------------------------
 def test_top_level_variant_does_not_block(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER, top VARIANT)")
-    catalog.write("INSERT INTO lake.main.t VALUES (1, NULL)")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id INTEGER, top VARIANT)",
+        "INSERT INTO lake.main.t VALUES (1, NULL)",
+    )
     result = flush_inlined(catalog.settings(), "main.t")
     assert result.rows_flushed == 1
     assert result.exit_code == ExitCode.SUCCESS
@@ -122,10 +124,10 @@ def test_top_level_variant_does_not_block(catalog: CatalogHarness) -> None:
 # --- nested variant only in an old schema version ---------------------------
 def test_nested_variant_only_in_old_schema_version(catalog: CatalogHarness) -> None:
     catalog.write(
-        "CREATE TABLE lake.main.t (id INTEGER, payload STRUCT(attrs VARIANT))"
+        "CREATE TABLE lake.main.t (id INTEGER, payload STRUCT(attrs VARIANT))",
+        "ALTER TABLE lake.main.t DROP COLUMN payload",
+        "INSERT INTO lake.main.t VALUES (1)",
     )
-    catalog.write("ALTER TABLE lake.main.t DROP COLUMN payload")
-    catalog.write("INSERT INTO lake.main.t VALUES (1)")
     # the current snapshot no longer has a nested variant
     assert find_nested_variants(_variants(catalog, "main.t")) == ()
     result = flush_inlined(catalog.settings(), "main.t")
@@ -155,9 +157,9 @@ def test_plain_table_has_no_variants(seeded_catalog: CatalogHarness) -> None:
 # --- sync reports the path and column_id -----------------------------------
 def test_sync_message_names_column(catalog: CatalogHarness) -> None:
     catalog.write(
-        "CREATE TABLE lake.main.t (id INTEGER, payload STRUCT(attrs VARIANT))"
+        "CREATE TABLE lake.main.t (id INTEGER, payload STRUCT(attrs VARIANT))",
+        "INSERT INTO lake.main.t VALUES (1, {'attrs': NULL})",
     )
-    catalog.write("INSERT INTO lake.main.t VALUES (1, {'attrs': NULL})")
     result = runner.invoke(
         app, ["sync", "--table", "main.t", "--json"], env=cli_env_for(catalog)
     )

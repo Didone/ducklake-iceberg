@@ -32,6 +32,16 @@ if TYPE_CHECKING:
     from ducklake_iceberg.export import ExportResult
 
 
+def _load_extensions(con: duckdb.DuckDBPyConnection, *extensions: str) -> None:
+    """Load installed prerequisites; install only on a missing/unreadable load."""
+    for extension in extensions:
+        try:
+            con.execute(f"LOAD {extension}")
+        except duckdb.IOException:
+            con.execute(f"INSTALL {extension}")
+            con.execute(f"LOAD {extension}")
+
+
 @dataclass(slots=True)
 class CatalogHarness:
     """Uniform interface to a DuckLake catalog, independent of the backend."""
@@ -42,18 +52,17 @@ class CatalogHarness:
     #: path of the SQLite file, to forge states via direct SQL (sqlite only)
     sqlite_file: Path | None = field(default=None)
 
-    def write(self, sql: str) -> None:
-        """Open a fresh write connection and run `sql` (creates a snapshot)."""
-        con = duckdb.connect(":memory:")
+    def write(self, *statements: str) -> None:
+        """Own one setup connection; each statement retains its own commit."""
+        con = duckdb.connect(":memory:", config={"threads": 2})
         try:
-            for ext in ("ducklake", self.backend):
-                con.execute(f"INSTALL {ext}")
-                con.execute(f"LOAD {ext}")
+            _load_extensions(con, "ducklake", self.backend)
             con.execute(
                 f"ATTACH '{self.dsn}' AS lake "
                 f"(METADATA_CATALOG 'lake_meta', DATA_PATH '{self.data_path}')"
             )
-            con.execute(sql)
+            for sql in statements:
+                con.execute(sql)
         finally:
             con.close()
 
@@ -101,11 +110,10 @@ class Lake:
         catalog.write("CALL lake.set_option('data_inlining_row_limit', 0)")
 
     def write(self, *statements: str) -> None:
-        for sql in statements:
-            self.catalog.write(sql)
+        self.catalog.write(*statements)
 
     def rows(self, table: str = "main.t") -> list[tuple[Any, ...]]:
-        con = duckdb.connect(":memory:")
+        con = duckdb.connect(":memory:", config={"threads": 2})
         try:
             for ext in ("ducklake", self.catalog.backend):
                 con.execute(f"LOAD {ext}")
@@ -166,7 +174,7 @@ def run_sync(config: Path, *extra: str) -> tuple[int, dict[str, Any]]:
 def _postgres_meta_exec(sql: str) -> None:
     import os
 
-    con = duckdb.connect(":memory:")
+    con = duckdb.connect(":memory:", config={"threads": 2})
     try:
         con.execute("INSTALL postgres")
         con.execute("LOAD postgres")
@@ -235,7 +243,7 @@ def _wait_until_postgres_accepts(dbname: str, host: str, port: str) -> None:
     """
     import time
 
-    con = duckdb.connect(":memory:")
+    con = duckdb.connect(":memory:", config={"threads": 2})
     try:
         con.execute("INSTALL postgres")
         con.execute("LOAD postgres")
@@ -354,8 +362,8 @@ def postgres_catalog(container: Any, tmp_path: Path) -> Iterator[CatalogHarness]
             _postgres_admin(
                 container,
                 "SELECT state, count(*) FROM pg_stat_activity "
-            f"WHERE datname = '{database}' "
-            "AND backend_type = 'client backend' GROUP BY state",
+                f"WHERE datname = '{database}' "
+                "AND backend_type = 'client backend' GROUP BY state",
             )
             .decode()
             .splitlines()
@@ -371,8 +379,10 @@ def postgres_catalog(container: Any, tmp_path: Path) -> Iterator[CatalogHarness]
 @pytest.fixture
 def seeded_catalog(catalog: CatalogHarness) -> CatalogHarness:
     """Harness with a `main.pedidos` table holding 2 inlined rows."""
-    catalog.write("CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR)")
-    catalog.write("INSERT INTO lake.main.pedidos VALUES (1, 'MG'), (2, 'SP')")
+    catalog.write(
+        "CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR)",
+        "INSERT INTO lake.main.pedidos VALUES (1, 'MG'), (2, 'SP')",
+    )
     return catalog
 
 

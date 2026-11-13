@@ -34,7 +34,9 @@ example: "envelope v1: optional key `timings`".
 - Share local benchmark service/environment cleanup across profiles and use
   explicit fixture injection for extension-install measurements.
 - Make the contributor guide the starting point for tracing and changing a sync.
-
+- Reuse a session-owned PostgreSQL test service with isolated databases per case,
+  batch setup statements without merging commits, and make the complete MinIO
+  lifecycle independently runnable.
 - Reuse one DuckDB root during sync, including flush through read-only/write/
   read-only attachments; freshly validate the source after each write.
 - Use single GETs for metadata reads and conditional single PUTs for small

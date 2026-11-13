@@ -136,9 +136,11 @@ def test_footers_phase_reports_items_bytes_and_calls(
     catalog: CatalogHarness, tmp_path: Path, glue_env: None
 ) -> None:
     config = _config(catalog, tmp_path, stats_source="footer")
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t VALUES (1), (2)")
-    catalog.write("INSERT INTO lake.main.t VALUES (3)")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t VALUES (1), (2)",
+        "INSERT INTO lake.main.t VALUES (3)",
+    )
 
     code, doc = _sync(config, "--table", "main.t")
 

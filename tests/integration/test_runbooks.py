@@ -111,8 +111,10 @@ def _runbook_a_update_table(candidate_uri: str) -> None:
 
 def _two_syncs(catalog: CatalogHarness, config: Path) -> tuple[str, str]:
     """Run two syncs; return (previous metadata, current metadata)."""
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t SELECT * FROM range(5)")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t SELECT * FROM range(5)",
+    )
     _sync(config)
     first = _catalog().load_table(("analytics", "t")).metadata_location
     catalog.write("INSERT INTO lake.main.t SELECT * FROM range(5, 8)")
@@ -241,8 +243,10 @@ def test_runbook_c_restore_after_external_write(
     ancestor of the ducklake-iceberg export); the way is Runbook A step 4 pointing to
     the ``metadata_location`` in ``_ducklake_iceberg_last_export.json``.
     """
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t SELECT * FROM range(5)")
+    catalog.write(
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t SELECT * FROM range(5)",
+    )
     _sync(config)
     _catalog().load_table(("analytics", "t")).append(
         pa.table({"id": pa.array([42], pa.int32())})

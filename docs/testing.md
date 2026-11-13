@@ -101,8 +101,13 @@ from one test can leak into the next.
 - `catalog` parametrizes SQLite and PostgreSQL.
 - `seeded_catalog` creates a table with inlined rows.
 - `flushed_catalog` makes those rows available as files.
-- The PostgreSQL fixture supplies `PG*` variables, waits for a stable server
-  and stops the container on teardown.
+- One PostgreSQL service runs per pytest process; each case owns a fresh database,
+  data/output paths and scoped `PG*` environment. Service readiness is checked once.
+  Database teardown terminates retained idle clients; active work is cleaned up
+  and reported as an error. The owned container stops at session teardown.
+- `CatalogHarness.write(*statements)` owns one setup connection and commits each
+  statement separately. It does not combine source transactions or share an
+  application connection across sync invocations. Setup roots use two threads.
 
 These are test-only classes/fixtures, not part of the production API.
 
@@ -121,8 +126,9 @@ patch is limited to tests.
 The MinIO suite exercises actual S3-compatible FileIO and hashes source
 files before/after operations. Its `Lake` helper wraps source writes,
 syncs, source-tree hashes, bucket objects and reader comparisons. The
-lifecycle tests in that file share one lake and depend on order; run the
-entire suite, not a later stateful test in isolation.
+lifecycle case explicitly executes all seven original phases, including IAM,
+resetting process state between phases. Run `test_complete_zero_copy_lifecycle`
+individually or as part of the suite; it has no dependency on earlier pytest cases.
 
 Set `DUCKLAKE_ICEBERG_MINIO_IMAGE` only when intentionally testing another
 image; reproducibility otherwise relies on the test's pinned default.

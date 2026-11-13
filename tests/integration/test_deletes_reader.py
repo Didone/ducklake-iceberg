@@ -148,8 +148,10 @@ def test_single_delete_physical_position(catalog: CatalogHarness) -> None:
 # --- two consecutive DELETEs on the same data file ---------------------------
 def test_partial_delete_file_and_temporal_filter(catalog: CatalogHarness) -> None:
     _two_files(catalog)
-    catalog.write("DELETE FROM lake.main.t WHERE id = 3")
-    catalog.write("DELETE FROM lake.main.t WHERE id = 5")
+    catalog.write(
+        "DELETE FROM lake.main.t WHERE id = 3",
+        "DELETE FROM lake.main.t WHERE id = 5",
+    )
     ds = _read(catalog)
 
     assert len(ds.files) == 1
@@ -293,8 +295,10 @@ def test_delete_on_data_file_not_live(catalog: CatalogHarness) -> None:
 # --- inlined deletions -------------------------------------------------------
 def test_inlined_deletes_block_by_default(catalog: CatalogHarness) -> None:
     _two_files(catalog)
-    catalog.write("CALL lake.set_option('data_inlining_row_limit', 10)")
-    catalog.write("DELETE FROM lake.main.t WHERE id = 15")
+    catalog.write(
+        "CALL lake.set_option('data_inlining_row_limit', 10)",
+        "DELETE FROM lake.main.t WHERE id = 15",
+    )
     with pytest.raises(rd.InlinedDeletesPendingError) as exc_info:
         _read(catalog)
     assert exc_info.value.exit_code == ExitCode.BLOCKED
@@ -304,9 +308,11 @@ def test_inlined_deletes_block_by_default(catalog: CatalogHarness) -> None:
 def test_inlined_deletes_on_file_without_delete_file(catalog: CatalogHarness) -> None:
     """Regression: inlined deletes on a data file WITHOUT a Parquet delete file stay."""
     _two_files(catalog)
-    catalog.write("DELETE FROM lake.main.t WHERE id = 3")  # delete file on the 1st
-    catalog.write("CALL lake.set_option('data_inlining_row_limit', 10)")
-    catalog.write("DELETE FROM lake.main.t WHERE id = 15")  # inlined on the 2nd
+    catalog.write(
+        "DELETE FROM lake.main.t WHERE id = 3",
+        "CALL lake.set_option('data_inlining_row_limit', 10)",
+        "DELETE FROM lake.main.t WHERE id = 15",
+    )
     ds = _read(catalog, include_inlined=True)
 
     assert ds.inlined is not None
@@ -346,9 +352,11 @@ def test_inlined_table_before_snapshot_is_not_visible(catalog: CatalogHarness) -
 # --- partial+inlined duplicate; nonexistent file_id (orphan) -----------------
 def test_duplicate_and_orphan_inlined(catalog: CatalogHarness) -> None:
     _two_files(catalog)
-    catalog.write("DELETE FROM lake.main.t WHERE id = 3")
-    catalog.write("CALL lake.set_option('data_inlining_row_limit', 10)")
-    catalog.write("DELETE FROM lake.main.t WHERE id = 15")
+    catalog.write(
+        "DELETE FROM lake.main.t WHERE id = 3",
+        "CALL lake.set_option('data_inlining_row_limit', 10)",
+        "DELETE FROM lake.main.t WHERE id = 15",
+    )
     table = f"ducklake_inlined_delete_{_table_id(catalog)}"
     first = _data_file_id_of(catalog, 3)
     catalog.meta_exec(f"INSERT INTO {table} VALUES ({first}, 3, 1)")

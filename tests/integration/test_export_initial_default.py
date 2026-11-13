@@ -27,9 +27,11 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture
 def harness(catalog: CatalogHarness) -> CatalogHarness:
-    catalog.write("CALL lake.set_option('data_inlining_row_limit', 0)")
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.t VALUES (1), (2)")  # file without c
+    catalog.write(
+        "CALL lake.set_option('data_inlining_row_limit', 0)",
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "INSERT INTO lake.main.t VALUES (1), (2)",
+    )
     return catalog
 
 
@@ -70,8 +72,10 @@ def test_add_column_default_blocks_already_published_files(
     """Files published before the ADD would also read NULL in Iceberg."""
     settings = _settings(harness, tmp_path)
     assert run_export(settings, "main", "t").exit_code is ExitCode.SUCCESS
-    harness.write("ALTER TABLE lake.main.t ADD COLUMN c INTEGER DEFAULT 42")
-    harness.write("INSERT INTO lake.main.t VALUES (3, 3)")
+    harness.write(
+        "ALTER TABLE lake.main.t ADD COLUMN c INTEGER DEFAULT 42",
+        "INSERT INTO lake.main.t VALUES (3, 3)",
+    )
     with pytest.raises(CompatibilityError):
         run_export(settings, "main", "t")
 
@@ -79,8 +83,10 @@ def test_add_column_default_blocks_already_published_files(
 def test_drop_default_keeps_initial_default_blocking(
     harness: CatalogHarness, tmp_path: Path
 ) -> None:
-    harness.write("ALTER TABLE lake.main.t ADD COLUMN c INTEGER DEFAULT 5")
-    harness.write("ALTER TABLE lake.main.t ALTER COLUMN c DROP DEFAULT")
+    harness.write(
+        "ALTER TABLE lake.main.t ADD COLUMN c INTEGER DEFAULT 5",
+        "ALTER TABLE lake.main.t ALTER COLUMN c DROP DEFAULT",
+    )
     with pytest.raises(CompatibilityError):
         run_export(_settings(harness, tmp_path), "main", "t")
 
@@ -89,9 +95,11 @@ def test_set_default_only_affects_new_rows(
     harness: CatalogHarness, tmp_path: Path
 ) -> None:
     """``SET DEFAULT`` only changes the write default: the value is in the file."""
-    harness.write("ALTER TABLE lake.main.t ADD COLUMN c INTEGER")
-    harness.write("ALTER TABLE lake.main.t ALTER COLUMN c SET DEFAULT 7")
-    harness.write("INSERT INTO lake.main.t (id) VALUES (3)")
+    harness.write(
+        "ALTER TABLE lake.main.t ADD COLUMN c INTEGER",
+        "ALTER TABLE lake.main.t ALTER COLUMN c SET DEFAULT 7",
+        "INSERT INTO lake.main.t (id) VALUES (3)",
+    )
     result = run_export(_settings(harness, tmp_path), "main", "t")
     rows = _iceberg_rows(result.plan.metadata_location)
     assert [(r["id"], r["c"]) for r in rows] == [(1, None), (2, None), (3, 7)]
@@ -101,8 +109,10 @@ def test_rewritten_rows_publish_the_default(
     harness: CatalogHarness, tmp_path: Path
 ) -> None:
     """Hint remediation: ``UPDATE ... SET c = c`` writes 42 into the files."""
-    harness.write("ALTER TABLE lake.main.t ADD COLUMN c INTEGER DEFAULT 42")
-    harness.write("UPDATE lake.main.t SET c = c")
+    harness.write(
+        "ALTER TABLE lake.main.t ADD COLUMN c INTEGER DEFAULT 42",
+        "UPDATE lake.main.t SET c = c",
+    )
     result = run_export(_settings(harness, tmp_path), "main", "t")
     rows = _iceberg_rows(result.plan.metadata_location)
     assert [(r["id"], r["c"]) for r in rows] == [(1, 42), (2, 42)]
@@ -128,8 +138,10 @@ def test_add_column_without_default_never_blocks(
     harness: CatalogHarness, tmp_path: Path
 ) -> None:
     """NULL ``initial_default``: both sides read NULL, nothing to check."""
-    harness.write("ALTER TABLE lake.main.t ADD COLUMN c INTEGER")
-    harness.write("INSERT INTO lake.main.t VALUES (3, 30)")
+    harness.write(
+        "ALTER TABLE lake.main.t ADD COLUMN c INTEGER",
+        "INSERT INTO lake.main.t VALUES (3, 30)",
+    )
     rows, footers = _export_counting_footers(harness, tmp_path)
     assert [(r["id"], r["c"]) for r in rows] == [(1, None), (2, None), (3, 30)]
     assert footers == 0
@@ -139,11 +151,13 @@ def test_files_written_after_add_column_never_block(
     catalog: CatalogHarness, tmp_path: Path
 ) -> None:
     """A file written after the ADD has the column: it is not even a candidate."""
-    catalog.write("CALL lake.set_option('data_inlining_row_limit', 0)")
-    catalog.write("CREATE TABLE lake.main.t (id INTEGER)")
-    catalog.write("ALTER TABLE lake.main.t ADD COLUMN c INTEGER DEFAULT 42")
-    catalog.write("INSERT INTO lake.main.t (id) VALUES (1)")
-    catalog.write("INSERT INTO lake.main.t VALUES (2, 7)")
+    catalog.write(
+        "CALL lake.set_option('data_inlining_row_limit', 0)",
+        "CREATE TABLE lake.main.t (id INTEGER)",
+        "ALTER TABLE lake.main.t ADD COLUMN c INTEGER DEFAULT 42",
+        "INSERT INTO lake.main.t (id) VALUES (1)",
+        "INSERT INTO lake.main.t VALUES (2, 7)",
+    )
     rows, footers = _export_counting_footers(catalog, tmp_path)
     assert [(r["id"], r["c"]) for r in rows] == [(1, 42), (2, 7)]
     assert footers == 0
@@ -154,9 +168,11 @@ def test_only_files_older_than_the_column_are_read(
 ) -> None:
     """After the remediation, only a file older than the column would have its
     footer read; the UPDATE ended it, so the new files pass without a read."""
-    harness.write("ALTER TABLE lake.main.t ADD COLUMN c INTEGER DEFAULT 42")
-    harness.write("UPDATE lake.main.t SET c = c")
-    harness.write("INSERT INTO lake.main.t VALUES (3, 3)")
+    harness.write(
+        "ALTER TABLE lake.main.t ADD COLUMN c INTEGER DEFAULT 42",
+        "UPDATE lake.main.t SET c = c",
+        "INSERT INTO lake.main.t VALUES (3, 3)",
+    )
     rows, footers = _export_counting_footers(harness, tmp_path)
     assert [(r["id"], r["c"]) for r in rows] == [(1, 42), (2, 42), (3, 3)]
     assert footers == 0

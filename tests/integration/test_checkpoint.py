@@ -77,9 +77,11 @@ def test_flush_idempotent(seeded_catalog: CatalogHarness) -> None:
 
 # --- the flush never compacts ------------------------------------------------
 def test_flush_does_not_merge_small_files(catalog: CatalogHarness) -> None:
-    catalog.write("CREATE TABLE lake.main.files (id INTEGER)")
-    catalog.write("INSERT INTO lake.main.files SELECT range FROM range(0, 50)")
-    catalog.write("INSERT INTO lake.main.files SELECT range FROM range(50, 100)")
+    catalog.write(
+        "CREATE TABLE lake.main.files (id INTEGER)",
+        "INSERT INTO lake.main.files SELECT range FROM range(0, 50)",
+        "INSERT INTO lake.main.files SELECT range FROM range(50, 100)",
+    )
     live_before = _live_files(catalog, "files")
     snapshot_before = _max_snapshot(catalog)
     result = flush_inlined(catalog.settings(), "main.files")
