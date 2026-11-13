@@ -192,3 +192,47 @@ A successful sync is a checkpoint, not a continuously updated view. Choose a
 schedule based on acceptable lag. Start with the
 [local exercise](getting-started.md#local-exercise-without-aws), then read the
 [architecture](architecture.md) for exact publication and recovery boundaries.
+
+## Ingestion and publication cadence
+
+The design separates three operations with distinct timing.
+
+1. **Commit.** DuckLake makes the new state queryable through DuckDB,
+   including eligible small batches stored inline in the catalog. A CDC
+   consumer can record its source position alongside the changes in the
+   same transaction.
+2. **Materialize.** A flush writes pending inlined changes to source files.
+   Buffering eligible writes can reduce small-file creation, depending on
+   the volume between flushes and how the table is partitioned. Sync flushes
+   pending inlined changes when required for publication.
+3. **Publish.** Sync validates the source file set, writes Iceberg v2 metadata
+   and any required position deletes, and updates AWS Glue. Compatible readers
+   query the published snapshot using the same source Parquet data files.
+
+Direct DuckLake readers need access to the source catalog and data. Iceberg
+readers discover the published metadata through Glue and need access to the
+files referenced by that snapshot. Keeping those files available allows
+readers to query the published snapshot during a DuckLake catalog outage.
+
+This pattern fits tables where operational consumers need committed state
+before the next analytical snapshot. Measure transaction commit time,
+source-to-reader freshness, and query response time separately. Iceberg
+freshness depends on the cadence and success of publication. Source
+maintenance must account for files referenced by retained Iceberg snapshots,
+including during publication delays. See [retention and maintenance](operations.md#retention-and-maintenance)
+for the operational requirements.
+
+## Further reading
+
+- The architecture article describes the separate cadences and an AWS CDC
+  proof of concept. With ingestion every minute and publication every
+  15 minutes, measured p95 end-to-end freshness was about 80 seconds through
+  DuckLake and 16 minutes through the Iceberg readers. Costs were similar to
+  the 15-minute Iceberg batch baseline for that workload.
+  [Ingest Like a Database, Publish Like a Lakehouse](https://medium.com/@didone/ingest-like-a-database-publish-like-a-lakehouse-b19b30f396b8)
+- The walkthrough uses Aurora PostgreSQL for the DuckLake catalog, S3 for
+  data and generated metadata under separate prefixes, and Glue for table
+  discovery. It publishes three orders and checks them in Athena, then
+  updates, deletes, and inserts rows in DuckLake. The next successful sync
+  makes the changed state visible in Athena.
+  [DuckLake Is Great for Small Writes. But Can My Analytics Tools Read It?](https://medium.com/@didone/ducklake-is-great-for-small-writes-but-can-my-analytics-tools-read-it-09463403d5ff)
