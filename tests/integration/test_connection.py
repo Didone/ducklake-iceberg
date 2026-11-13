@@ -8,6 +8,7 @@ parametrized `catalog` fixture. A few tests are inherently SQLite-specific
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pyarrow as pa
 import pytest
@@ -20,7 +21,12 @@ from ducklake_iceberg.catalog.connection import (
     open_catalog,
 )
 from ducklake_iceberg.errors import AwsError, CatalogError
-from tests.integration.conftest import CatalogHarness, _make_sqlite
+from tests.integration.conftest import (
+    CatalogHarness,
+    _make_sqlite,
+    _postgres_admin,
+    postgres_catalog,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -282,3 +288,120 @@ def test_required_extensions_per_backend(tmp_path: Path) -> None:
     )
     pg_con = DuckLakeConnection(pg_settings)
     assert "postgres" in pg_con._required_extensions()
+
+
+@pytest.mark.postgres
+def test_shared_service_keeps_catalogs_isolated(
+    postgres_service: Any, tmp_path: Path
+) -> None:
+    with postgres_catalog(postgres_service, tmp_path / "first") as first:
+        first.write("CREATE TABLE lake.main.same_name(id BIGINT)")
+        first.write("INSERT INTO lake.main.same_name VALUES (42)")
+        first.write("CREATE SCHEMA lake.first_only")
+        with open_catalog(first.settings(), s3=False) as con:
+            first_uuid = con.query_arrow(
+                "SELECT table_uuid FROM lake_meta.ducklake_table"
+            ).to_pylist()[0]["table_uuid"]
+    with postgres_catalog(postgres_service, tmp_path / "second") as second:
+        second.write("CREATE SCHEMA IF NOT EXISTS lake.vendas")
+        with open_catalog(second.settings(), s3=False) as con:
+            assert (
+                con.query_arrow("SELECT * FROM lake_meta.ducklake_table").num_rows == 0
+            )
+            assert "first_only" not in {
+                row["schema_name"]
+                for row in con.query_arrow(
+                    "SELECT schema_name FROM lake_meta.ducklake_schema"
+                ).to_pylist()
+            }
+        second.write("CREATE TABLE lake.main.same_name(id VARCHAR)")
+        second.write("INSERT INTO lake.main.same_name VALUES ('fresh')")
+        with open_catalog(second.settings(), s3=False) as con:
+            assert con.query_arrow("SELECT * FROM lake.main.same_name").to_pylist() == [
+                {"id": "fresh"}
+            ]
+            assert (
+                con.query_arrow(
+                    "SELECT table_uuid FROM lake_meta.ducklake_table"
+                ).to_pylist()[0]["table_uuid"]
+                != first_uuid
+            )
+    assert first.dsn != second.dsn
+    assert first.data_path != second.data_path
+
+
+@pytest.mark.postgres
+def test_failed_catalog_setup_drops_database_and_restores_environment(
+    postgres_service: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    monkeypatch.setenv("PGDATABASE", "caller_database")
+    created: list[str] = []
+
+    def fail_setup() -> None:
+        with postgres_catalog(postgres_service, tmp_path) as harness:
+            created.append(os.environ["PGDATABASE"])
+            harness.write("CREATE TABLE lake.main.partial(id BIGINT)")
+            raise RuntimeError("injected setup failure")
+
+    with pytest.raises(RuntimeError, match="injected setup failure"):
+        fail_setup()
+    assert os.environ["PGDATABASE"] == "caller_database"
+    databases = _postgres_admin(
+        postgres_service, "SELECT datname FROM pg_database"
+    ).splitlines()
+    assert created[0].encode() not in databases
+
+
+@pytest.mark.postgres
+def test_catalog_cleanup_reports_active_work(
+    postgres_service: Any, tmp_path: Path
+) -> None:
+    import os
+    import time
+    from threading import Thread
+
+    workers: list[Thread] = []
+    results: list[int] = []
+
+    def leave_query_running() -> None:
+        with postgres_catalog(postgres_service, tmp_path):
+            database = os.environ["PGDATABASE"]
+
+            def query() -> None:
+                result = postgres_service.exec(
+                    [
+                        "psql",
+                        "-U",
+                        postgres_service.username,
+                        "-d",
+                        database,
+                        "-c",
+                        "SELECT pg_sleep(10)",
+                    ]
+                )
+                results.append(result[0])
+
+            worker = Thread(target=query)
+            workers.append(worker)
+            worker.start()
+            for _ in range(100):
+                active = _postgres_admin(
+                    postgres_service,
+                    "SELECT datname, state FROM pg_stat_activity WHERE state='active'",
+                )
+                if (database + "|active").encode() in active.splitlines():
+                    break
+                time.sleep(0.05)
+            else:
+                pytest.fail("owned query did not start")
+
+    try:
+        with pytest.raises(RuntimeError, match="active PostgreSQL work"):
+            leave_query_running()
+    finally:
+        for worker in workers:
+            worker.join(timeout=10)
+    assert all(not worker.is_alive() for worker in workers)
+    assert results and results[0] != 0  # Cleanup terminated the owned active query.

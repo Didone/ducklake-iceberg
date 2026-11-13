@@ -13,8 +13,10 @@ which the DuckDB `postgres` extension consumes.
 
 from __future__ import annotations
 
+import uuid
 import warnings
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -28,10 +30,6 @@ if TYPE_CHECKING:
     from pyiceberg.table import StaticTable
 
     from ducklake_iceberg.export import ExportResult
-
-
-SettingsFactory = Callable[..., DuckLakeIcebergSettings]
-Writer = Callable[[str], None]
 
 
 @dataclass(slots=True)
@@ -211,6 +209,7 @@ def catalog(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[CatalogH
     """Empty catalog harness, parametrized by backend (sqlite/postgres).
 
     Seeds a `vendas` schema (first snapshot) and yields the harness.
+    PostgreSQL uses a unique database on the session-owned local service.
     """
     backend = request.param
     if backend == "sqlite":
@@ -219,13 +218,11 @@ def catalog(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[CatalogH
         yield harness
         return
 
-    # backend == "postgres": ephemeral container via testcontainers
-    harness, stop = _start_postgres(tmp_path)
-    try:
+    # Share the service, never a DuckLake database or filesystem namespace.
+    service = request.getfixturevalue("postgres_service")
+    with postgres_catalog(service, tmp_path) as harness:
         harness.write("CREATE SCHEMA IF NOT EXISTS lake.vendas")
         yield harness
-    finally:
-        stop()
 
 
 def _wait_until_postgres_accepts(dbname: str, host: str, port: str) -> None:
@@ -263,53 +260,112 @@ def _wait_until_postgres_accepts(dbname: str, host: str, port: str) -> None:
         con.close()
 
 
-def _start_postgres(tmp_path: Path) -> tuple[CatalogHarness, Callable[[], None]]:
-    import os
-
+@pytest.fixture(scope="session")
+def postgres_service() -> Iterator[Any]:
+    """One owned server per pytest process; catalogs remain function-scoped."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         from testcontainers.postgres import PostgresContainer
 
-    # Docker Desktop/WSL port forwarding occasionally never comes up for a
-    # fresh container: retry with a new one instead of failing the test.
     for attempt in range(3):
-        container = PostgresContainer("postgres:16-alpine")
-        container.start()
-        host = container.get_container_host_ip()
-        port = container.get_exposed_port(5432)
-        user = container.username
-        password = container.password
-        dbname = container.dbname
-        # Credentials via libpq (never in the DSN): the DuckDB postgres
-        # extension reads them.
-        os.environ.update(
-            PGHOST=host,
-            PGPORT=str(port),
-            PGUSER=user,
-            PGPASSWORD=password,
-            PGDATABASE=dbname,
+        container = PostgresContainer(
+            "postgres:16-alpine",
+            username="test",
+            password=uuid.uuid4().hex,
+            dbname="test",
         )
         try:
-            _wait_until_postgres_accepts(dbname, host, str(port))
-            break
-        except duckdb.Error:
+            container.start()
+            with pytest.MonkeyPatch.context() as patch:
+                for key, value in _postgres_environment(
+                    container, container.dbname
+                ).items():
+                    patch.setenv(key, value)
+                _wait_until_postgres_accepts(
+                    container.dbname,
+                    container.get_container_host_ip(),
+                    str(container.get_exposed_port(5432)),
+                )
+        except BaseException as exc:
             container.stop()
-            if attempt == 2:
+            if not isinstance(exc, duckdb.Error) or attempt == 2:
                 raise
-    data_dir = tmp_path / "data"
-    data_dir.mkdir(exist_ok=True)
-    harness = CatalogHarness(
-        backend="postgres",
-        dsn=f"ducklake:postgres:dbname={dbname} host={host} port={port}",
-        data_path=f"{data_dir}/",
-    )
-
-    def stop() -> None:
-        for key in ("PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE"):
-            os.environ.pop(key, None)
+        else:
+            break
+    try:
+        yield container
+    finally:
         container.stop()
 
-    return harness, stop
+
+def _postgres_environment(container: Any, database: str) -> dict[str, str]:
+    return {
+        "PGHOST": str(container.get_container_host_ip()),
+        "PGPORT": str(container.get_exposed_port(5432)),
+        "PGUSER": str(container.username),
+        "PGPASSWORD": str(container.password),
+        "PGDATABASE": database,
+    }
+
+
+def _postgres_admin(container: Any, sql: str) -> bytes:
+    # Service lifecycle only. DuckLake metadata/data access still uses DuckDB.
+    code, output = container.exec(
+        [
+            "psql",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-tA",
+            "-U",
+            container.username,
+            "-d",
+            container.dbname,
+            "-c",
+            sql,
+        ]
+    )
+    if code:
+        raise RuntimeError("owned PostgreSQL test database administration failed")
+    return bytes(output)
+
+
+@contextmanager
+def postgres_catalog(container: Any, tmp_path: Path) -> Iterator[CatalogHarness]:
+    """Own a fresh database, environment and file namespace for one test."""
+    database = "dli_" + uuid.uuid4().hex
+    _postgres_admin(container, f'CREATE DATABASE "{database}"')
+    try:
+        with pytest.MonkeyPatch.context() as patch:
+            env = _postgres_environment(container, database)
+            for key, value in env.items():
+                patch.setenv(key, value)
+            data_dir = tmp_path / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            yield CatalogHarness(
+                backend="postgres",
+                dsn=(
+                    f"ducklake:postgres:dbname={database} "
+                    f"host={env['PGHOST']} port={env['PGPORT']}"
+                ),
+                data_path=f"{data_dir}/",
+            )
+    finally:
+        states = (
+            _postgres_admin(
+                container,
+                "SELECT state, count(*) FROM pg_stat_activity "
+            f"WHERE datname = '{database}' "
+            "AND backend_type = 'client backend' GROUP BY state",
+            )
+            .decode()
+            .splitlines()
+        )
+        # Native error paths may retain an idle backend after DuckDB closes.
+        # Terminate only this test's idle clients; active work still fails.
+        suffix = " WITH (FORCE)" if states else ""
+        _postgres_admin(container, f'DROP DATABASE "{database}"{suffix}')
+        if any(line.split("|", 1)[0] != "idle" for line in states):
+            raise RuntimeError("test ended with active PostgreSQL work")
 
 
 @pytest.fixture
