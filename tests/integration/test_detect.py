@@ -22,7 +22,7 @@ from ducklake_iceberg.checkpoint.detect import (
     detect_inlined_many,
 )
 from ducklake_iceberg.checkpoint.model import TableRef
-from tests.integration.conftest import CatalogHarness
+from tests.integration.conftest import CatalogFactory, CatalogHarness
 
 pytestmark = pytest.mark.integration
 
@@ -61,8 +61,8 @@ def test_detect_after_flush(seeded_catalog: CatalogHarness) -> None:
 
 
 # --- table without inlining -> no spurious warnings --------------------------
-def test_detect_never_inlined(catalog: CatalogHarness) -> None:
-    catalog.write(
+def test_detect_never_inlined(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
         "CREATE TABLE lake.vendas.empty_tbl (id INTEGER)",
         (
             "CALL ducklake_flush_inlined_data('lake', schema_name => 'vendas', "
@@ -76,8 +76,8 @@ def test_detect_never_inlined(catalog: CatalogHarness) -> None:
 
 
 # --- inserted and deleted before the flush -> rows_visible 0 -----------------
-def test_detect_inserted_then_deleted(catalog: CatalogHarness) -> None:
-    catalog.write(
+def test_detect_inserted_then_deleted(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
         "CREATE TABLE lake.vendas.t (id INTEGER)",
         "INSERT INTO lake.vendas.t VALUES (1)",
         "DELETE FROM lake.vendas.t WHERE id = 1",
@@ -97,8 +97,8 @@ def test_introspection_excludes_spec_tables(seeded_catalog: CatalogHarness) -> N
 
 
 # --- detect_inlined_many is keyed by table_id --------------------------------
-def test_detect_many(catalog: CatalogHarness) -> None:
-    catalog.write(
+def test_detect_many(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
         "CREATE TABLE lake.main.a (id INTEGER)",
         "INSERT INTO lake.main.a VALUES (1), (2)",
         "CREATE TABLE lake.main.b (id INTEGER)",

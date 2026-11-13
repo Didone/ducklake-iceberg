@@ -9,7 +9,7 @@ from ducklake_iceberg.catalog.connection import open_catalog
 from ducklake_iceberg.catalog.query import Params, query_arrow
 from ducklake_iceberg.catalog.view import read_catalog
 from ducklake_iceberg.errors import CatalogError
-from tests.integration.conftest import CatalogHarness
+from tests.integration.conftest import CatalogFactory, CatalogHarness
 
 pytestmark = pytest.mark.integration
 
@@ -41,8 +41,10 @@ def test_read_cache_bound_to_transaction_and_parameters(
         assert timing.counter("catalog.queries") == before + 3
 
 
-def test_catalog_stats_materialized_before_view_closes(catalog: CatalogHarness) -> None:
-    catalog.write(
+def test_catalog_stats_materialized_before_view_closes(
+    make_catalog: CatalogFactory,
+) -> None:
+    catalog = make_catalog(
         "CALL lake.set_option('data_inlining_row_limit', 0)",
         "CREATE TABLE lake.main.frozen (id BIGINT)",
         "INSERT INTO lake.main.frozen SELECT * FROM range(100)",

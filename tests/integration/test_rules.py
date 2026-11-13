@@ -27,7 +27,7 @@ from ducklake_iceberg.doctor.rules import (
     partial_files,
     unsupported_type,
 )
-from tests.integration.conftest import CatalogHarness
+from tests.integration.conftest import CatalogFactory, CatalogHarness
 
 pytestmark = pytest.mark.integration
 
@@ -65,8 +65,8 @@ def _meta_count(harness: CatalogHarness, sql: str) -> int:
 # --------------------------------------------------------------------------
 # inlined-data
 # --------------------------------------------------------------------------
-def test_inlined_data_triggers(catalog: CatalogHarness) -> None:
-    catalog.write(
+def test_inlined_data_triggers(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
         "CREATE SCHEMA IF NOT EXISTS lake.main",
         "CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR, valor DOUBLE)",
         "INSERT INTO lake.main.pedidos VALUES (1, 'SP', 10.5), (2, 'MG', 20.0)",
@@ -92,8 +92,8 @@ def test_inlined_data_triggers(catalog: CatalogHarness) -> None:
     assert any("inlined" in f.detail for f in blockers)
 
 
-def test_inlined_data_passes_after_flush(catalog: CatalogHarness) -> None:
-    catalog.write(
+def test_inlined_data_passes_after_flush(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
         "CREATE SCHEMA IF NOT EXISTS lake.main",
         "CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR)",
         "INSERT INTO lake.main.pedidos VALUES (1, 'SP'), (2, 'MG')",
@@ -170,8 +170,8 @@ def test_partial_files_info_when_within_target(catalog: CatalogHarness) -> None:
 # --------------------------------------------------------------------------
 # unsupported-type
 # --------------------------------------------------------------------------
-def test_unsupported_type_triggers(catalog: CatalogHarness) -> None:
-    catalog.write(
+def test_unsupported_type_triggers(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
         "CREATE SCHEMA IF NOT EXISTS lake.main",
         (
             "CREATE TABLE lake.main.pedidos ("
@@ -185,8 +185,8 @@ def test_unsupported_type_triggers(catalog: CatalogHarness) -> None:
     assert any("medicao.duracao" in f.subject for f in blockers)
 
 
-def test_unsupported_type_passes(catalog: CatalogHarness) -> None:
-    catalog.write(
+def test_unsupported_type_passes(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
         "CREATE SCHEMA IF NOT EXISTS lake.main",
         (
             "CREATE TABLE lake.main.pedidos ("
@@ -205,8 +205,8 @@ def test_unsupported_type_passes(catalog: CatalogHarness) -> None:
 # --------------------------------------------------------------------------
 # calendar-transform
 # --------------------------------------------------------------------------
-def test_calendar_transform_triggers(catalog: CatalogHarness) -> None:
-    catalog.write(
+def test_calendar_transform_triggers(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
         "CREATE SCHEMA IF NOT EXISTS lake.main",
         "CREATE TABLE lake.main.pedidos (id INTEGER, dt DATE)",
     )
@@ -226,8 +226,8 @@ def test_calendar_transform_triggers(catalog: CatalogHarness) -> None:
     assert degraded, "year() in the current spec should degrade"
 
 
-def test_calendar_transform_identity_passes(catalog: CatalogHarness) -> None:
-    catalog.write(
+def test_calendar_transform_identity_passes(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
         "CREATE SCHEMA IF NOT EXISTS lake.main",
         "CREATE TABLE lake.main.pedidos (id INTEGER, uf VARCHAR, dt DATE)",
     )

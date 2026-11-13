@@ -10,7 +10,11 @@ from unittest import mock
 import pytest
 from moto import mock_aws
 
-from tests.integration.conftest import CatalogHarness, run_sync, sync_config
+from tests.integration.conftest import (
+    CatalogFactory,
+    run_sync,
+    sync_config,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.aws]
 
@@ -35,19 +39,19 @@ def _hashes(path: Path) -> dict[str, str]:
     ["write_snapshot", "write_metadata_json", "write_pointer", "register"],
 )
 def test_publication_failure_and_dry_run_recovery(
-    catalog: CatalogHarness,
+    make_catalog: CatalogFactory,
     tmp_path: Path,
     glue_env: None,
     attempt: int,
     successor: bool,
     boundary: str,
 ) -> None:
-    config = sync_config(catalog, tmp_path)
-    catalog.write(
+    catalog = make_catalog(
         "CALL lake.set_option('data_inlining_row_limit', 0)",
         "CREATE TABLE lake.main.t(id BIGINT)",
         "INSERT INTO lake.main.t SELECT * FROM range(100)",
     )
+    config = sync_config(catalog, tmp_path)
     if successor:
         code, doc = run_sync(config)
         assert code == 0, doc["problems"]

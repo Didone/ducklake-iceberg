@@ -109,6 +109,10 @@ from one test can leak into the next.
 - `meta_exec(sql)` deliberately modifies metadata to test impossible/corrupt
   states. This is a test escape hatch, **not operational repair guidance**.
 - `catalog` parametrizes SQLite and PostgreSQL.
+- `make_catalog(*initial_sql)` prepares one fresh catalog with the scenario's
+  initial SQL, then closes its writer before returning. Its fixture owns the
+  catalog until teardown. Cases whose other fixtures already own the source keep
+  using `catalog`; they must not create a second source.
 - `seeded_catalog` creates a table with inlined rows.
 - `flushed_catalog` makes those rows available as files.
 - `lake` supplies a file-backed source and an independent Iceberg target.
@@ -121,6 +125,10 @@ from one test can leak into the next.
   and reported as an error. The owned container stops at session teardown.
 - `sync_config` only writes YAML. A scenario's source options belong in its
   explicit preparation SQL, alongside the table and data setup.
+
+Tests that replace the doctor rule registry use a scoped replacement and restore
+the previous registry. Import-time rule registration must not depend on which
+test ran before the current case.
 
 These are test-only classes/fixtures, not part of the production API.
 

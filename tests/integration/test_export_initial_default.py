@@ -20,7 +20,7 @@ from ducklake_iceberg.config import DuckLakeIcebergSettings
 from ducklake_iceberg.errors import CompatibilityError, ExitCode
 from ducklake_iceberg.export import run_export
 
-from .conftest import CatalogHarness
+from .conftest import CatalogFactory, CatalogHarness
 
 pytestmark = pytest.mark.integration
 
@@ -148,10 +148,10 @@ def test_add_column_without_default_never_blocks(
 
 
 def test_files_written_after_add_column_never_block(
-    catalog: CatalogHarness, tmp_path: Path
+    make_catalog: CatalogFactory, tmp_path: Path
 ) -> None:
     """A file written after the ADD has the column: it is not even a candidate."""
-    catalog.write(
+    catalog = make_catalog(
         "CALL lake.set_option('data_inlining_row_limit', 0)",
         "CREATE TABLE lake.main.t (id INTEGER)",
         "ALTER TABLE lake.main.t ADD COLUMN c INTEGER DEFAULT 42",

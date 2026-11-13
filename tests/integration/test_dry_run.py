@@ -16,7 +16,7 @@ from typer.testing import CliRunner
 
 from ducklake_iceberg.catalog.connection import open_catalog
 from ducklake_iceberg.cli import app
-from tests.integration.conftest import CatalogHarness, cli_env_for
+from tests.integration.conftest import CatalogFactory, CatalogHarness, cli_env_for
 
 pytestmark = [pytest.mark.integration]
 
@@ -102,8 +102,8 @@ def test_dry_run_never_opens_write_connection(
 
 
 # --- nested VARIANT in dry-run -> exit 2 -------------------------------------
-def test_dry_run_still_runs_doctor(catalog: CatalogHarness) -> None:
-    catalog.write(
+def test_dry_run_still_runs_doctor(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog(
         "CREATE TABLE lake.main.t (id INTEGER, p STRUCT(a VARIANT))",
         "INSERT INTO lake.main.t VALUES (1, {'a': NULL})",
     )

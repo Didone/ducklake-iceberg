@@ -10,7 +10,11 @@ import pytest
 from moto import mock_aws
 
 from ducklake_iceberg import timing
-from tests.integration.conftest import CatalogHarness, run_sync, sync_config
+from tests.integration.conftest import (
+    CatalogFactory,
+    run_sync,
+    sync_config,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.aws]
 
@@ -26,10 +30,13 @@ def glue_env() -> Iterator[None]:
     [("N", 25), ("I", 30), ("A", 30), ("F", 50), ("D", 35), ("U", 35)],
 )
 def test_reference_logical_budgets(
-    catalog: CatalogHarness, tmp_path: Path, glue_env: None, scenario: str, cap: int
+    make_catalog: CatalogFactory,
+    tmp_path: Path,
+    glue_env: None,
+    scenario: str,
+    cap: int,
 ) -> None:
-    config = sync_config(catalog, tmp_path)
-    catalog.write(
+    catalog = make_catalog(
         "CALL lake.set_option('data_inlining_row_limit', 0)",
         "CREATE TABLE lake.main.t (id BIGINT, p INTEGER, payload VARCHAR)",
         "ALTER TABLE lake.main.t SET PARTITIONED BY (p)",
@@ -39,6 +46,7 @@ def test_reference_logical_budgets(
             for i in range(4)
         ),
     )
+    config = sync_config(catalog, tmp_path)
     if scenario != "I":
         code, doc = run_sync(config)
         assert code == 0, doc["problems"]

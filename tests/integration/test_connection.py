@@ -23,6 +23,7 @@ from ducklake_iceberg.catalog.connection import (
 )
 from ducklake_iceberg.errors import AwsError, CatalogError
 from tests.integration.conftest import (
+    CatalogFactory,
     CatalogHarness,
     _make_sqlite,
     _postgres_admin,
@@ -307,8 +308,8 @@ def test_duckdb_thread_setting_preserves_native_default_and_explicit_limits(
         assert actual == expected
 
 
-def test_batched_setup_keeps_statement_snapshots(catalog: CatalogHarness) -> None:
-    catalog.write("CALL lake.set_option('data_inlining_row_limit', 0)")
+def test_batched_setup_keeps_statement_snapshots(make_catalog: CatalogFactory) -> None:
+    catalog = make_catalog("CALL lake.set_option('data_inlining_row_limit', 0)")
     with open_catalog(catalog.settings(), s3=False) as con:
         before = con.query_arrow(
             "SELECT max(snapshot_id) n FROM lake_meta.ducklake_snapshot"

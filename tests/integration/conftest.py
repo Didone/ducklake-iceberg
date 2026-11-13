@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import uuid
 import warnings
-from collections.abc import Iterator
-from contextlib import AbstractContextManager, contextmanager, nullcontext
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, ExitStack, contextmanager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -213,6 +213,8 @@ _CATALOG_BACKENDS = [
     pytest.param("postgres", marks=pytest.mark.postgres),
 ]
 
+CatalogFactory = Callable[..., CatalogHarness]
+
 
 @contextmanager
 def _catalog_case(
@@ -237,6 +239,24 @@ def catalog(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[CatalogH
     """Empty catalog with a vendas schema (first snapshot), on either backend."""
     with _catalog_case(request, tmp_path) as harness:
         yield harness
+
+
+@pytest.fixture(params=_CATALOG_BACKENDS)
+def make_catalog(
+    request: pytest.FixtureRequest, tmp_path: Path
+) -> Iterator[CatalogFactory]:
+    """Create one fresh source with explicit initial SQL; own it until teardown."""
+    created = False
+    with ExitStack() as owner:
+
+        def prepare(*statements: str) -> CatalogHarness:
+            nonlocal created
+            if created:
+                raise RuntimeError("make_catalog owns one source per test")
+            created = True
+            return owner.enter_context(_catalog_case(request, tmp_path, *statements))
+
+        yield prepare
 
 
 def _wait_until_postgres_accepts(dbname: str, host: str, port: str) -> None:
