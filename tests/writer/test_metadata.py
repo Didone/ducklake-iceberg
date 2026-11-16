@@ -382,3 +382,40 @@ def test_sort_order_unsorted(tmp_path: Path) -> None:
     default_id = doc["default-sort-order-id"]
     orders = {o["order-id"]: o for o in doc["sort-orders"]}
     assert orders[default_id]["fields"] == []
+
+
+def test_comment_only_schema_id_collision_preserves_history() -> None:
+    from pyiceberg.partitioning import PartitionSpec
+
+    from ducklake_iceberg.writer.metadata import build_next_metadata
+
+    original = Schema(NestedField(8, "field", StringType(), doc="old"), schema_id=3)
+    base = build_table_metadata(
+        original,
+        PartitionSpec(),
+        "s3://bucket/output",
+        "s3://bucket/output/list.avro",
+        SnapshotCounters(0, 0, 0, 0, 0, 0),
+        _provenance(),
+        snapshot_id=123,
+    )
+    edited = Schema(NestedField(8, "field", StringType(), doc="new"), schema_id=3)
+    result = build_next_metadata(
+        base,
+        "s3://bucket/output/v1.metadata.json",
+        schema=edited,
+        specs=base.partition_specs,
+        default_spec_id=base.default_spec_id,
+        manifest_list_path=None,
+        summary=None,
+        snapshot_id=999,
+        properties={},
+    )
+    assert result.current_schema_id != 3
+    assert result.schema().find_field(8).doc == "new"
+    historical = result.schema_by_id(3)
+    assert historical is not None
+    assert historical.find_field(8).doc == "old"
+    assert result.snapshots == base.snapshots
+    assert result.current_snapshot_id == base.current_snapshot_id
+    assert result.last_sequence_number == base.last_sequence_number

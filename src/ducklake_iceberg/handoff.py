@@ -49,6 +49,7 @@ class ExportPointer:
     delete_file_layout: str = DELETE_FILE_LAYOUT_LEGACY
     table_uuid: str | None = None
     data_path: str | None = None
+    comments_fingerprint: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)
@@ -128,6 +129,14 @@ def read_pointer(io: FileIO, location: str) -> ExportPointer:
 
 
 def _pointer_from_dict(data: dict[str, Any]) -> ExportPointer:
+    import re
+
+    fingerprint = data.get("comments_fingerprint")
+    if fingerprint is not None and (
+        not isinstance(fingerprint, str)
+        or re.fullmatch(r"v1:[0-9a-f]{64}", fingerprint) is None
+    ):
+        raise PointerError("invalid comment fingerprint in export pointer")
     return ExportPointer(
         version=POINTER_VERSION,
         metadata_location=str(data["metadata_location"]),
@@ -148,6 +157,7 @@ def _pointer_from_dict(data: dict[str, Any]) -> ExportPointer:
         ),
         table_uuid=data.get("table_uuid"),
         data_path=data.get("data_path"),
+        comments_fingerprint=fingerprint,
     )
 
 

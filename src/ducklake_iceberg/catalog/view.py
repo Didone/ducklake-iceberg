@@ -24,9 +24,11 @@ from ducklake_iceberg.catalog.files import (
     enumerate_files,
 )
 from ducklake_iceberg.catalog.reader import (
+    CommentState,
     TableIdentity,
     current_snapshot,
     parse_table_ref,
+    read_comments,
     resolve_table,
     snapshot_at,
 )
@@ -90,6 +92,7 @@ class CatalogView:
     #: the window has all snapshots (none expired in between): only then does
     #: the absence of a token prove the table did not change
     table_changes_complete: bool = False
+    comments: CommentState = dataclasses.field(default_factory=CommentState)
     historical_schemas: tuple[Schema, ...] = ()
     file_column_stats: Mapping[int, Mapping[int, ColumnStats]] = dataclasses.field(
         default_factory=dict
@@ -172,12 +175,29 @@ def _read_catalog(
         )
 
     file_set = enumerate_files(con.raw, target, allow_historic=True)
+    comments = read_comments(con.raw, con.meta, identity.table_id, snapshot.snapshot_id)
     columns = read_columns(con.raw, con.meta, identity.table_id, snapshot.snapshot_id)
     schema_mapping = build_iceberg_schema(
         columns,
         schema_id=identity.schema_version,
         last_column_id=read_last_column_id(con.raw, con.meta, identity.table_id),
     )
+    comments = dataclasses.replace(
+        comments,
+        columns=tuple(
+            entry
+            for entry in comments.columns
+            if entry[0] in schema_mapping.schema.field_ids
+        ),
+    )
+    from ducklake_iceberg.mapping.schema import comment_problem
+
+    for text, table, nested in [
+        (comments.table, True, False),
+        *[(doc, False, parent is not None) for _, parent, _, doc in comments.columns],
+    ]:
+        if problem := comment_problem(text, table=table, nested=nested):
+            raise CompatibilityError(problem)
     partition_infos = read_partition_specs(con.raw, con.meta, identity.table_id)
     historical: list[Schema] = []
     for info in partition_infos:
@@ -222,6 +242,7 @@ def _read_catalog(
         defaults_added_at=defaults_added_at,
         table_changes_since=previous_snapshot,
         table_changes_complete=complete,
+        comments=comments,
         historical_schemas=tuple(historical),
     )
 

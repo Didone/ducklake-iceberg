@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from ducklake_iceberg.errors import DivergenceError
 from ducklake_iceberg.glue import (
+    CommentProjection,
     GlueTarget,
     RegisterResult,
     TableAlreadyRegistered,
@@ -47,16 +48,16 @@ def resolve_metadata_location(
     return pointer.metadata_location, pointer
 
 
-def _read_metadata_properties(io: FileIO, metadata_location: str) -> dict[str, str]:
+def _read_metadata(io: FileIO, metadata_location: str) -> TableMetadata:
     from pyiceberg.serializers import FromInputFile
 
-    input_file = io.new_input(metadata_location)
-    if not input_file.exists():
+    try:
+        return FromInputFile.table_metadata(io.new_input(metadata_location))
+    except FileNotFoundError as exc:
         raise PointerError(
-            f"pointer points to {metadata_location}, which does not exist",
+            "completed export metadata is missing",
             hint="re-export with ducklake-iceberg sync",
-        )
-    return dict(FromInputFile.table_metadata(input_file).properties)
+        ) from exc
 
 
 def _check_coherence(
@@ -83,6 +84,20 @@ def _check_coherence(
         )
 
 
+def registration_target(
+    settings: DuckLakeIcebergSettings, table_name: str
+) -> GlueTarget:
+    """One target construction shared with pending-publication recovery."""
+    return GlueTarget(
+        database=settings.glue_database,
+        table=normalize_table_name(table_name),
+        region=settings.aws_region,
+        profile=settings.aws_profile,
+        catalog_id=None,
+        s3_endpoint=settings.s3_endpoint,
+    )
+
+
 def run_register(
     settings: DuckLakeIcebergSettings,
     schema_name: str,
@@ -93,18 +108,45 @@ def run_register(
     dry_run: bool = False,
     handoff: ExportPointer | None = None,
     metadata: TableMetadata | None = None,
+    comments: CommentProjection | None = None,
+    existing: dict[str, object] | None = None,
+    existing_known: bool = False,
 ) -> RegisterResult:
     """Publish a validated handoff, reusing in-memory export metadata."""
-    target = GlueTarget(
-        database=settings.glue_database,
-        table=normalize_table_name(table_name),
-        region=settings.aws_region,
-        profile=settings.aws_profile,
-        catalog_id=None,
-        s3_endpoint=settings.s3_endpoint,
-    )
-    if handoff is not None and metadata is None:
-        _raise_if_published(target, handoff.metadata_location)
+    target = registration_target(settings, table_name)
+    if handoff is not None and metadata is None and comments is not None:
+        if not existing_known:
+            existing = describe_table(target)
+            existing_known = True
+        if existing is not None:
+            params = existing.get("Parameters")
+            if (
+                isinstance(params, dict)
+                and params.get("table_type", "").upper() == "ICEBERG"
+                and params.get("metadata_location") == handoff.metadata_location
+            ):
+                from ducklake_iceberg.glue import _handle_existing
+
+                if comments.matches(existing):
+                    raise TableAlreadyRegistered(
+                        "metadata and comments already published",
+                        metadata_location=handoff.metadata_location,
+                    )
+
+                def unavailable_metadata() -> TableMetadata:
+                    raise DivergenceError(
+                        "metadata pointer changed during comment repair"
+                    )
+
+                return _handle_existing(
+                    target,
+                    unavailable_metadata,
+                    existing,
+                    handoff.metadata_location,
+                    dry_run=dry_run,
+                    verify=False,
+                    comments=comments,
+                )
     pointer: ExportPointer | None
     if handoff is not None:
         resolved, pointer = handoff.metadata_location, handoff
@@ -112,11 +154,10 @@ def run_register(
         resolved, pointer = resolve_metadata_location(
             settings, schema_name, table_name, explicit=metadata_location
         )
-    properties = (
-        dict(metadata.properties)
-        if metadata is not None
-        else _read_metadata_properties(build_file_io(settings), resolved)
-    )
+    if metadata is None:
+        metadata = _read_metadata(build_file_io(settings), resolved)
+    properties = dict(metadata.properties)
+    comments = CommentProjection.from_metadata(metadata)
     _check_coherence(
         properties,
         pointer=pointer,
@@ -131,6 +172,9 @@ def run_register(
         dry_run=dry_run,
         data_path=settings.data_path,
         metadata=metadata,
+        comments=comments,
+        existing=existing,
+        existing_known=existing_known,
         file_io=(
             KnownMetadataFileIO(
                 build_file_io(settings),
@@ -143,21 +187,3 @@ def run_register(
             else None
         ),
     )
-
-
-def _raise_if_published(target: GlueTarget, metadata_location: str) -> None:
-    table = describe_table(target)
-    if table is None:
-        return
-    params = table.get("Parameters")
-    if not isinstance(params, dict):
-        return
-    if (
-        str(params.get("table_type", "")).upper() == "ICEBERG"
-        and params.get("metadata_location") == metadata_location
-    ):
-        raise TableAlreadyRegistered(
-            f"{target.database}.{target.table} already published at "
-            f"{metadata_location}",
-            metadata_location=metadata_location,
-        )

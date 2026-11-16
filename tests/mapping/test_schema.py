@@ -437,3 +437,16 @@ def test_schema_id_preserved() -> None:
     mapping = build(cols, schema_id=7)
     assert mapping.schema_id == 7
     assert mapping.schema.schema_id == 7
+
+
+def test_nested_comment_mapping_preserves_ids() -> None:
+    from dataclasses import replace
+
+    columns = [
+        replace(col(1, "outer", "struct"), doc="root"),
+        replace(col(2, "child", "varchar", parent=1), doc="nested\ndoc"),
+    ]
+    schema = build(columns).schema
+    assert schema.find_field(1).doc == "root"
+    assert schema.find_field(2).doc == "nested\ndoc"
+    assert schema.field_ids == {1, 2}

@@ -20,6 +20,20 @@ example: "envelope v1: optional key `timings`".
 
 ## [Unreleased]
 
+### Added
+
+- Synchronize DuckLake table and column comments into Iceberg metadata and the
+  Glue Data Catalog, including comment-only changes and removals. Repair manual
+  Glue comment edits without exporting a new snapshot or copying source data.
+- Envelope v1: optional `comments_changed` indicator in export/dry-run steps and
+  `recovered` on recovered-publication steps.
+
+### Fixed
+
+- Recover completed unpublished metadata and its comments before advancing to
+  newer source changes; reconcile both pointer and documentation after uncertain
+  Glue outcomes.
+
 ## [0.2.0] - 2026-11-13
 
 ### Added

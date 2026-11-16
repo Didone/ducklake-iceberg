@@ -48,6 +48,7 @@ objects under DuckLake's ``data_path``.
 
 from __future__ import annotations
 
+import copy
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -157,6 +158,67 @@ def _glue_client(target: GlueTarget) -> Any:
     return aws.client("glue", target.region, target.profile)
 
 
+@dataclass(frozen=True, slots=True)
+class CommentProjection:
+    """Only current documentation; historical Glue columns remain untouched."""
+
+    table: str | None = None
+    columns: tuple[tuple[int, str, str | None], ...] = ()
+
+    @classmethod
+    def from_metadata(cls, metadata: TableMetadata) -> CommentProjection:
+        from ducklake_iceberg.errors import CompatibilityError
+        from ducklake_iceberg.mapping.schema import comment_problem
+
+        table = metadata.properties.get("comment") or None
+        columns = tuple(
+            (f.field_id, f.name, f.doc or None) for f in metadata.schema().fields
+        )
+        for text, is_table in [(table, True), *[(doc, False) for _, _, doc in columns]]:
+            if problem := comment_problem(text, table=is_table):
+                raise CompatibilityError(problem)
+        return cls(table, columns)
+
+    def matches(self, table: dict[str, object]) -> bool:
+        if (table.get("Description") or None) != self.table:
+            return False
+        descriptor = table.get("StorageDescriptor") or {}
+        current = [
+            c
+            for c in cast("Any", descriptor).get("Columns", [])
+            if c.get("Parameters", {}).get("iceberg.field.current") != "false"
+        ]
+        actual = {
+            str(c.get("Parameters", {}).get("iceberg.field.id")): c for c in current
+        }
+        if len(actual) != len(current):
+            return False
+        return all(
+            str(fid) in actual
+            and actual[str(fid)]["Name"] == name
+            and (actual[str(fid)].get("Comment") or None) == doc
+            for fid, name, doc in self.columns
+        )
+
+    def repair(self, table: dict[str, object], allowed: set[str]) -> dict[str, Any]:
+        result = copy.deepcopy({k: v for k, v in table.items() if k in allowed})
+        result["Description"] = self.table or ""
+        columns = cast("Any", result.get("StorageDescriptor", {})).get("Columns", [])
+        by_id: dict[str, list[Any]] = {}
+        for column in columns:
+            params = column.get("Parameters", {})
+            if params.get("iceberg.field.current") != "false":
+                by_id.setdefault(str(params.get("iceberg.field.id")), []).append(column)
+        for fid, name, doc in self.columns:
+            matches = by_id.get(str(fid), [])
+            if len(matches) != 1 or matches[0]["Name"] != name:
+                raise RegisterDiverged(
+                    "Glue column identity differs from the published schema"
+                )
+            matches[0]["Comment"] = doc or ""
+        return result
+
+
 def build_catalog(target: GlueTarget, *, file_io: FileIO | None = None) -> GlueCatalog:
     """Build the PyIceberg ``GlueCatalog`` from the target.
 
@@ -168,19 +230,26 @@ def build_catalog(target: GlueTarget, *, file_io: FileIO | None = None) -> GlueC
     # With ``glue.id`` PyIceberg registers the CatalogId on the client it builds
     # itself; without it, it reuses the process-wide client (no new Session).
     client = _glue_client(target) if target.catalog_id is None else None
-    catalog_type = GlueCatalog
-    if file_io is not None:
-        shared = file_io
 
-        class _SharedIOCatalog(GlueCatalog):
-            def _load_file_io(
-                self,
-                properties: dict[str, str] | None = None,
-                location: str | None = None,
-            ) -> FileIO:
-                return shared
+    class _ProjectionCatalog(GlueCatalog):
+        def _load_file_io(
+            self,
+            properties: dict[str, str] | None = None,
+            location: str | None = None,
+        ) -> FileIO:
+            if file_io is not None:
+                return file_io
+            return super()._load_file_io(properties or {}, location)
 
-        catalog_type = _SharedIOCatalog
+        def _create_glue_table(
+            self, database_name: str, table_name: str, table_input: Any
+        ) -> None:
+            projection = getattr(self, "_comment_projection", None)
+            if projection is not None:
+                table_input = {**table_input, "Description": projection.table or ""}
+            super()._create_glue_table(database_name, table_name, table_input)
+
+    catalog_type = _ProjectionCatalog
     return catalog_type(
         "ducklake-iceberg",
         client,
@@ -360,6 +429,9 @@ def register(
     data_path: str | None = None,
     metadata: TableMetadata | None = None,
     file_io: FileIO | None = None,
+    comments: CommentProjection | None = None,
+    existing: dict[str, object] | None = None,
+    existing_known: bool = False,
 ) -> RegisterResult:
     """Publish the pointer to the ``metadata.json`` in Glue.
 
@@ -370,6 +442,8 @@ def register(
     """
     _validate_metadata_location(metadata_location, data_path)
 
+    if comments is None and metadata is not None:
+        comments = CommentProjection.from_metadata(metadata)
     catalog: GlueCatalog | None = None
 
     def get_catalog() -> GlueCatalog:
@@ -382,6 +456,8 @@ def register(
             )
             if metadata is None and not _metadata_exists(catalog, metadata_location):
                 raise GlueError(f"metadata.json not found at {metadata_location}")
+        if comments is not None:
+            catalog._comment_projection = comments  # type: ignore[attr-defined]
         return catalog
 
     def load_metadata() -> TableMetadata:
@@ -389,7 +465,7 @@ def register(
             return metadata
         return _read_metadata(get_catalog(), metadata_location)
 
-    existing = describe_table(target)
+    existing = existing if existing_known else describe_table(target)
     if existing is not None:
         return _handle_existing(
             target,
@@ -397,7 +473,8 @@ def register(
             existing,
             metadata_location,
             dry_run=dry_run,
-            verify=metadata is None,
+            verify=metadata is None and comments is None,
+            comments=comments,
         )
     catalog = get_catalog()
 
@@ -431,7 +508,8 @@ def register(
                     reread,
                     metadata_location,
                     database_created=database_created,
-                    verify=metadata is None,
+                    verify=metadata is None and comments is None,
+                    comments=comments,
                 )
         if isinstance(exc, TableAlreadyExistsError):
             raise GlueError(
@@ -471,6 +549,7 @@ def _handle_existing(
     database_created: bool = False,
     dry_run: bool = False,
     verify: bool = True,
+    comments: CommentProjection | None = None,
 ) -> RegisterResult:
     """Table already exists: nothing to do, advance the pointer, or divergence.
 
@@ -480,20 +559,30 @@ def _handle_existing(
     """
     _require_iceberg(target, table)
     initial_previous = _table_metadata_location(table)
-    if initial_previous == metadata_location:
+    if initial_previous == metadata_location and (
+        comments is None or comments.matches(table)
+    ):
         raise TableAlreadyRegistered(
             f"{target.database}.{target.table} already published at {initial_previous}",
             metadata_location=initial_previous,
         )
-    metadata = load_metadata()
+    metadata = load_metadata() if initial_previous != metadata_location else None
 
     def guard() -> None:
         _require_iceberg(target, table)
         previous = _table_metadata_location(table)
-        if previous == metadata_location:
+        if previous == metadata_location and (
+            comments is None or comments.matches(table)
+        ):
             raise TableAlreadyRegistered(
                 f"{target.database}.{target.table} already published at {previous}",
                 metadata_location=previous,
+            )
+        if previous == metadata_location:
+            return
+        if metadata is None:
+            raise RegisterDiverged(
+                "Glue metadata pointer changed during comment repair"
             )
         ancestors = {entry.metadata_file for entry in metadata.metadata_log}
         if previous not in ancestors:
@@ -506,14 +595,31 @@ def _handle_existing(
 
     def commit(plan: dict[str, object]) -> RegisterResult:
         previous = _table_metadata_location(plan)
-        _update_table(target, plan, metadata, metadata_location, previous)
+        if previous == metadata_location and comments is not None:
+            client = _glue_client(target)
+            allowed = set(client.meta.service_model.shape_for("TableInput").members)
+            kwargs: dict[str, Any] = {
+                "DatabaseName": target.database,
+                "TableInput": comments.repair(plan, allowed),
+                "VersionId": str(plan.get("VersionId", "")),
+            }
+            if target.catalog_id is not None:
+                kwargs["CatalogId"] = target.catalog_id
+            client.update_table(**kwargs)
+        else:
+            assert metadata is not None
+            _update_table(target, plan, metadata, metadata_location, previous)
         reread = describe_table(target) if verify else plan
         published = (
             _table_metadata_location(reread)
             if reread is not None and verify
             else metadata_location
         )
-        if published != metadata_location:
+        if published != metadata_location or (
+            verify
+            and comments is not None
+            and (reread is None or not comments.matches(reread))
+        ):
             raise RegisterDiverged(
                 f"concurrent registration: expected {metadata_location}, "
                 f"Glue has {published}"
@@ -537,6 +643,7 @@ def _handle_existing(
         if (
             str(_table_type(table)).upper() == _ICEBERG_TABLE_TYPE
             and _table_metadata_location(table) == metadata_location
+            and (comments is None or comments.matches(table))
         ):
             return True
         guard()
@@ -599,6 +706,42 @@ def _update_table(
         glue_table=cast("Any", table),
         prev_metadata_location=previous,
     )
+    allowed = set(
+        _glue_client(target).meta.service_model.shape_for("TableInput").members
+    )
+    old_columns = cast("Any", table.get("StorageDescriptor", {})).get("Columns", [])
+    by_name = {c["Name"]: c for c in old_columns}
+    current_by_id: dict[str, Any] = {}
+    for column in old_columns:
+        params = column.get("Parameters", {})
+        fid = params.get("iceberg.field.id")
+        if fid is not None and params.get("iceberg.field.current") != "false":
+            if str(fid) in current_by_id:
+                raise RegisterDiverged("ambiguous current Glue column identity")
+            current_by_id[str(fid)] = column
+    for column in table_input["StorageDescriptor"]["Columns"]:
+        params = column["Parameters"]
+        fid = str(params["iceberg.field.id"])
+        old = by_name.get(column["Name"])
+        if old is None or str(old.get("Parameters", {}).get("iceberg.field.id")) != fid:
+            old = current_by_id.get(fid)
+        if old is not None:
+            column["Parameters"] = {**old.get("Parameters", {}), **params}
+    preserved = {
+        k: copy.deepcopy(v)
+        for k, v in table.items()
+        if k in allowed and k not in ("Parameters", "StorageDescriptor", "Description")
+    }
+    descriptor = {
+        **cast("Any", table.get("StorageDescriptor", {})),
+        **table_input["StorageDescriptor"],
+    }
+    table_input = {
+        **preserved,
+        **table_input,
+        "StorageDescriptor": descriptor,
+        "Description": metadata.properties.get("comment", ""),
+    }
     kwargs: dict[str, Any] = {
         "DatabaseName": target.database,
         "TableInput": table_input,

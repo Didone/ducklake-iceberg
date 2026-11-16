@@ -9,6 +9,7 @@ and failed before reaching Glue.
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import ExitStack
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -20,6 +21,7 @@ from ducklake_iceberg.catalog.reader import (
     current_snapshot,
     parse_table_ref,
     qualified_table_name,
+    read_comments,
     resolve_table,
     snapshot_at,
 )
@@ -54,6 +56,7 @@ from ducklake_iceberg.export import (
     read_export_seed,
     run_export,
 )
+from ducklake_iceberg.glue import CommentProjection, describe_table
 from ducklake_iceberg.handoff import (
     ExportPointer,
     normalize_table_name,
@@ -63,13 +66,18 @@ from ducklake_iceberg.obs.logging import bind, log_event
 from ducklake_iceberg.obs.metrics import RunMetrics, add_work, collect
 from ducklake_iceberg.obs.redaction import scrub
 from ducklake_iceberg.output import Envelope, Problem
-from ducklake_iceberg.register import run_register
+from ducklake_iceberg.register import registration_target, run_register
 from ducklake_iceberg.sync.lock import lock_key, table_lock
+from ducklake_iceberg.writer.metadata import read_metadata_json, read_metadata_or_none
 
 if TYPE_CHECKING:
+    from pyiceberg.table.metadata import TableMetadata
+
     from ducklake_iceberg.catalog.connection import DuckLakeConnection
-    from ducklake_iceberg.catalog.reader import TableIdentity
+    from ducklake_iceberg.catalog.reader import CommentState, TableIdentity
     from ducklake_iceberg.config import DuckLakeIcebergSettings
+    from ducklake_iceberg.export import ExportSeed
+    from ducklake_iceberg.glue import RegisterResult
 
 LOG = logging.getLogger("ducklake_iceberg")
 
@@ -325,6 +333,84 @@ class _SharedCatalog:
                 self._con = None
 
 
+def _comment_projection(state: CommentState | None) -> CommentProjection | None:
+    if state is None:
+        return None
+    return CommentProjection(
+        state.table,
+        tuple(
+            (cid, name, doc)
+            for cid, parent, name, doc in state.columns
+            if parent is None
+        ),
+    )
+
+
+def _recover_pending_publication(
+    settings: DuckLakeIcebergSettings,
+    schema_name: str,
+    table_name: str,
+    catalog: _SharedCatalog,
+    seed: ExportSeed,
+    table: dict[str, object] | None,
+) -> RegisterResult | None:
+    """Publish a completed handoff before replacing it with newer source state."""
+    from ducklake_iceberg.errors import DivergenceError
+
+    pointer = seed.pointer
+    assert pointer is not None
+    params = table.get("Parameters", {}) if table else {}
+    published = params.get("metadata_location") if isinstance(params, dict) else None
+    if published == pointer.metadata_location:
+        return None
+    successor = (
+        re.fullmatch(
+            re.escape(seed.location.rstrip("/"))
+            + r"/metadata/v([1-9][0-9]*)\.metadata\.json",
+            published,
+        )
+        if isinstance(published, str)
+        else None
+    )
+    if (
+        successor is not None
+        and isinstance(published, str)
+        and int(successor.group(1)) > pointer.metadata_version
+    ):
+        published_metadata = read_metadata_or_none(seed.io, published)
+        if published_metadata is not None and pointer.metadata_location in {
+            e.metadata_file for e in published_metadata.metadata_log
+        }:
+            # Export validates/adopts a successor registered before handoff repair.
+            return None
+    pending = read_metadata_json(seed.io, pointer.metadata_location)
+    ro = catalog.get()
+    snapshot = current_snapshot(ro)
+    identity = resolve_table(
+        ro, parse_table_ref(qualified_table_name(schema_name, table_name)), snapshot
+    )
+    layers = read_path_layers(ro.raw, ro.meta, identity.table_id, snapshot.snapshot_id)
+    expected = {
+        "ducklake.table-uuid": str(identity.table_uuid),
+        "ducklake.table-id": str(identity.table_id),
+        "ducklake.data-path": layers.data_path,
+        "ducklake.schema": identity.ref.schema_name,
+        "ducklake.table": identity.ref.table_name,
+    }
+    if any(pending.properties.get(key) != value for key, value in expected.items()):
+        raise DivergenceError("pending export source identity does not match DuckLake")
+    catalog.finish_read()
+    return run_register(
+        settings,
+        schema_name,
+        table_name,
+        handoff=pointer,
+        metadata=pending,
+        existing=table,
+        existing_known=True,
+    )
+
+
 def _sync_steps(
     settings: DuckLakeIcebergSettings,
     schema_name: str,
@@ -362,6 +448,82 @@ def _sync_steps(
         envelope.problems.append(_doctor_problem(qualified, doctor_exit, report))
         return _SyncResult(doctor_exit)
 
+    # One lookup is shared with final registration. A completed pending export
+    # is published before a newer source state is allowed to replace its handoff.
+    existing_table: dict[str, object] | None = None
+    existing_known = False
+    recovered_work = False
+    if seed.pointer is not None:
+        try:
+            existing_table = describe_table(registration_target(settings, table_name))
+            existing_known = True
+            recovered = (
+                None
+                if dry_run
+                else _recover_pending_publication(
+                    settings, schema_name, table_name, catalog, seed, existing_table
+                )
+            )
+            if recovered is not None:
+                recovered_work = True
+                steps.append(
+                    {
+                        "step": "register",
+                        "exit_code": 0,
+                        "outcome": str(recovered.outcome),
+                        "recovered": True,
+                        "metadata_location": recovered.metadata_location,
+                    }
+                )
+                existing_known = False
+                # Source writers may have committed while Glue was recovering.
+                checked, refreshed = _doctor_gate(
+                    settings, qualified, before_flush=True, con=catalog.get()
+                )
+                steps.append(
+                    {
+                        "step": "doctor",
+                        "exit_code": int(checked),
+                        "report": refreshed.to_json(),
+                    }
+                )
+                if checked is not ExitCode.SUCCESS:
+                    envelope.problems.append(
+                        _doctor_problem(qualified, checked, refreshed)
+                    )
+                    return _SyncResult(checked)
+        except Exception as exc:
+            envelope.problems.append(problem_from_error(exc, table=qualified))
+            return _SyncResult(exit_of(exc))
+
+    def publish_recovered(pointer: ExportPointer, metadata: TableMetadata) -> None:
+        nonlocal existing_known, recovered_work
+        catalog.finish_read()
+        try:
+            recovered = run_register(
+                settings,
+                schema_name,
+                table_name,
+                handoff=pointer,
+                metadata=metadata,
+                existing=existing_table,
+                existing_known=existing_known,
+            )
+        except NothingToDo:
+            pass
+        else:
+            recovered_work = True
+            steps.append(
+                {
+                    "step": "register",
+                    "exit_code": 0,
+                    "outcome": str(recovered.outcome),
+                    "recovered": True,
+                    "metadata_location": recovered.metadata_location,
+                }
+            )
+        existing_known = False
+
     # flush stage. Writes to DuckLake, so a dry run only reports what it would
     # flush; the export cannot be planned before the rows are in Parquet.
     if dry_run:
@@ -370,10 +532,24 @@ def _sync_steps(
             steps.append(
                 {"step": "checkpoint", "exit_code": 0, "dry_run": True, **pending}
             )
+            ro = catalog.get()
+            snap = current_snapshot(ro)
+            identity = resolve_table(ro, parse_table_ref(qualified), snap)
+            state = read_comments(ro.raw, ro.meta, identity.table_id, snap.snapshot_id)
+            desired_comments = _comment_projection(state)
             catalog.finish_read()
             # still tell a monitor whether the published mirror diverged
             check = _dry_run_glue_check(
-                settings, schema_name, table_name, None, steps, envelope, qualified
+                settings,
+                schema_name,
+                table_name,
+                None,
+                steps,
+                envelope,
+                qualified,
+                comments=desired_comments,
+                existing=existing_table,
+                existing_known=existing_known,
             )
             return _SyncResult(ExitCode.SUCCESS if check is None else check)
     else:
@@ -425,6 +601,7 @@ def _sync_steps(
                 max_footer_workers=settings.max_footer_workers,
                 seed=seed,
                 finish_read=catalog.finish_read,
+                on_recovered=publish_recovered,
             )
         steps.append({"step": "export", **result.to_json()})
     except Exception as exc:
@@ -443,6 +620,9 @@ def _sync_steps(
             steps,
             envelope,
             qualified,
+            existing=existing_table,
+            existing_known=existing_known,
+            comments=(_comment_projection(result.comment_state)),
         )
         return _SyncResult(result.exit_code if diverged is None else diverged, result)
 
@@ -456,6 +636,9 @@ def _sync_steps(
                 table_name,
                 handoff=result.handoff,
                 metadata=result.metadata,
+                existing=existing_table,
+                existing_known=existing_known,
+                comments=(_comment_projection(result.comment_state)),
             )
             add_work("glue", items=1)
         steps.append(
@@ -474,10 +657,25 @@ def _sync_steps(
         )
         return _SyncResult(ExitCode.SUCCESS, result)
     except NothingToDo as exc:
+        if recovered_work and any(
+            step.get("step") == "register"
+            and step.get("exit_code") == 0
+            and step.get("metadata_location") == result.metadata_location
+            for step in steps
+        ):
+            # Keep the actual successful recovery result rather than replacing
+            # its outcome with a redundant no-op registration summary.
+            return _SyncResult(ExitCode.SUCCESS, result)
         steps.append({"step": "register", "exit_code": int(exc.exit_code)})
         # already published: sync only "did something" if the export wrote
         return _SyncResult(
-            result.exit_code if result.exit_code is ExitCode.SUCCESS else exc.exit_code,
+            ExitCode.SUCCESS
+            if recovered_work
+            else (
+                result.exit_code
+                if result.exit_code is ExitCode.SUCCESS
+                else exc.exit_code
+            ),
             result,
         )
     except Exception as exc:
@@ -517,6 +715,10 @@ def _dry_run_glue_check(
     steps: list[dict[str, Any]],
     envelope: Envelope,
     qualified: str,
+    *,
+    comments: CommentProjection | None = None,
+    existing: dict[str, object] | None = None,
+    existing_known: bool = False,
 ) -> ExitCode | None:
     """Read-only Glue check of a dry run: ``DIVERGED``/``ERROR`` or ``None``.
 
@@ -533,15 +735,26 @@ def _dry_run_glue_check(
     if handoff is None:
         handoff = read_current_pointer(settings, table_name)
     glue: str
+    comment_drift = False
     if handoff is None:
         glue = "unpublished"
     else:
         try:
             with timing.phase("register"):
-                run_register(
-                    settings, schema_name, table_name, handoff=handoff, dry_run=True
+                planned = run_register(
+                    settings,
+                    schema_name,
+                    table_name,
+                    handoff=handoff,
+                    dry_run=True,
+                    comments=comments,
+                    existing=existing,
+                    existing_known=existing_known,
                 )
-            glue = "behind"
+            comment_drift = (
+                planned.previous_metadata_location == planned.metadata_location
+            )
+            glue = "in_sync" if comment_drift else "behind"
         except NothingToDo:
             glue = "in_sync"
         except Exception as exc:
@@ -549,8 +762,16 @@ def _dry_run_glue_check(
             steps.append({"step": "register", "exit_code": int(exit_of(exc))})
             envelope.problems.append(problem_from_error(exc, table=qualified))
             return exit_of(exc)
-    steps.append({"step": "register", "exit_code": 0, "dry_run": True, "glue": glue})
-    return None
+    step: dict[str, Any] = {
+        "step": "register",
+        "exit_code": 0,
+        "dry_run": True,
+        "glue": glue,
+    }
+    if comment_drift:
+        step["comments_changed"] = True
+    steps.append(step)
+    return ExitCode.SUCCESS if comment_drift else None
 
 
 def _sync_locked(

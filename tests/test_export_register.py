@@ -322,3 +322,57 @@ def test_register_explicit_wrong_table() -> None:
 def test_register_no_export(settings: DuckLakeIcebergSettings) -> None:
     with pytest.raises(PointerError, match="no export found"):
         run_register(settings, "sales", "orders")
+
+
+@pytest.mark.parametrize("fingerprint", ["v2:" + "a" * 64, "v1:bad", 42, {}])
+def test_comment_fingerprint_rejects_malformed(
+    tmp_path: pathlib.Path,
+    fingerprint: object,
+) -> None:
+    import json
+
+    from ducklake_iceberg.handoff import _pointer_from_dict
+
+    data = _pointer(str(tmp_path)).to_json()
+    data["comments_fingerprint"] = fingerprint
+    with pytest.raises(PointerError, match="fingerprint"):
+        _pointer_from_dict(json.loads(json.dumps(data)))
+
+
+def test_comments_same_schema_version() -> None:
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from typing import cast
+
+    from ducklake_iceberg import __version__
+    from ducklake_iceberg.catalog.reader import CommentState
+    from ducklake_iceberg.catalog.view import CatalogView
+    from ducklake_iceberg.export import _unchanged_since
+    from ducklake_iceberg.handoff import DELETE_FILE_LAYOUT_PARTITION_V1
+
+    original = CommentState("old")
+    pointer = replace(
+        _pointer("/output"),
+        table_uuid="uuid",
+        data_path="/source",
+        ducklake_iceberg_version=__version__,
+        delete_file_layout=DELETE_FILE_LAYOUT_PARTITION_V1,
+        comments_fingerprint=original.fingerprint,
+    )
+    view = SimpleNamespace(
+        comments=original,
+        identity=SimpleNamespace(
+            table_id=pointer.table_id,
+            table_uuid="uuid",
+            ref=SimpleNamespace(schema_name="sales", table_name="orders"),
+            schema_version=pointer.schema_version,
+        ),
+        files=SimpleNamespace(layers=SimpleNamespace(data_path="/source"), files=()),
+        snapshot_id=pointer.ducklake_snapshot_id,
+        table_changes_complete=True,
+        table_changes=(),
+    )
+    assert _unchanged_since(pointer, cast("CatalogView", view))
+    view.comments = CommentState("changed without a schema version bump")
+    assert view.identity.schema_version == pointer.schema_version
+    assert not _unchanged_since(pointer, cast("CatalogView", view))

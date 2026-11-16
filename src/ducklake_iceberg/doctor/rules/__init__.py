@@ -11,6 +11,7 @@ from __future__ import annotations
 from ducklake_iceberg.doctor.model import Rule
 from ducklake_iceberg.doctor.rules import (
     calendar_transform,
+    comments,
     delete_files,
     encryption_key,
     inlined_data,
@@ -22,6 +23,7 @@ from ducklake_iceberg.doctor.rules import (
 
 #: Rules in the declared execution order.
 RULES: tuple[Rule, ...] = (
+    comments.RULE,
     inlined_data.RULE,
     partial_files.RULE,
     delete_files.PARQUET_RULE,

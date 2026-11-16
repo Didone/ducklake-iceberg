@@ -124,7 +124,7 @@ def _gate_graph(
 # --------------------------------------------------------------------------
 def test_real_plan_matches_plan_order() -> None:
     plan = execution_plan(list(real_rules.RULES))
-    assert len(plan) == 9
+    assert len(plan) == 10
     assert tuple(r.id for r in plan) == PLAN_ORDER
 
 
@@ -335,7 +335,7 @@ def test_plan_order_starts_with_inlined_data() -> None:
     # Verified at runtime: with inlined data, ducklake_data_file and
     # ducklake_list_files return empty (not an error); exporting would produce
     # a valid Iceberg table with no rows. That is why inlined-data runs first.
-    assert PLAN_ORDER[0] == "inlined-data"
+    assert PLAN_ORDER[:2] == ("comments", "inlined-data")
 
 
 # extra - execution via a prebuilt ExecutionPlan (select_plan + run)

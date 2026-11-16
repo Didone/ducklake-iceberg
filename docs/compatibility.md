@@ -101,6 +101,29 @@ Per-file partition values are decoded into typed `Record`s. Missing,
 out-of-range or undecodable values are divergence, not guessed defaults.
 Degradation affects pruning, not which data rows belong to the table.
 
+## Table and column comments
+
+DuckLake comments populate the Glue table description and top-level column
+comments. Iceberg stores the table text in `properties.comment` and field text
+in `doc`. Source comments are authoritative: edits/removals propagate, and manual
+Glue comment changes are repaired on sync. NULL and empty mean absent; other
+whitespace is preserved. Other Glue attributes are retained.
+
+Comment-only changes create an immutable metadata version while reusing data
+snapshots, manifests and Parquet. No new CLI option is required. Glue-only comment
+repair needs no new export; an aligned repeat exits 4. Dry-run reports work and
+validation failures without source, metadata or Glue writes.
+
+The preflight requires lossless projection: at most 2048 UTF-8 bytes per table
+comment and 255 per top-level column comment. Table text may contain newlines and
+tabs; column text may contain tabs but not newlines. Invalid Unicode/controls or
+oversized comments block with exit 2 before flushing; nothing is silently trimmed
+or truncated. Diagnostics identify the object without echoing its comment.
+
+Supported nested field docs remain in Iceberg; Glue exposes a Comment field only
+for top-level columns. Nested fields are not flattened into fake Glue columns.
+DuckLake's supported comment DDL determines which nested docs can be supplied.
+
 ## Pre-flight rule catalog
 
 Rules implement `Rule.check(DoctorContext)` and emit `Finding`s. Severity is
@@ -111,6 +134,7 @@ explains the dependency plan and every rule class.
 
 | Rule ID / class | Condition and normal pipeline behavior |
 | --- | --- |
+| `comments` / `CommentsRule` | Invalid comment representation; blocker before flush. Ambiguous live tags/read failures are errors, not missing comments. |
 | `inlined-data` / `InlinedDataRule` | Pending SQL-backed data/deletes need a flush. This gate is auto-remediable before a normal flush, then checked again. Dry-run reports pending work instead of flushing. |
 | `unsupported-type` / `UnsupportedTypeRule` | A type cannot be represented safely; blocker. Checks nested columns too. |
 | `calendar-transform` / `CalendarTransformRule` | Calendar partition semantics differ; degraded, exported without the unsafe spec. |

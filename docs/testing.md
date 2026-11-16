@@ -167,6 +167,7 @@ image; reproducibility otherwise relies on the test's pinned default.
 | Added-column defaults and concurrent source writes | `tests/integration/test_export_initial_default.py`, `test_export_concurrent_inlined.py` |
 | Delete visibility/writing | `tests/deletes/`, `tests/integration/test_deletes_reader.py` |
 | Avro/statistics/sequences/counters/metadata | `tests/writer/` |
+| Comments, removal, Glue drift and recovery | `tests/integration/test_comments.py`, `tests/doctor/rules/test_comments.py`, `tests/test_glue.py` |
 | Incremental reuse/idempotence/repair | `tests/integration/test_incremental.py`, `test_sync_e2e.py`, `tests/test_export_register.py` |
 | Independent reader interoperability | `tests/integration/test_second_reader.py` |
 | Lock/state/retry/divergence | `tests/sync/`, `tests/test_retry.py`, `tests/test_glue.py` |

@@ -255,6 +255,7 @@ classDiagram
         <<protocol>>
         +check(ctx)
     }
+    class CommentsRule
     class InlinedDataRule
     class UnsupportedTypeRule
     class ExecutionPlan
@@ -272,6 +273,7 @@ classDiagram
         +str remediation
     }
 
+    Rule <|.. CommentsRule
     Rule <|.. InlinedDataRule
     Rule <|.. UnsupportedTypeRule
     ExecutionPlan "1" --> "0..*" Rule : order
@@ -323,6 +325,7 @@ separately testable:
 
 | Class and source | What `check()` actually evaluates |
 | --- | --- |
+| [`CommentsRule`](../src/ducklake_iceberg/doctor/rules/comments.py) | Snapshot-scoped table/column documentation; validates lossless Glue representation before flush. |
 | [`InlinedDataRule`](../src/ducklake_iceberg/doctor/rules/inlined_data.py) | Pending metadata-backed data/deletes; an upstream gate for file-based checks. |
 | [`UnsupportedTypeRule`](../src/ducklake_iceberg/doctor/rules/unsupported_type.py) | Source column tree and shared type-map compatibility; unknown types block. |
 | `DepthExceededError` in the same module | Nested traversal exceeded the safety limit, indicating pathological depth/cycle; do not ignore the affected subtree. |
