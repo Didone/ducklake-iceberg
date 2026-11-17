@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Final
 from uuid import UUID
 
-from ducklake_iceberg.catalog.query import snapshot_rows
+from ducklake_iceberg.catalog.query import query_arrow, snapshot_rows
+from ducklake_iceberg.doctor.model import quote_ident
 from ducklake_iceberg.errors import CatalogError, ConfigError, IdentityError
 
 if TYPE_CHECKING:
@@ -410,3 +413,78 @@ def catalog_data_path(con: DuckLakeConnection) -> str:
         raise CatalogError("catalog has a duplicate global data_path")
     value = str(rows[0]["value"])
     return value.rstrip("/") + "/"
+
+
+@dataclass(frozen=True, slots=True)
+class CommentState:
+    """Normalized source documentation, scoped to one table snapshot."""
+
+    table: str | None = None
+    columns: tuple[tuple[int, int | None, str, str | None], ...] = ()
+
+    @property
+    def fingerprint(self) -> str:
+        payload = json.dumps(
+            [self.table, self.columns], ensure_ascii=True, separators=(",", ":")
+        )
+        return "v1:" + hashlib.sha256(payload.encode()).hexdigest()
+
+
+def comments_sql(meta: str) -> str:
+    """One snapshot-bound read; grouping detects ambiguous tags before joins."""
+    m = quote_ident(meta)
+    return f"""
+WITH tags AS (
+ SELECT NULL::BIGINT column_id, value FROM {m}.ducklake_tag
+ WHERE object_id=$table_id AND key='comment' AND begin_snapshot <= $snapshot_id
+ AND (end_snapshot IS NULL OR $snapshot_id < end_snapshot)
+ UNION ALL
+ SELECT column_id, value FROM {m}.ducklake_column_tag
+ WHERE table_id=$table_id AND key='comment' AND begin_snapshot <= $snapshot_id
+ AND (end_snapshot IS NULL OR $snapshot_id < end_snapshot)
+), docs AS (SELECT column_id, count(*) n, min(value) value FROM tags GROUP BY column_id)
+SELECT NULL::BIGINT column_id, NULL::BIGINT parent_column, '' column_name,
+ coalesce(d.n,0) tag_count, d.value FROM (SELECT 1) seed
+ LEFT JOIN docs d ON d.column_id IS NULL
+UNION ALL
+SELECT c.column_id,c.parent_column,c.column_name,coalesce(d.n,0),d.value
+FROM {m}.ducklake_column c LEFT JOIN docs d ON d.column_id=c.column_id
+WHERE c.table_id=$table_id AND c.begin_snapshot <= $snapshot_id
+AND (c.end_snapshot IS NULL OR $snapshot_id < c.end_snapshot)
+ORDER BY column_id NULLS FIRST
+"""
+
+
+def read_comments(
+    raw: object, meta: str, table_id: int, snapshot_id: int
+) -> CommentState:
+    from typing import cast
+
+    import duckdb
+
+    rows = query_arrow(
+        cast(duckdb.DuckDBPyConnection, raw),
+        comments_sql(meta),
+        {"table_id": table_id, "snapshot_id": snapshot_id},
+    ).to_pylist()
+    table = None
+    columns = []
+    for row in rows:
+        if row["tag_count"] > 1:
+            raise CatalogError(
+                "ambiguous live comment records for "
+                f"table_id={table_id}, column_id={row['column_id']}"
+            )
+        value = row["value"] or None
+        if row["column_id"] is None:
+            table = value
+        else:
+            columns.append(
+                (
+                    int(row["column_id"]),
+                    row["parent_column"],
+                    str(row["column_name"]),
+                    value,
+                )
+            )
+    return CommentState(table, tuple(columns))

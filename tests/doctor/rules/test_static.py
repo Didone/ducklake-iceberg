@@ -81,6 +81,7 @@ def test_rule_ids_unique_and_in_plan() -> None:
 # the declared severity is the ceiling of each rule
 def test_declared_severity_is_ceiling() -> None:
     expected = {
+        "comments": Severity.BLOCKER,
         "inlined-data": Severity.BLOCKER,
         "partial-files": Severity.BLOCKER,
         "delete-parquet": Severity.BLOCKER,

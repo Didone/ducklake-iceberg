@@ -114,6 +114,13 @@ successor, investigate rather than overwriting it.
 
 ### Export completed, Glue not advanced
 
+The next sync publishes the completed export's matching comments and pointer
+before advancing to newer source state. A failed handoff write is recovered from
+validated immutable successors; their artifacts are not rewritten. A timeout is
+resolved by checking documentation as well as metadata_location. Metadata-pointer
+agreement alone does not prove comment agreement.
+
+
 Rerun the same normal `sync`. An export no-op still proceeds to registration
 using the completed handoff. Glue at a valid ancestor can advance without
 recopying data. The dry run can show `behind`.

@@ -28,6 +28,7 @@ import boto3
 from botocore.exceptions import ClientError, ReadTimeoutError
 from moto import mock_aws
 from pyiceberg.exceptions import TableAlreadyExistsError
+from pyiceberg.schema import Schema
 
 from ducklake_iceberg.errors import ExitCode
 from ducklake_iceberg.glue import (
@@ -242,6 +243,7 @@ def _metadata_with_log(*ancestors: str) -> Any:
         ],
         location="s3://bucket/iceberg/sales/orders",
         properties={},
+        schema=mock.Mock(return_value=Schema()),
     )
 
 
@@ -732,3 +734,28 @@ def test_lake_formation_flag_on_existing(aws: None) -> None:
     }
     assert _lake_formation_flag(table) is True
     assert _lake_formation_flag({"Parameters": {}}) is None
+
+
+def test_comment_projection_refuses_ambiguous_current_fields() -> None:
+    from ducklake_iceberg.glue import CommentProjection
+
+    projection = CommentProjection(None, ((1, "x", "doc"),))
+    table: dict[str, object] = {
+        "Name": "t",
+        "StorageDescriptor": {
+            "Columns": [
+                {
+                    "Name": name,
+                    "Comment": "doc",
+                    "Parameters": {
+                        "iceberg.field.id": "1",
+                        "iceberg.field.current": "true",
+                    },
+                }
+                for name in ("other", "x")
+            ]
+        },
+    }
+    assert not projection.matches(table)
+    with pytest.raises(RegisterDiverged):
+        projection.repair(table, {"Name", "Description", "StorageDescriptor"})

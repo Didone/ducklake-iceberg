@@ -270,6 +270,14 @@
               },
               "pending_inlined_deletions": {
                 "$ref": "#/$defs/count"
+              },
+              "comments_changed": {
+                "type": "boolean",
+                "description": "Optional documentation-change indicator; does not imply data files changed."
+              },
+              "recovered": {
+                "type": "boolean",
+                "description": "A completed export publication was recovered before newer source work."
               }
             }
           }
@@ -340,6 +348,14 @@
               },
               "exit_code": {
                 "$ref": "#/$defs/count"
+              },
+              "comments_changed": {
+                "type": "boolean",
+                "description": "Optional documentation-change indicator; does not imply data files changed."
+              },
+              "recovered": {
+                "type": "boolean",
+                "description": "A completed export publication was recovered before newer source work."
               }
             }
           }

@@ -182,7 +182,7 @@ def test_unchanged_sync_reads_only_pointer_and_glue(
         monkeypatch,
         "ducklake_iceberg.export.read_metadata_json",
         "ducklake_iceberg.export.load_base_snapshot",
-        "ducklake_iceberg.register._read_metadata_properties",
+        "ducklake_iceberg.register._read_metadata",
         "ducklake_iceberg.glue._read_metadata",
     )
     code, doc = run_sync(config)
@@ -214,7 +214,7 @@ def test_changed_sync_register_does_not_reread(
     _forbid(
         monkeypatch,
         "ducklake_iceberg.register.read_pointer",
-        "ducklake_iceberg.register._read_metadata_properties",
+        "ducklake_iceberg.register._read_metadata",
         "ducklake_iceberg.glue._read_metadata",
         "ducklake_iceberg.glue._metadata_exists",
     )

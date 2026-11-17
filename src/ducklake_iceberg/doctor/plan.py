@@ -22,6 +22,7 @@ from ducklake_iceberg.doctor.registry import all_rules
 #: Declared order of the real rules. The `inlined-data` gate comes before any
 #: file enumeration; the logical layer closes the report.
 PLAN_ORDER: tuple[str, ...] = (
+    "comments",
     "inlined-data",
     "partial-files",
     "delete-parquet",

@@ -51,7 +51,7 @@ from ducklake_iceberg.catalog.files import (
     PathLayers,
     compose_path,
 )
-from ducklake_iceberg.catalog.reader import qualified_table_name
+from ducklake_iceberg.catalog.reader import CommentState, qualified_table_name
 from ducklake_iceberg.catalog.view import (
     CatalogView,
     check_initial_defaults,
@@ -176,6 +176,7 @@ class ExportPlan:
     added_delete_files: int = 0
     removed_delete_files: int = 0
     schema_changed: bool = False
+    comments_changed: bool = False
     ducklake_snapshot_time: datetime | None = None
 
     @property
@@ -190,6 +191,7 @@ class ExportPlan:
             or self.added_delete_files
             or self.removed_delete_files
             or self.schema_changed
+            or self.comments_changed
             or not self.is_incremental
         )
 
@@ -211,6 +213,7 @@ class ExportResult:
     #: re-reading them from S3
     handoff: ExportPointer | None = None
     metadata: TableMetadata | None = None
+    comment_state: CommentState | None = None
 
     @property
     def metadata_location(self) -> str:
@@ -249,6 +252,7 @@ class ExportResult:
             "added_delete_files": self.plan.added_delete_files,
             "removed_delete_files": self.plan.removed_delete_files,
             "schema_changed": self.plan.schema_changed,
+            "comments_changed": self.plan.comments_changed,
             "total_records": self.plan.total_records,
             "total_files_size": self.plan.total_files_size,
             "manifest_list": self.manifest_list_path or None,
@@ -365,6 +369,7 @@ def _load_base(
         pointer = dataclasses.replace(
             pointer,
             metadata_location=successor,
+            comments_fingerprint=None,
             metadata_version=pointer.metadata_version + 1,
             ducklake_snapshot_id=int(
                 candidate.properties.get(
@@ -580,7 +585,8 @@ def _unchanged_since(pointer: ExportPointer, view: CatalogView) -> bool:
     """
     identity = view.identity
     return (
-        pointer.table_id == identity.table_id
+        pointer.comments_fingerprint == view.comments.fingerprint
+        and pointer.table_id == identity.table_id
         and pointer.table_uuid == str(identity.table_uuid)
         and pointer.data_path == view.files.layers.data_path
         and pointer.ducklake_schema == identity.ref.schema_name
@@ -644,6 +650,7 @@ def _prepare(
     *,
     seed: ExportSeed | None = None,
     finish_read: Callable[[], None] | None = None,
+    on_recovered: Callable[[ExportPointer, TableMetadata], None] | None = None,
 ) -> _Prepared | _Unchanged:
     seed = seed or read_export_seed(settings, table_name)
     io, location, pointer = seed.io, seed.location, seed.pointer
@@ -676,6 +683,13 @@ def _prepare(
     with timing.phase("export.base"):
         base = _load_base(io, location, pointer, settings)
     _check_identity(base, view, _glue_target(settings, table_name))
+    if (
+        base.recovered
+        and base.pointer is not None
+        and base.metadata is not None
+        and on_recovered is not None
+    ):
+        on_recovered(base.pointer, base.metadata)
     previous_snapshot = (
         int(base.metadata.properties[PROP_SNAPSHOT_ID])
         if base.metadata is not None and PROP_SNAPSHOT_ID in base.metadata.properties
@@ -748,6 +762,28 @@ def _prepare(
         added_delete_files=len(deletes_added),
         removed_delete_files=len(deletes_removed),
         schema_changed=schema_changed,
+        comments_changed=(
+            (
+                (base.metadata.properties.get("comment") or None)
+                if base.metadata
+                else None
+            )
+            != view.comments.table
+            or (
+                {
+                    fid: doc
+                    for fid in base.metadata.schema().field_ids
+                    if (doc := base.metadata.schema().find_field(fid).doc)
+                }
+                if base.metadata
+                else {}
+            )
+            != {
+                fid: doc
+                for fid in schema.field_ids
+                if (doc := schema.find_field(fid).doc)
+            }
+        ),
     )
     return _Prepared(
         plan=plan,
@@ -792,6 +828,7 @@ def run_export(
     max_footer_workers: int | None = None,
     seed: ExportSeed | None = None,
     finish_read: Callable[[], None] | None = None,
+    on_recovered: Callable[[ExportPointer, TableMetadata], None] | None = None,
 ) -> ExportResult:
     """Full pipeline; ``dry_run`` stops before the first write.
 
@@ -808,6 +845,7 @@ def run_export(
             max_footer_workers=max_footer_workers or settings.max_footer_workers,
             seed=seed,
             finish_read=finish_read,
+            on_recovered=None if dry_run else on_recovered,
         )
 
 
@@ -821,9 +859,16 @@ def _run_export(
     max_footer_workers: int = 8,
     seed: ExportSeed | None = None,
     finish_read: Callable[[], None] | None = None,
+    on_recovered: Callable[[ExportPointer, TableMetadata], None] | None = None,
 ) -> ExportResult:
     prep = _prepare(
-        settings, schema_name, table_name, con, seed=seed, finish_read=finish_read
+        settings,
+        schema_name,
+        table_name,
+        con,
+        seed=seed,
+        finish_read=finish_read,
+        on_recovered=None if dry_run else on_recovered,
     )
     plan = prep.plan
     warnings = _partition_warnings(prep.view)
@@ -832,9 +877,16 @@ def _run_export(
         recovering = isinstance(prep, _Prepared) and prep.base.recovered and not dry_run
         if recovering and isinstance(prep, _Prepared):
             assert prep.base.pointer is not None
-            write_pointer(prep.io, prep.base.pointer)
+            recovered_pointer = dataclasses.replace(
+                prep.base.pointer, comments_fingerprint=prep.view.comments.fingerprint
+            )
+            prep = dataclasses.replace(
+                prep, base=dataclasses.replace(prep.base, pointer=recovered_pointer)
+            )
+            write_pointer(prep.io, recovered_pointer)
         return ExportResult(
             plan=plan,
+            comment_state=prep.view.comments,
             dry_run=dry_run,
             manifest_paths=(),
             manifest_list_path="",
@@ -872,6 +924,7 @@ def _run_export(
             manifest_paths=(),
             manifest_list_path="",
             pointer_path=None,
+            comment_state=prep.view.comments,
             exit_code=ExitCode.SUCCESS,
             warnings=warnings,
             handoff=prep.base.pointer,
@@ -1170,7 +1223,10 @@ def _build_metadata(
             files.manifest_list_path,
             SnapshotCounters(0, 0, 0, 0, 0, 0),
             provenance,
-            extra_properties=state,
+            extra_properties={
+                **state,
+                **({"comment": view.comments.table} if view.comments.table else {}),
+            },
             specs=list(specs.values()),
             snapshot_id=snapshot_id,
             last_column_id=view.schema_mapping.last_column_id,
@@ -1187,10 +1243,19 @@ def _build_metadata(
             manifest_list_path=files.manifest_list_path if files else None,
             summary=summary,
             snapshot_id=snapshot_id,
-            properties=provenance_properties(provenance, state),
+            properties={
+                **provenance_properties(provenance, state),
+                **({"comment": view.comments.table} if view.comments.table else {}),
+            },
             last_column_id=view.schema_mapping.last_column_id,
-            retention_ms=retention_ms,
+            retention_ms=None if plan.comments_changed and not files else retention_ms,
         )
+    properties = dict(metadata.properties)
+    if view.comments.table is None:
+        properties.pop("comment", None)
+    else:
+        properties["comment"] = view.comments.table
+    metadata = metadata.model_copy(update={"properties": properties})
     schemas = list(metadata.schemas)
     for historical in view.historical_schemas:
         if any(s.as_struct() == historical.as_struct() for s in schemas):
@@ -1225,6 +1290,7 @@ def _write_handoff(
         exported_at=utc_now_iso(),
         ducklake_iceberg_version=__version__,
         delete_file_layout=DELETE_FILE_LAYOUT_PARTITION_V1,
+        comments_fingerprint=view.comments.fingerprint,
         table_uuid=str(view.identity.table_uuid),
         data_path=view.files.layers.data_path,
     )

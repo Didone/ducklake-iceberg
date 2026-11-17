@@ -26,7 +26,7 @@ testable with literal lists of ``DuckLakeColumn``, without a database.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Final, cast
 
 from pyiceberg.schema import Schema
@@ -84,6 +84,7 @@ class DuckLakeColumn:
     default_value_type: str | None
     default_value_dialect: str | None
     begin_snapshot: int
+    doc: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,7 +194,16 @@ def read_columns(
     sql = _READ_COLUMNS_SQL.format(column=column)
     params = {"table_id": table_id, "snapshot_id": snapshot_id}
     table = query_arrow(con, sql, params)
-    return [_row_to_column(row) for row in _rows(table)]
+    from ducklake_iceberg.catalog.reader import read_comments
+
+    docs = {
+        cid: doc
+        for cid, _, _, doc in read_comments(con, meta, table_id, snapshot_id).columns
+    }
+    return [
+        replace(_row_to_column(row), doc=docs.get(int(str(row["column_id"]))))
+        for row in _rows(table)
+    ]
 
 
 def read_last_column_id(
@@ -474,6 +484,7 @@ class _SchemaBuilder:
             name=col.column_name,
             field_type=self.build_type(col, path),
             required=self._required(col, path),
+            doc=col.doc,
             initial_default=initial,
             write_default=write,
         )
@@ -540,3 +551,26 @@ class _SchemaBuilder:
                 res = resolve_type(col.column_type)
                 self.blocked.append(_blocked_finding(column_type, res.reason, path))
             return StringType()  # placeholder; the schema will be discarded
+
+
+def comment_problem(
+    text: str | None, *, table: bool = False, nested: bool = False
+) -> str | None:
+    """Validate documentation without including its content in diagnostics."""
+    if text is None:
+        return None
+    try:
+        size = len(text.encode("utf-8"))
+    except UnicodeEncodeError:
+        return "comment contains invalid Unicode"
+    if nested:
+        return None
+    limit = 2048 if table else 255
+    if size > limit:
+        return f"comment exceeds {limit} UTF-8 bytes"
+    allowed = "\t\r\n" if table else "\t"
+    if any(
+        (ord(c) < 32 and c not in allowed) or ord(c) in (65534, 65535) for c in text
+    ):
+        return "comment contains characters unsupported by Glue"
+    return None

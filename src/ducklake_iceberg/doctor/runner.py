@@ -89,6 +89,7 @@ def run(
 
 def prefetch(ctx: DoctorContext) -> None:
     """Prime stable read results; failures still belong to individual rules."""
+    from ducklake_iceberg.catalog.reader import comments_sql
     from ducklake_iceberg.doctor.rules import (
         calendar_transform,
         delete_files,
@@ -99,6 +100,7 @@ def prefetch(ctx: DoctorContext) -> None:
     )
 
     statements = [
+        comments_sql(ctx.target.metadata_catalog),
         partial_files._sql(ctx),
         delete_files._sql_parquet(ctx),
         delete_files._sql_puffin_option(ctx),
