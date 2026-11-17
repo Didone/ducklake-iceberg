@@ -20,6 +20,8 @@ example: "envelope v1: optional key `timings`".
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-17
+
 ### Added
 
 - Synchronize DuckLake table and column comments into Iceberg metadata and the
@@ -162,7 +164,8 @@ First release candidate, published to PyPI to rehearse the release process.
 - Works with Typer 0.27 to 0.29 (no direct import of Click, which Typer 0.29
   vendors).
 
-[Unreleased]: https://github.com/Didone/ducklake-iceberg/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Didone/ducklake-iceberg/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Didone/ducklake-iceberg/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Didone/ducklake-iceberg/compare/v0.1.1rc1...v0.2.0
 [0.1.1rc1]: https://github.com/Didone/ducklake-iceberg/compare/v0.1.0rc1...v0.1.1rc1
 [0.1.0rc1]: https://github.com/Didone/ducklake-iceberg/releases/tag/v0.1.0rc1
