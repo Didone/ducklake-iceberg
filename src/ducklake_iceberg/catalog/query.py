@@ -67,6 +67,27 @@ def query_arrow(
     return result
 
 
+def query_rows(
+    con: duckdb.DuckDBPyConnection, sql: str, params: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Materialize rows, binding only the named parameters used by the query."""
+    used = {name: value for name, value in params.items() if f"${name}" in sql}
+    rows: list[dict[str, Any]] = query_arrow(con, sql, used).to_pylist()
+    return rows
+
+
+def row_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    return int(str(value))
+
+
+def optional_row_int(value: object) -> int | None:
+    return None if value is None else row_int(value)
+
+
 def prime_reads(
     con: duckdb.DuckDBPyConnection, requests: Sequence[tuple[str, Params]]
 ) -> None:

@@ -30,7 +30,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Final
 
-from ducklake_iceberg.catalog.query import query_arrow, snapshot_rows
+from ducklake_iceberg.catalog.query import (
+    optional_row_int,
+    query_rows,
+    row_int,
+    snapshot_rows,
+)
 from ducklake_iceberg.checkpoint.detect import detect_inlined
 from ducklake_iceberg.checkpoint.model import TableRef
 from ducklake_iceberg.doctor.model import Finding, Severity, quote_ident
@@ -280,15 +285,6 @@ def canonical(uri: str) -> str:
 # -- catalog reads (I/O) ---------------------------------------------
 
 
-def _q(
-    con: duckdb.DuckDBPyConnection, sql: str, params: dict[str, Any]
-) -> list[dict[str, Any]]:
-    used = {name: value for name, value in params.items() if f"${name}" in sql}
-    table = query_arrow(con, sql, used)
-    rows: list[dict[str, Any]] = table.to_pylist()
-    return rows
-
-
 _LIST_FILES_SQL: Final[str] = (
     "FROM ducklake_list_files("
     "  $catalog, $table_name, schema => $schema_name, "
@@ -368,7 +364,7 @@ def list_files(
     snapshot_id: int,
 ) -> list[dict[str, object]]:
     """Primary source: ``ducklake_list_files``."""
-    return _q(
+    return query_rows(
         con,
         _LIST_FILES_SQL,
         {
@@ -385,7 +381,7 @@ def read_data_files(
 ) -> list[dict[str, object]]:
     """Complementary source: ``ducklake_data_file`` in the live range."""
     sql = _DATA_FILE_SQL.format(data_file=f"{quote_ident(meta)}.ducklake_data_file")
-    return _q(con, sql, {"table_id": table_id, "snapshot_id": snapshot_id})
+    return query_rows(con, sql, {"table_id": table_id, "snapshot_id": snapshot_id})
 
 
 def read_delete_files(
@@ -396,7 +392,7 @@ def read_delete_files(
     sql = _DELETE_FILE_SQL.format(
         delete_file=f"{q}.ducklake_delete_file", data_file=f"{q}.ducklake_data_file"
     )
-    return _q(con, sql, {"table_id": table_id, "snapshot_id": snapshot_id})
+    return query_rows(con, sql, {"table_id": table_id, "snapshot_id": snapshot_id})
 
 
 def read_path_layers(
@@ -409,7 +405,7 @@ def read_path_layers(
         table=f"{q}.ducklake_table",
         schema=f"{q}.ducklake_schema",
     )
-    rows = _q(con, sql, {"table_id": table_id, "snapshot_id": snapshot_id})
+    rows = query_rows(con, sql, {"table_id": table_id, "snapshot_id": snapshot_id})
     if not rows:
         raise FileEnumerationError(
             f"table table_id={table_id} missing at snapshot {snapshot_id}"
@@ -428,18 +424,6 @@ def read_path_layers(
 
 
 # -- coercions ---------------------------------------------------------------
-
-
-def _as_int(value: object) -> int:
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    return int(str(value))
-
-
-def _opt_int(value: object) -> int | None:
-    return None if value is None else _as_int(value)
 
 
 def _opt_str(value: object) -> str | None:
@@ -500,7 +484,7 @@ def reconcile_files(
                 duplicate=composed,
             )
         b_canon[canon] = row
-        b_path_by_canon[canon] = (_as_int(row["data_file_id"]), composed)
+        b_path_by_canon[canon] = (row_int(row["data_file_id"]), composed)
 
     set_a = set(a_canon)
     set_b = set(b_canon)
@@ -535,20 +519,20 @@ def _build_live(df: Mapping[str, object], list_path: str, canon: str) -> LiveDat
             f"file {df['data_file_id']} has no record_count in the catalog"
         )
     return LiveDataFile(
-        data_file_id=_as_int(df["data_file_id"]),
+        data_file_id=row_int(df["data_file_id"]),
         path=list_path,
         canonical_path=canon,
-        file_size_in_bytes=_as_int(df["file_size_bytes"]),
-        footer_size=_opt_int(df["footer_size"]),
-        record_count=_as_int(record_count),
+        file_size_in_bytes=row_int(df["file_size_bytes"]),
+        footer_size=optional_row_int(df["footer_size"]),
+        record_count=row_int(record_count),
         file_format=str(df["file_format"]),
-        partition_id=_opt_int(df["partition_id"]),
-        partial_max=_opt_int(df["partial_max"]),
-        mapping_id=_opt_int(df["mapping_id"]),
-        row_id_start=_opt_int(df["row_id_start"]),
-        row_group_count=_opt_int(df["row_group_count"]),
-        begin_snapshot=_as_int(df["begin_snapshot"]),
-        file_order=_opt_int(df["file_order"]),
+        partition_id=optional_row_int(df["partition_id"]),
+        partial_max=optional_row_int(df["partial_max"]),
+        mapping_id=optional_row_int(df["mapping_id"]),
+        row_id_start=optional_row_int(df["row_id_start"]),
+        row_group_count=optional_row_int(df["row_group_count"]),
+        begin_snapshot=row_int(df["begin_snapshot"]),
+        file_order=optional_row_int(df["file_order"]),
     )
 
 
@@ -582,7 +566,7 @@ def attach_delete_files(
             # file open. ``ducklake_list_files`` omits it and the positions
             # are dropped (DanglingPolicy.DROP); this is not a divergence.
             continue
-        data_file_id = _as_int(row["data_file_id"])
+        data_file_id = row_int(row["data_file_id"])
         if data_file_id in by_data_file_id:
             raise FileEnumerationError(
                 f"data file {data_file_id} has more than one live delete file"
@@ -604,24 +588,24 @@ def attach_delete_files(
             layers, str(found["path"]), bool(found["path_is_relative"])
         )
         if listed_path is None or canonical(listed_path) != canonical(composed):
-            only_catalog.append((_as_int(found["delete_file_id"]), composed))
+            only_catalog.append((row_int(found["delete_file_id"]), composed))
             if listed_path is not None:
                 only_listed.append(listed_path)
             out.append(f)
             continue
         delete = LiveDeleteFile(
-            delete_file_id=_as_int(found["delete_file_id"]),
+            delete_file_id=row_int(found["delete_file_id"]),
             path=listed_path,
             canonical_path=canonical(listed_path),
-            file_size_in_bytes=_as_int(found["file_size_bytes"]),
-            delete_count=_as_int(found["delete_count"]),
+            file_size_in_bytes=row_int(found["file_size_bytes"]),
+            delete_count=row_int(found["delete_count"]),
             file_format=str(found["format"]),
         )
         out.append(dataclasses.replace(f, delete_file=delete))
     # delete files whose data file never existed or has not started yet: the
     # catalog diverges from itself
     only_catalog.extend(
-        (_as_int(r["delete_file_id"]), str(r["path"]))
+        (row_int(r["delete_file_id"]), str(r["path"]))
         for r in by_data_file_id.values()
         if r is not None
     )
@@ -765,7 +749,7 @@ def _table_stats_record_count(
 ) -> int | None:
     q = quote_ident(meta)
     try:
-        rows = _q(
+        rows = query_rows(
             con,
             f"SELECT ts.record_count AS record_count "
             f"FROM {q}.ducklake_table_stats AS ts "
@@ -776,7 +760,7 @@ def _table_stats_record_count(
         return None
     if not rows or rows[0]["record_count"] is None:
         return None
-    return _as_int(rows[0]["record_count"])
+    return row_int(rows[0]["record_count"])
 
 
 # -- current snapshot ------------------------------------------------------
@@ -786,7 +770,7 @@ def _current_snapshot_id(con: duckdb.DuckDBPyConnection, meta: str) -> int:
     rows = snapshot_rows(con, meta).to_pylist()
     if not rows:
         raise FileEnumerationError("catalog has no snapshots")
-    return _as_int(rows[0]["snapshot_id"])
+    return row_int(rows[0]["snapshot_id"])
 
 
 # -- orchestration -----------------------------------------------------------

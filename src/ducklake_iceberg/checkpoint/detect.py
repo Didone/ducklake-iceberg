@@ -27,7 +27,7 @@ from typing import Any, Literal
 import duckdb
 
 from ducklake_iceberg import timing
-from ducklake_iceberg.catalog.query import query_arrow
+from ducklake_iceberg.catalog.query import query_rows
 from ducklake_iceberg.checkpoint.model import TableRef
 from ducklake_iceberg.doctor.model import quote_ident
 
@@ -177,15 +177,6 @@ def cache_inlined_reads(con: duckdb.DuckDBPyConnection) -> Iterator[None]:
 # -- DuckDB access -------------------------------------------------------
 
 
-def _q(
-    con: duckdb.DuckDBPyConnection, sql: str, params: dict[str, Any]
-) -> list[dict[str, Any]]:
-    used = {name: value for name, value in params.items() if f"${name}" in sql}
-    table = query_arrow(con, sql, used)
-    rows: list[dict[str, Any]] = table.to_pylist()
-    return rows
-
-
 # -- detection steps -----------------------------------------------------
 
 
@@ -198,7 +189,7 @@ def _registered_tables(
     Maps `physical_name -> schema_version`.
     """
     meta_q = quote_ident(meta)
-    rows = _q(
+    rows = query_rows(
         con,
         f"SELECT table_name AS physical_name, schema_version "
         f"FROM {meta_q}.ducklake_inlined_data_tables "
@@ -223,7 +214,7 @@ def _introspected_tables(con: duckdb.DuckDBPyConnection, meta: str) -> set[str]:
     """
     pattern = r"^ducklake_inlined_(data_[0-9]+_[0-9]+|delete_[0-9]+)$"
     try:
-        rows = _q(
+        rows = query_rows(
             con,
             "SELECT table_name FROM duckdb_tables() "
             "WHERE database_name = $meta_catalog "
@@ -235,7 +226,7 @@ def _introspected_tables(con: duckdb.DuckDBPyConnection, meta: str) -> set[str]:
     if not rows:
         meta_q = quote_ident(meta)
         try:
-            rows = _q(
+            rows = query_rows(
                 con,
                 f"SELECT table_name FROM {meta_q}.information_schema.tables "
                 "WHERE regexp_matches(table_name, $pattern)",
@@ -334,7 +325,7 @@ def _count_source(
     name = source.physical_name  # already validated by _classify; safe to interpolate
     predicate, begin_col = _VISIBLE[source.kind], _BEGIN[source.kind]
     try:
-        rows = _q(
+        rows = query_rows(
             con,
             f"SELECT count(*) FILTER (WHERE {predicate}) AS rows_visible, "
             f"min({begin_col}) FILTER (WHERE {predicate}) AS min_begin, "
@@ -354,7 +345,7 @@ def _count_source(
         )
     except duckdb.Error:
         # Visibility columns missing: fall back to count(*).
-        total_rows = _q(
+        total_rows = query_rows(
             con, f'SELECT count(*) AS rows_total FROM {meta_q}."{name}"', {}
         )
         total = int(total_rows[0]["rows_total"]) if total_rows else 0
@@ -378,7 +369,7 @@ def _cross_check(
     """Optional cross-check: a warning, never a blocker here."""
     meta_q = quote_ident(meta)
     try:
-        rows = _q(
+        rows = query_rows(
             con,
             f"SELECT ts.record_count AS catalog_rows, "
             f"(SELECT count(*) FROM {meta_q}.ducklake_data_file df "
@@ -465,7 +456,7 @@ def _last_flush(
     con: duckdb.DuckDBPyConnection, meta: str, table_id: int, snapshot_id: int
 ) -> int | None:
     """Latest snapshot <= ``snapshot_id`` that flushed the table's inlining."""
-    rows = _q(
+    rows = query_rows(
         con,
         f"SELECT max(snapshot_id) AS flush "
         f"FROM {quote_ident(meta)}.ducklake_snapshot_changes "

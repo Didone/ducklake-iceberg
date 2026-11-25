@@ -8,12 +8,14 @@ local metadata prefix, exercising the whole export pipeline with local FileIO
 from __future__ import annotations
 
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
 from ducklake_iceberg.config import DuckLakeIcebergSettings
 from ducklake_iceberg.errors import ExitCode
 from ducklake_iceberg.export import plan_export, run_export
+from ducklake_iceberg.handoff import read_pointer
 
 from .conftest import CatalogHarness
 
@@ -137,9 +139,13 @@ def test_cli_sync_dry_run_writes_nothing(
         "DUCKLAKE_ICEBERG_ICEBERG_METADATA_PREFIX": str(prefix),
     }
     runner = CliRunner()
-    result = runner.invoke(
-        app, ["sync", "--table", "main.pedidos", "--dry-run", "--json"], env=env
-    )
+    with mock.patch(
+        "ducklake_iceberg.handoff.read_pointer", wraps=read_pointer
+    ) as read:
+        result = runner.invoke(
+            app, ["sync", "--table", "main.pedidos", "--dry-run", "--json"], env=env
+        )
+    read.assert_called_once()
     assert result.exit_code == 0, result.stdout
     assert [p for p in prefix.rglob("*") if p.is_file()] == []
 
