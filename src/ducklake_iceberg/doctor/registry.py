@@ -40,8 +40,3 @@ def all_rules() -> tuple[Rule, ...]:
 
 def get(rule_id: str) -> Rule:
     return _REGISTRY[rule_id]
-
-
-def _reset() -> None:
-    """Clear the registry. For tests only."""
-    _REGISTRY.clear()

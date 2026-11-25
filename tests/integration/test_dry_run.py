@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
+from unittest import mock
 
 import duckdb
 import pytest
@@ -16,6 +17,7 @@ from typer.testing import CliRunner
 
 from ducklake_iceberg.catalog.connection import open_catalog
 from ducklake_iceberg.cli import app
+from ducklake_iceberg.handoff import read_pointer
 from tests.integration.conftest import CatalogFactory, CatalogHarness, cli_env_for
 
 pytestmark = [pytest.mark.integration]
@@ -54,7 +56,11 @@ def _steps(output: str) -> list[dict[str, Any]]:
 # --- inlined rows, no writes, snapshot unchanged -----------------------------
 def test_dry_run_does_not_flush(seeded_catalog: CatalogHarness) -> None:
     before = _max_snapshot(seeded_catalog)
-    result = _dry_run(seeded_catalog, "main.pedidos")
+    with mock.patch(
+        "ducklake_iceberg.handoff.read_pointer", wraps=read_pointer
+    ) as read:
+        result = _dry_run(seeded_catalog, "main.pedidos")
+    read.assert_called_once()
     payload = json.loads(result.stdout)
     assert payload["dry_run"] is True
     steps = _steps(result.stdout)

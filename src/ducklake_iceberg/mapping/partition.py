@@ -58,7 +58,7 @@ from pyiceberg.types import (
     UUIDType,
 )
 
-from ducklake_iceberg.catalog.query import query_arrow
+from ducklake_iceberg.catalog.query import optional_row_int, query_arrow, row_int
 from ducklake_iceberg.doctor.model import Finding, Severity, quote_ident
 from ducklake_iceberg.mapping.transforms import CALENDAR_TRANSFORMS
 from ducklake_iceberg.mapping.transforms import PartitionSpecError as PartitionSpecError
@@ -149,18 +149,6 @@ def _rows(table: Any) -> list[dict[str, object]]:
     return cast("list[dict[str, object]]", table.to_pylist())
 
 
-def _as_int(value: object) -> int:
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    return int(str(value))
-
-
-def _opt_int(value: object) -> int | None:
-    return None if value is None else _as_int(value)
-
-
 def _opt_str(value: object) -> str | None:
     return None if value is None else str(value)
 
@@ -180,19 +168,19 @@ def read_partition_specs(
     bounds: dict[int, tuple[int, int | None]] = {}
     order: list[int] = []
     for row in _rows(table):
-        pid = _as_int(row["partition_id"])
+        pid = row_int(row["partition_id"])
         if pid not in grouped:
             grouped[pid] = []
             bounds[pid] = (
-                _as_int(row["begin_snapshot"]),
-                _opt_int(row["end_snapshot"]),
+                row_int(row["begin_snapshot"]),
+                optional_row_int(row["end_snapshot"]),
             )
             order.append(pid)
         grouped[pid].append(
             DuckLakePartitionColumn(
                 partition_id=pid,
-                partition_key_index=_as_int(row["partition_key_index"]),
-                column_id=_as_int(row["column_id"]),
+                partition_key_index=row_int(row["partition_key_index"]),
+                column_id=row_int(row["column_id"]),
                 transform=str(row["transform"]),
                 column_name=_opt_str(row.get("column_name")),
             )
@@ -226,8 +214,8 @@ def read_partition_values(
     table = query_arrow(con, sql, {"table_id": table_id})
     out: dict[int, dict[int, str | None]] = {}
     for row in _rows(table):
-        data_file_id = _as_int(row["data_file_id"])
-        key_index = _as_int(row["partition_key_index"])
+        data_file_id = row_int(row["data_file_id"])
+        key_index = row_int(row["partition_key_index"])
         raw = row["partition_value"]
         value = None if raw is None else str(raw)
         out.setdefault(data_file_id, {})[key_index] = value

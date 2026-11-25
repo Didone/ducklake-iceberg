@@ -16,7 +16,11 @@ from ducklake_iceberg.config import DuckLakeIcebergSettings
 from ducklake_iceberg.errors import ConfigError, DivergenceError, ExitCode
 from ducklake_iceberg.export import run_export
 from ducklake_iceberg.register import run_register
-from ducklake_iceberg.writer.metadata import MetadataError
+from ducklake_iceberg.writer.metadata import (
+    MetadataError,
+    read_metadata_json,
+    read_metadata_or_none,
+)
 
 from .conftest import CatalogHarness
 
@@ -83,7 +87,21 @@ def test_first_export_recovers_after_pointer_failure(
     prefix = Path(settings.iceberg_metadata_prefix)
     metadata_path = next(prefix.rglob("v1.metadata.json"))
     before = {p: p.read_bytes() for p in prefix.rglob("*") if p.is_file()}
-    result = run_export(settings, "main", "t", dry_run=dry_run)
+    with (
+        mock.patch(
+            "ducklake_iceberg.export.read_metadata_or_none",
+            wraps=read_metadata_or_none,
+        ) as probe,
+        mock.patch(
+            "ducklake_iceberg.export.read_metadata_json", wraps=read_metadata_json
+        ) as reread,
+    ):
+        result = run_export(settings, "main", "t", dry_run=dry_run)
+    assert [Path(call.args[1]).name for call in probe.call_args_list] == [
+        "v1.metadata.json",
+        "v2.metadata.json",
+    ]
+    assert all(Path(call.args[1]) != metadata_path for call in reread.call_args_list)
     if dry_run:
         assert {p: p.read_bytes() for p in prefix.rglob("*") if p.is_file()} == before
         return

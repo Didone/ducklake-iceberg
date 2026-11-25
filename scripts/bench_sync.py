@@ -92,39 +92,42 @@ def main() -> None:
     series: dict[str, list[float]] = {
         "wall_ms": [],
         "duration_ms": [],
-        "startup_ms": [],
+        "outside_envelope_ms": [],
     }
     counters: dict[str, list[float]] = {}
     for run in runs:
         env = run["envelope"]
         series["wall_ms"].append(run["wall_ms"])
         series["duration_ms"].append(float(env["duration_ms"]))
-        series["startup_ms"].append(run["wall_ms"] - float(env["duration_ms"]))
+        series["outside_envelope_ms"].append(run["wall_ms"] - float(env["duration_ms"]))
         timings = env.get("timings") or {}
         for name, ms in timings.get("phases_ms", {}).items():
             series.setdefault(f"phase.{name}", []).append(float(ms))
         for name, n in timings.get("counters", {}).items():
             counters.setdefault(name, []).append(float(n))
 
+    timings_ms = {
+        name: {
+            "p50": round(_percentile(values, 50), 1),
+            "p95": round(_percentile(values, 95), 1),
+        }
+        for name, values in series.items()
+    }
     summary = {
         "cmd": cmd,
         "runs": opts.n,
         "exit_codes": sorted({r["exit_code"] for r in runs}),
-        "ms": {
-            k: {
-                "p50": round(_percentile(v, 50), 1),
-                "p95": round(_percentile(v, 95), 1),
-            }
-            for k, v in series.items()
-        },
+        "ms": timings_ms,
         "counters": {k: max(v) for k, v in sorted(counters.items())},
     }
     if opts.json:
+        # Preserve the previous JSON key for existing consumers.
+        timings_ms["startup_ms"] = timings_ms["outside_envelope_ms"]
         print(json.dumps(summary, indent=2))
         return
     print(f"{' '.join(cmd)}\nexit codes: {summary['exit_codes']}")
     print(f"{'metric':<32}{'p50 ms':>10}{'p95 ms':>10}")
-    for name, stats in summary["ms"].items():
+    for name, stats in timings_ms.items():
         print(f"{name:<32}{stats['p50']:>10.1f}{stats['p95']:>10.1f}")
     print("counters (max per run):")
     for name, n in summary["counters"].items():

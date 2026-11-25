@@ -77,10 +77,9 @@ from ducklake_iceberg.errors import (
 from ducklake_iceberg.handoff import (
     DELETE_FILE_LAYOUT_PARTITION_V1,
     ExportPointer,
-    PointerNotFoundError,
     normalize_table_name,
     pointer_path,
-    read_pointer,
+    read_pointer_or_none,
     table_location,
     utc_now_iso,
     write_pointer,
@@ -277,14 +276,6 @@ def _glue_target(settings: DuckLakeIcebergSettings, glue_table: str) -> str:
     return f"{settings.glue_database}.{normalize_table_name(glue_table)}"
 
 
-def _read_base_pointer(io: FileIO, location: str) -> ExportPointer | None:
-    """Handoff pointer of the last export, or ``None`` (first export)."""
-    try:
-        return read_pointer(io, location)
-    except PointerNotFoundError:
-        return None
-
-
 def _initial_pointer(
     metadata: TableMetadataV2, location: str, settings: DuckLakeIcebergSettings
 ) -> ExportPointer:
@@ -342,17 +333,19 @@ def _load_base(
         if initial is None:
             return _Base(pointer=None, metadata=None)
         pointer = _initial_pointer(initial, location, settings)
-    # the pointer's metadata.json and the successor probe go out together (2
-    # parallel GETs; a missing successor is the common case)
-    with ContextThreadPoolExecutor(max_workers=2) as pool:
-        current = pool.submit(read_metadata_json, io, pointer.metadata_location)
-        probe = pool.submit(
-            read_metadata_or_none,
-            io,
-            next_metadata_path(location, pointer.metadata_version + 1),
-        )
-        metadata = current.result()
-        candidate = probe.result()
+        metadata = initial
+        candidate = read_metadata_or_none(io, next_metadata_path(location, 2))
+    else:
+        # Read the current metadata and probe for a successor in parallel.
+        with ContextThreadPoolExecutor(max_workers=2) as pool:
+            current = pool.submit(read_metadata_json, io, pointer.metadata_location)
+            probe = pool.submit(
+                read_metadata_or_none,
+                io,
+                next_metadata_path(location, pointer.metadata_version + 1),
+            )
+            metadata = current.result()
+            candidate = probe.result()
     # A previous export wrote v{N+1} and crashed before the pointer: the
     # successor is adopted only if it provably descends from the pointer (last
     # metadata-log entry); otherwise v{N+1} is from another chain and the
@@ -639,7 +632,7 @@ def read_export_seed(settings: DuckLakeIcebergSettings, table_name: str) -> Expo
         settings.iceberg_metadata_prefix, settings.glue_database, table_name
     )
     with timing.phase("export.base"):
-        return ExportSeed(io, location, _read_base_pointer(io, location))
+        return ExportSeed(io, location, read_pointer_or_none(io, location))
 
 
 def _prepare(

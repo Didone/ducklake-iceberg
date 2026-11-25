@@ -161,6 +161,14 @@ def _pointer_from_dict(data: dict[str, Any]) -> ExportPointer:
     )
 
 
+def read_pointer_or_none(io: FileIO, location: str) -> ExportPointer | None:
+    """Read a handoff, treating only a missing file as absence."""
+    try:
+        return read_pointer(io, location)
+    except PointerNotFoundError:
+        return None
+
+
 def read_current_pointer(
     settings: DuckLakeIcebergSettings, table_name: str
 ) -> ExportPointer | None:
@@ -168,7 +176,4 @@ def read_current_pointer(
     location = table_location(
         settings.iceberg_metadata_prefix, settings.glue_database, table_name
     )
-    try:
-        return read_pointer(build_file_io(settings), location)
-    except PointerNotFoundError:
-        return None
+    return read_pointer_or_none(build_file_io(settings), location)

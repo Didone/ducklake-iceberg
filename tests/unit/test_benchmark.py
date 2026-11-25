@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
+from scripts import bench_sync
 from scripts.bench_sync_support import (
     append_sample,
     distribution,
@@ -18,6 +20,34 @@ from scripts.bench_sync_support import (
     percentile,
     summarize,
 )
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+def test_quick_benchmark_labels_time_outside_the_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    json_output: bool,
+) -> None:
+    args = ["bench_sync.py", "--config", "unused.yml", "--table", "main.t", "-n", "1"]
+    if json_output:
+        args.append("--json")
+    monkeypatch.setattr(sys, "argv", args)
+
+    with patch.object(
+        bench_sync,
+        "_run_once",
+        return_value={"wall_ms": 24.0, "exit_code": 0, "envelope": {"duration_ms": 18}},
+    ):
+        bench_sync.main()
+
+    output = capsys.readouterr().out
+    if json_output:
+        timings = json.loads(output)["ms"]
+        assert timings["outside_envelope_ms"] == timings["startup_ms"]
+        assert timings["outside_envelope_ms"] == {"p50": 6.0, "p95": 6.0}
+    else:
+        assert "outside_envelope_ms" in output
+        assert "startup_ms" not in output
 
 
 def test_local_services_restores_environment_and_resources_on_failure(

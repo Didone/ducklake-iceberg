@@ -79,8 +79,10 @@ sequenceDiagram
     E-->>P: Handoff, metadata and export status (0 or 4)
     P->>R: Register even after an export no-op
     R->>G: Register existing metadata or ancestry-checked VersionId update
-    R->>G: Reread and verify metadata_location
-    G-->>R: Verified publication state
+    opt First registration, explicit verification, or retry reconciliation
+        R->>G: Reread publication state
+        G-->>R: Current Glue table
+    end
     R-->>P: Registration result
     Note over P,G: No distributed transaction or cross-host lock
 ```
@@ -254,11 +256,14 @@ For an existing table:
 - Unrelated pointer/source: divergence, exit 3.
 - Same-named non-Iceberg table: explicit error, never replacement.
 
-Registration is reread to verify the resulting location. Transient errors
-have bounded retries through the shared retry policy; access/validation
-errors are not blindly retried. After a conflict or uncertain update, Glue
-is reread: an applied request is recognized, unrelated ancestry stops
-publication, and a retry uses the newly observed `VersionId`.
+First registration confirms the resulting location with a Glue reread.
+Existing-table sync updates use optimistic `VersionId` and return after a
+successful update. The low-level registration path with neither supplied
+metadata nor a comment projection also confirms successful existing-table
+updates with a reread. After a conflict or uncertain update, reconciliation
+rereads Glue, recognizes an applied request, stops on unrelated ancestry, or
+retries with the newly observed `VersionId`. The shared retry policy bounds
+transient retries and treats access and validation failures as terminal.
 
 An export exit 4 **does not stop registration**. A prior run might have
 written all metadata but failed before advancing Glue.

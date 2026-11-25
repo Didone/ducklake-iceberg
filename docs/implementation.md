@@ -483,7 +483,11 @@ Tests: [test_glue.py](../tests/test_glue.py),
 `ensure_database()` creates only when allowed/needed.
 `register()` validates S3 location and prefix separation, uses
 `register_table()` initially, or `_handle_existing()` / `_update_table()` for
-an ancestral pointer with optimistic `VersionId`. It rereads publication.
+an ancestral pointer with optimistic `VersionId`. First registration
+confirms publication with a reread. Existing-table updates during sync
+return after a successful version-checked write. A low-level update with
+neither supplied metadata nor a comment projection also confirms success
+with a reread.
 `describe_table()` reads catalog metadata. Active updates use
 `commit_with_retry()`: reconciliation rereads Glue, recognizes an applied
 request, rejects unrelated metadata and supplies a fresh `VersionId` before

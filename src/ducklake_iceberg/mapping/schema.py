@@ -40,7 +40,7 @@ from pyiceberg.types import (
     StructType,
 )
 
-from ducklake_iceberg.catalog.query import query_arrow
+from ducklake_iceberg.catalog.query import optional_row_int, query_arrow, row_int
 from ducklake_iceberg.doctor.model import Finding, Severity, quote_ident
 from ducklake_iceberg.mapping.types import (
     NESTED_TYPES,
@@ -150,18 +150,6 @@ def _rows(table: Any) -> list[dict[str, object]]:
     return cast("list[dict[str, object]]", table.to_pylist())
 
 
-def _as_int(value: object) -> int:
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    return int(str(value))
-
-
-def _opt_int(value: object) -> int | None:
-    return None if value is None else _as_int(value)
-
-
 def _opt_str(value: object) -> str | None:
     return None if value is None else str(value)
 
@@ -169,9 +157,9 @@ def _opt_str(value: object) -> str | None:
 def _row_to_column(row: dict[str, object]) -> DuckLakeColumn:
     nulls = row["nulls_allowed"]
     return DuckLakeColumn(
-        column_id=_as_int(row["column_id"]),
-        parent_column=_opt_int(row["parent_column"]),
-        column_order=_as_int(row["column_order"]),
+        column_id=row_int(row["column_id"]),
+        parent_column=optional_row_int(row["parent_column"]),
+        column_order=row_int(row["column_order"]),
         column_name=str(row["column_name"]),
         column_type=str(row["column_type"]),
         nulls_allowed=True if nulls is None else bool(nulls),
@@ -179,7 +167,7 @@ def _row_to_column(row: dict[str, object]) -> DuckLakeColumn:
         default_value=_opt_str(row["default_value"]),
         default_value_type=_opt_str(row["default_value_type"]),
         default_value_dialect=_opt_str(row["default_value_dialect"]),
-        begin_snapshot=_as_int(row["begin_snapshot"]),
+        begin_snapshot=row_int(row["begin_snapshot"]),
     )
 
 
@@ -214,7 +202,7 @@ def read_last_column_id(
     sql = _LAST_COLUMN_ID_SQL.format(column=column)
     table = query_arrow(con, sql, {"table_id": table_id})
     rows = _rows(table)
-    return _as_int(rows[0]["last_column_id"]) if rows else 0
+    return row_int(rows[0]["last_column_id"]) if rows else 0
 
 
 # -- primitive type map ----------------------------------------------

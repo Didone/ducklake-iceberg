@@ -60,7 +60,6 @@ from ducklake_iceberg.glue import CommentProjection, describe_table
 from ducklake_iceberg.handoff import (
     ExportPointer,
     normalize_table_name,
-    read_current_pointer,
 )
 from ducklake_iceberg.obs.logging import bind, log_event
 from ducklake_iceberg.obs.metrics import RunMetrics, add_work, collect
@@ -543,7 +542,7 @@ def _sync_steps(
                 settings,
                 schema_name,
                 table_name,
-                None,
+                seed.pointer,
                 steps,
                 envelope,
                 qualified,
@@ -732,8 +731,6 @@ def _dry_run_glue_check(
     * anything else is an external write (exit 3), the same verdict a real
       sync would reach.
     """
-    if handoff is None:
-        handoff = read_current_pointer(settings, table_name)
     glue: str
     comment_drift = False
     if handoff is None:

@@ -169,13 +169,15 @@ under your normal recovery policy.
 ## Concurrency
 
 The local lock key is derived from profile, Glue database and normalized
-table name. It lives in the configured state directory and is released by
-the kernel if the process dies. It is not a distributed lease or a
-cross-account/global uniqueness guarantee.
+table name. It lives in the configured state directory and the kernel
+releases it if the process dies. Profile aliases that reach the same Glue
+destination can take different locks. Invocations with the same profile,
+database, and normalized table in different regions can share a lock.
 
 Do not overlap the same destination across Fargate tasks, pods, machines or
-different local lock roots. Optimistic Glue `VersionId` checks protect pointer
-updates, not all writes to the shared metadata prefix. Different destination
+different local lock roots or profile aliases. Optimistic Glue `VersionId`
+checks protect pointer updates. Shared metadata writes depend on scheduling
+one writer per destination. Different destination
 tables may run in parallel, subject to database/S3/service capacity.
 
 Set schedule intervals and scheduler concurrency/retry limits using measured
