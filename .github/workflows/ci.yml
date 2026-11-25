@@ -31,7 +31,6 @@ jobs:
   quality:
     name: lint and type check
     runs-on: ubuntu-latest
-    needs: lock
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -46,7 +45,6 @@ jobs:
   build:
     name: build and check distributions
     runs-on: ubuntu-latest
-    needs: lock
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -88,7 +86,6 @@ jobs:
   portability:
     name: unit tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    needs: lock
     strategy:
       fail-fast: false
       matrix:
@@ -108,7 +105,6 @@ jobs:
   test:
     name: tests (py${{ matrix.python }})
     runs-on: ubuntu-latest
-    needs: lock
     strategy:
       fail-fast: false
       matrix:
@@ -122,11 +118,36 @@ jobs:
       - run: poetry install --sync
       - name: Unit and fast integration tests (SQLite catalog)
         run: poetry run pytest -m "not postgres and not e2e and not minio"
-      - name: Integration tests against Postgres
-        if: matrix.python == '3.12'
-        # Backend parity run: the global coverage gate is enforced by the fast
-        # step above; here the SAME suite only has to pass against Postgres.
-        run: poetry run pytest -m postgres --cov-fail-under=0
+
+  postgres:
+    name: PostgreSQL parity (${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pipx install poetry==${{ env.POETRY_VERSION }}
+      - run: poetry install --sync
+      - name: Run PostgreSQL shard
+        run: >-
+          poetry run python -m pytest -p scripts.pytest_shard
+          --ci-shard=${{ matrix.shard }}/3 -m "postgres and not e2e"
+          --cov-fail-under=0
+
+  minio:
+    name: MinIO zero-copy audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pipx install poetry==${{ env.POETRY_VERSION }}
+      - run: poetry install --sync
       - name: End-to-end zero-copy audit against MinIO
-        if: matrix.python == '3.12'
-        run: poetry run pytest -m minio --cov-fail-under=0
+        run: poetry run pytest -m "minio and not e2e" --cov-fail-under=0

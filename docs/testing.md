@@ -220,6 +220,19 @@ not replace an expected hash just to make a check green.
 | [`compat-latest.yml`](../.github/workflows/compat-latest.yml) | Weekly/manual non-blocking experiment against newest DuckDB/PyIceberg/extensions, optionally pre-releases/nightly extensions. Pin checks excluded intentionally; failures warn about future compatibility, not permission to change production pins. |
 | [`release.yml`](../.github/workflows/release.yml) | A `v*` tag. Check version/changelog, build/validate/install artifacts, smoke-test container, publish to PyPI with OIDC, then create the GitHub release. Candidates are published to the same PyPI and marked GitHub pre-releases, not latest. |
 
+The CI PostgreSQL selection runs in three parallel Python 3.12 jobs. Each
+job applies the PostgreSQL marker, then takes every third test from the
+sorted node IDs and executes its subset in collection order. To reproduce
+one shard locally, run:
+
+```bash
+poetry run python -m pytest -p scripts.pytest_shard --ci-shard=1/3 \
+  -m "postgres and not e2e" --cov-fail-under=0
+```
+
+MinIO runs independently on Python 3.12. The full SQLite selection on
+each supported Python version continues to enforce 85% coverage.
+
 The release workflow does not itself run the full CI test matrix.
 Release a commit whose CI has passed.
 
@@ -307,8 +320,11 @@ from envelope duration is `outside_envelope_ms`, not pure startup. HTTP server
 observations and SDK send hooks are separate views of the same requests, not
 counts to add together. Local simulation cannot establish AWS latency/budgets.
 
-The smaller `scripts/bench_sync.py` remains a quick p50/p95 diagnostic utility;
-its repeated command runs do not establish isolated mutation cohorts.
+The smaller `scripts/bench_sync.py` reports quick p50/p95 diagnostics for
+repeated command runs. Use the reference harness for isolated mutation
+cohorts. Both tools call the difference between process wall time and the
+CLI envelope duration `outside_envelope_ms`. The quick script also emits
+the legacy `startup_ms` JSON alias with the same values.
 
 
 For a third comparison arm, pass `--corrected-exe` and `--corrected-revision`
